@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Database, Save, CheckCircle2, AlertCircle, Copy, Terminal, Unplug, Info } from 'lucide-react';
+import { Database, Save, CheckCircle2, AlertCircle, Copy, Terminal, Unplug, Info, AlertTriangle, Loader2, Play, Search, CheckCircle } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -14,6 +14,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig }) => {
   const [status, setStatus] = useState<'IDLE' | 'TESTING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [errorMessage, setErrorMessage] = useState('');
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [tableCheck, setTableCheck] = useState<{checked: boolean, exists: boolean, details: string}>({checked: false, exists: false, details: ''});
 
   useEffect(() => {
     const savedUrl = localStorage.getItem('supabase_url');
@@ -25,47 +26,57 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig }) => {
     }
   }, []);
 
+  const verifyTables = async () => {
+      if (!url || !key) return;
+      setTableCheck({checked: true, exists: false, details: 'Verificando...'});
+      try {
+          const client = createClient(url, key);
+          const { error } = await client.from('transactions').select('id').limit(1);
+          if (error) {
+              if (error.code === '42P01') {
+                  setTableCheck({checked: true, exists: false, details: 'Tabelas não encontradas. Por favor, execute o SQL de criação.'});
+              } else {
+                  throw error;
+              }
+          } else {
+              setTableCheck({checked: true, exists: true, details: 'Tabelas encontradas e prontas para uso!'});
+          }
+      } catch (e: any) {
+          setTableCheck({checked: true, exists: false, details: `Erro na verificação: ${e.message}`});
+      }
+  };
+
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatus('TESTING');
     setErrorMessage('');
-
     const cleanUrl = url.trim();
     const cleanKey = key.trim();
-
     try {
       if (!cleanUrl || !cleanKey) throw new Error("URL e Chave são obrigatórios.");
-
       const client = createClient(cleanUrl, cleanKey);
       
-      // Teste real de conexão buscando metadados (ou tentando um select simples)
       const { error } = await client.from('banks').select('id').limit(1);
       
-      if (error && error.message !== 'JSON object requested, multiple (or no) rows returned') {
-          // Nota: Erro de tabela não existente é aceitável aqui, o importante é a comunicação HTTP
-          if (error.message.includes('Failed to fetch')) throw error;
+      if (error && error.code === '42P01') {
+          // Tabela não existe mas a conexão funcionou
+          localStorage.setItem('supabase_url', cleanUrl);
+          localStorage.setItem('supabase_key', cleanKey);
+          setStatus('SUCCESS');
+          onSaveConfig(cleanUrl, cleanKey);
+          return;
       }
+      
+      if (error && error.message.includes('Failed to fetch')) throw error;
       
       localStorage.setItem('supabase_url', cleanUrl);
       localStorage.setItem('supabase_key', cleanKey);
-      
-      setUrl(cleanUrl);
-      setKey(cleanKey);
       setStatus('SUCCESS');
       onSaveConfig(cleanUrl, cleanKey);
     } catch (err: any) {
-      console.error("Connection error:", err);
       setStatus('ERROR');
-      let msg = err.message || "Falha ao conectar. Verifique as credenciais.";
-      if (msg === 'Failed to fetch') {
-          msg = "Erro de Rede: Verifique sua conexão e se a URL do Supabase está correta (sem espaços extras). Certifique-se também que o projeto não está pausado.";
-      }
-      setErrorMessage(msg);
+      setErrorMessage(err.message || "Falha ao conectar.");
     }
-  };
-
-  const requestDisconnect = () => {
-      setIsConfirmOpen(true);
   };
 
   const confirmDisconnect = () => {
@@ -74,57 +85,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig }) => {
     setUrl('');
     setKey('');
     setStatus('IDLE');
+    setTableCheck({checked: false, exists: false, details: ''});
     onSaveConfig('', '');
   };
 
-  const sqlSchema = `
--- Habilite a extensão de UUID
-create extension if not exists "uuid-ossp";
+  const sqlFullSchema = `-- 1. Tabelas de Cadastro
+create table if not exists banks (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists categories (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists cost_centers (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists participants (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists wallets (id uuid default gen_random_uuid() primary key, name text not null, bank_id uuid references banks(id));
 
--- 1. Tabela de Bancos
-create table if not exists banks (
-  id uuid default uuid_generate_v4() primary key,
-  name text not null,
-  created_at timestamp with time zone default timezone('utc'::text, now())
-);
-alter table banks disable row level security;
-
--- 2. Tabela de Categorias
-create table if not exists categories (
-  id uuid default uuid_generate_v4() primary key,
-  name text not null,
-  created_at timestamp with time zone default timezone('utc'::text, now())
-);
-alter table categories disable row level security;
-
--- 3. Tabela de Centros de Custo
-create table if not exists cost_centers (
-  id uuid default uuid_generate_v4() primary key,
-  name text not null,
-  created_at timestamp with time zone default timezone('utc'::text, now())
-);
-alter table cost_centers disable row level security;
-
--- 4. Tabela de Participantes
-create table if not exists participants (
-  id uuid default uuid_generate_v4() primary key,
-  name text not null,
-  created_at timestamp with time zone default timezone('utc'::text, now())
-);
-alter table participants disable row level security;
-
--- 5. Tabela de Carteiras
-create table if not exists wallets (
-  id uuid default uuid_generate_v4() primary key,
-  name text not null,
-  bank_id uuid references banks(id),
-  created_at timestamp with time zone default timezone('utc'::text, now())
-);
-alter table wallets disable row level security;
-
--- 6. Tabela de Transações
+-- 2. Tabela de Transações
 create table if not exists transactions (
-  id uuid default uuid_generate_v4() primary key,
+  id uuid default gen_random_uuid() primary key,
   date date not null,
   description text not null,
   doc_number text,
@@ -136,148 +110,138 @@ create table if not exists transactions (
   cost_center_id uuid references cost_centers(id),
   participant_id uuid references participants(id),
   wallet_id uuid references wallets(id),
-  created_at timestamp with time zone default timezone('utc'::text, now())
+  linked_id uuid, -- Vínculo para transferências
+  created_at timestamp with time zone default now()
 );
-alter table transactions disable row level security;
-  `;
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(sqlSchema);
-    alert("SQL copiado para a área de transferência!");
-  };
+-- Desabilitar RLS para desenvolvimento
+alter table banks disable row level security;
+alter table categories disable row level security;
+alter table cost_centers disable row level security;
+alter table participants disable row level security;
+alter table wallets disable row level security;
+alter table transactions disable row level security;`;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 animate-fade-in pb-10">
-      
-      {/* Configuration Card */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex items-center gap-3">
-          <div className="p-2 bg-slate-100 rounded-lg">
-            <Database className="w-5 h-5 text-slate-700" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-slate-800">Configuração do Banco de Dados</h2>
-            <p className="text-sm text-slate-500">Conecte sua aplicação ao Supabase para persistência de dados.</p>
+    <div className="max-w-4xl mx-auto space-y-8 pb-10">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
+          <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-600 rounded-lg text-white">
+                <Database className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 tracking-tight">Conexão com Banco de Dados</h2>
+                <p className="text-sm text-slate-500">Conecte sua conta do Supabase para salvar os dados na nuvem.</p>
+              </div>
           </div>
         </div>
 
-        <div className="p-6">
-          <form onSubmit={handleConnect} className="space-y-6">
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 flex gap-3 text-sm text-blue-700 mb-4">
-              <Info className="w-5 h-5 flex-shrink-0" />
-              <p>Dica: Certifique-se de copiar a URL e a Chave exatamente como no Supabase. O sistema removerá espaços extras automaticamente ao salvar.</p>
+        <div className="p-8">
+          <form onSubmit={handleConnect} className="space-y-8">
+            <div className="grid grid-cols-1 gap-6">
+                <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Supabase URL</label>
+                    <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://vosso-projeto.supabase.co" className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all bg-slate-50/50" />
+                </div>
+                <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Anon Key (API Key)</label>
+                    <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="vossa-chave-api-secreta" className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all bg-slate-50/50" />
+                </div>
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Supabase URL</label>
-              <input
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://sua-url-do-projeto.supabase.co"
-                disabled={status === 'SUCCESS'}
-                className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-800 disabled:bg-slate-50 disabled:text-slate-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Supabase Anon Key</label>
-              <input
-                type="password"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder="eyJh..."
-                disabled={status === 'SUCCESS'}
-                className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-800 font-mono disabled:bg-slate-50 disabled:text-slate-500"
-              />
-            </div>
-
+            
             {status === 'ERROR' && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3 text-red-700 text-sm">
-                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                <span>{errorMessage}</span>
-              </div>
+                <div className="text-red-600 text-sm font-medium bg-red-50 p-4 rounded-xl flex items-start gap-3 border border-red-100 animate-fade-in">
+                    <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                    <div>
+                        <p className="font-bold">Falha Crítica</p>
+                        <p className="opacity-80">{errorMessage}</p>
+                    </div>
+                </div>
             )}
-
-            {status === 'SUCCESS' && (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-green-700 text-sm">
-                <CheckCircle2 className="w-4 h-4" />
-                Conexão ativa com o Supabase. Seus dados estão sendo sincronizados.
-              </div>
-            )}
-
-            <div className="flex items-center justify-between pt-2">
-              {status === 'SUCCESS' ? (
-                  <button
-                    type="button"
-                    onClick={requestDisconnect}
-                    className="px-6 py-2 bg-red-50 hover:bg-red-100 text-red-600 font-medium rounded-lg transition-colors flex items-center gap-2 border border-red-200"
-                  >
-                    <Unplug className="w-4 h-4" />
-                    Desconectar
-                  </button>
-              ) : (
-                  <button
-                    type="submit"
-                    disabled={status === 'TESTING'}
-                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
-                  >
-                    {status === 'TESTING' ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Testando Conexão...
-                      </>
-                    ) : (
-                      <>
-                        <Save className="w-4 h-4" />
-                        Salvar e Conectar
-                      </>
-                    )}
-                  </button>
-              )}
+            
+            <div className="flex items-center gap-4">
+                <button type="submit" className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 flex items-center gap-2 transform active:scale-95">
+                    {status === 'TESTING' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                    {status === 'SUCCESS' ? 'Atualizar Conexão' : 'Conectar Agora'}
+                </button>
+                {status === 'SUCCESS' && (
+                    <button type="button" onClick={() => setIsConfirmOpen(true)} className="text-slate-400 text-sm font-bold hover:text-red-600 flex items-center gap-2 transition-colors px-4 py-2 rounded-lg hover:bg-red-50">
+                        <Unplug className="w-5 h-5" /> Desconectar
+                    </button>
+                )}
             </div>
           </form>
         </div>
       </div>
 
-      {/* SQL Schema Helper */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-             <div className="p-2 bg-slate-100 rounded-lg">
-                <Terminal className="w-5 h-5 text-slate-700" />
+      {status === 'SUCCESS' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+              <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col h-full">
+                  <div className="flex items-center gap-3 mb-4">
+                      <div className="p-2 bg-amber-100 rounded-lg text-amber-600">
+                        <Search className="w-5 h-5" />
+                      </div>
+                      <h3 className="font-bold text-slate-800">Verificador de Tabelas</h3>
+                  </div>
+                  <p className="text-sm text-slate-500 mb-6">Verifique se o seu projeto Supabase já possui as tabelas necessárias criadas.</p>
+                  
+                  <div className="mt-auto space-y-4">
+                      {tableCheck.checked && (
+                          <div className={`p-4 rounded-xl border flex items-start gap-3 ${tableCheck.exists ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                              {tableCheck.exists ? <CheckCircle className="w-5 h-5 flex-shrink-0" /> : <AlertTriangle className="w-5 h-5 flex-shrink-0" />}
+                              <p className="text-xs font-bold leading-tight">{tableCheck.details}</p>
+                          </div>
+                      )}
+                      <button onClick={verifyTables} className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2">
+                        Executar Verificação
+                      </button>
+                  </div>
+              </div>
+
+              <div className="bg-blue-600 p-8 rounded-2xl shadow-xl shadow-blue-200 flex flex-col text-white">
+                  <div className="flex items-center gap-3 mb-4">
+                      <div className="p-2 bg-white/20 rounded-lg">
+                        <Terminal className="w-5 h-5" />
+                      </div>
+                      <h3 className="font-bold">Configuração Inicial</h3>
+                  </div>
+                  <p className="text-sm text-blue-50/80 mb-6 leading-relaxed">Se as tabelas ainda não existem, copie o código SQL e cole no seu **SQL Editor** do Supabase.</p>
+                  
+                  <button 
+                    onClick={() => { navigator.clipboard.writeText(sqlFullSchema); alert("SQL Copiado com sucesso!"); }}
+                    className="w-full mt-auto py-3 bg-white text-blue-600 rounded-xl text-sm font-black hover:bg-blue-50 transition-all flex items-center justify-center gap-2 shadow-lg"
+                  >
+                    <Copy className="w-4 h-4" /> Copiar Código SQL
+                  </button>
+              </div>
+          </div>
+      )}
+
+      {status === 'SUCCESS' && (
+          <div className="bg-slate-900 rounded-2xl overflow-hidden animate-fade-in shadow-2xl border border-slate-800">
+            <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
+                <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                    <span className="ml-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">SQL Schema Explorer</span>
+                </div>
             </div>
-            <div>
-                <h3 className="text-lg font-bold text-slate-800">Esquema SQL</h3>
-                <p className="text-sm text-slate-500">Execute este comando no Editor SQL do Supabase para configurar as tabelas.</p>
+            <div className="relative">
+                <pre className="p-8 text-[11px] font-mono leading-relaxed text-blue-300 overflow-auto max-h-[400px] bg-slate-900/50 backdrop-blur-xl">
+                    {sqlFullSchema}
+                </pre>
+                <div className="absolute top-4 right-4 flex gap-2">
+                    <button onClick={() => { navigator.clipboard.writeText(sqlFullSchema); }} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg transition-colors border border-slate-700" title="Copiar tudo">
+                        <Copy className="w-4 h-4" />
+                    </button>
+                </div>
             </div>
           </div>
-          <button 
-            type="button"
-            onClick={copyToClipboard}
-            className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 px-3 py-1.5 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-          >
-            <Copy className="w-4 h-4" />
-            Copiar SQL
-          </button>
-        </div>
-        <div className="bg-slate-900 p-6 overflow-x-auto">
-          <pre className="text-sm font-mono text-green-400 whitespace-pre">
-            {sqlSchema.trim()}
-          </pre>
-        </div>
-      </div>
-
-      <ConfirmModal 
-        isOpen={isConfirmOpen}
-        onClose={() => setIsConfirmOpen(false)}
-        onConfirm={confirmDisconnect}
-        title="Desconectar do Supabase?"
-        message="Se você desconectar, o sistema voltará a usar o armazenamento local do navegador e você não verá mais os dados salvos na nuvem."
-        isDestructive={true}
-        confirmText="Sim, desconectar"
-      />
-
+      )}
+      
+      <ConfirmModal isOpen={isConfirmOpen} onClose={() => setIsConfirmOpen(false)} onConfirm={confirmDisconnect} title="Desconectar Supabase?" message="Você voltará ao modo offline e usará o banco de dados do seu navegador. Seus dados no Supabase continuarão seguros lá." isDestructive={true} />
     </div>
   );
 };

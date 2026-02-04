@@ -1,24 +1,27 @@
+
 import React, { useMemo } from 'react';
 import { Transaction, Bank } from '../types';
 import { DollarSign, TrendingDown, TrendingUp, Clock, Landmark } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface SummaryProps {
   transactions: Transaction[];
   banks: Bank[];
+  previousBalances?: { total: number, byBank: Record<string, number> };
 }
 
-export const Summary: React.FC<SummaryProps> = ({ transactions, banks }) => {
+export const Summary: React.FC<SummaryProps> = ({ transactions, banks, previousBalances }) => {
   const summary = useMemo(() => {
-    return transactions.reduce(
+    // Cálculo dos totais VISÍVEIS (baseado nos filtros atuais)
+    const visibleStats = transactions.reduce(
       (acc, t) => {
         const val = t.value;
         if (t.type === 'CREDIT') {
-          if (t.status === 'PAID') acc.balance += val;
+          if (t.status === 'PAID') acc.balance += val; // Delta do período
           acc.income += val;
           if (t.status === 'PENDING') acc.pendingIncome += val;
         } else {
-          if (t.status === 'PAID') acc.balance -= val;
+          if (t.status === 'PAID') acc.balance -= val; // Delta do período
           acc.expense += val;
           if (t.status === 'PENDING') acc.pendingExpense += val;
         }
@@ -26,16 +29,28 @@ export const Summary: React.FC<SummaryProps> = ({ transactions, banks }) => {
       },
       { balance: 0, income: 0, expense: 0, pendingIncome: 0, pendingExpense: 0 }
     );
-  }, [transactions]);
 
-  // Cálculo dos saldos por banco
+    // Saldo Final = Saldo Anterior (Histórico) + Delta do Período
+    const initialBalance = previousBalances?.total || 0;
+    const finalBalance = initialBalance + visibleStats.balance;
+
+    return {
+        ...visibleStats,
+        finalBalance
+    };
+  }, [transactions, previousBalances]);
+
+  // Cálculo dos saldos por banco (Saldo Inicial do Banco + Movimentação do Período)
   const bankBalances = useMemo(() => {
     const balances = new Map<string, number>();
 
-    // Inicializa bancos
-    banks.forEach(b => balances.set(b.id, 0));
+    // Inicializa com o saldo anterior de cada banco (se houver)
+    banks.forEach(b => {
+        const prev = previousBalances?.byBank[b.id] || 0;
+        balances.set(b.id, prev);
+    });
 
-    // Soma apenas transações PAGAS
+    // Soma a movimentação do período (apenas PAGAS)
     transactions.forEach(t => {
       if (t.status === 'PAID' && t.bankId) {
         const current = balances.get(t.bankId) || 0;
@@ -52,7 +67,7 @@ export const Summary: React.FC<SummaryProps> = ({ transactions, banks }) => {
       }))
       .filter(b => b.balance !== 0) // Filtra bancos zerados
       .sort((a, b) => b.balance - a.balance); // Ordena maior para menor
-  }, [transactions, banks]);
+  }, [transactions, banks, previousBalances]);
 
   const chartData = useMemo(() => {
     return [
@@ -72,21 +87,21 @@ export const Summary: React.FC<SummaryProps> = ({ transactions, banks }) => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Saldo Atual (Realizado)</p>
-              <h3 className={`text-2xl font-bold mt-1 ${summary.balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>
-                {formatCurrency(summary.balance)}
+              <h3 className={`text-2xl font-bold mt-1 ${summary.finalBalance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>
+                {formatCurrency(summary.finalBalance)}
               </h3>
             </div>
             <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
               <DollarSign className="w-6 h-6" />
             </div>
           </div>
-          <div className="text-xs text-slate-400">Considera apenas baixados</div>
+          <div className="text-xs text-slate-400">Saldo Total Acumulado</div>
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <p className="text-sm font-medium text-slate-500">Receitas Totais</p>
+              <p className="text-sm font-medium text-slate-500">Receitas (Período)</p>
               <h3 className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(summary.income)}</h3>
             </div>
             <div className="p-3 bg-green-50 text-green-600 rounded-lg">
@@ -102,7 +117,7 @@ export const Summary: React.FC<SummaryProps> = ({ transactions, banks }) => {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <p className="text-sm font-medium text-slate-500">Despesas Totais</p>
+              <p className="text-sm font-medium text-slate-500">Despesas (Período)</p>
               <h3 className="text-2xl font-bold text-red-600 mt-1">{formatCurrency(summary.expense)}</h3>
             </div>
             <div className="p-3 bg-red-50 text-red-600 rounded-lg">
@@ -117,7 +132,7 @@ export const Summary: React.FC<SummaryProps> = ({ transactions, banks }) => {
 
         {/* Mini Chart */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col items-center justify-center">
-          <h4 className="text-sm font-medium text-slate-500 mb-2 w-full text-left">Visão Geral</h4>
+          <h4 className="text-sm font-medium text-slate-500 mb-2 w-full text-left">Visão do Período</h4>
           <div className="w-full h-24">
               <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData}>
@@ -142,7 +157,7 @@ export const Summary: React.FC<SummaryProps> = ({ transactions, banks }) => {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
           <div className="flex items-center gap-2 mb-4 text-slate-800">
             <Landmark className="w-5 h-5 text-blue-600" />
-            <h3 className="text-lg font-bold">Saldos por Banco</h3>
+            <h3 className="text-lg font-bold">Saldos por Banco (Acumulado)</h3>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {bankBalances.map(b => (

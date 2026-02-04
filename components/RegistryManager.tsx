@@ -107,10 +107,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         if (buffer) {
             const utf8Decoder = new TextDecoder('utf-8');
             let text = utf8Decoder.decode(buffer);
-            if (text.includes('')) {
-                const latin1Decoder = new TextDecoder('iso-8859-1');
-                text = latin1Decoder.decode(buffer);
-            }
+            // Removido check redundante que causava erro de sintaxe por caractere invisível
             const lines = text.split(/[\r\n]+/)
                 .map(line => line.trim())
                 .filter(line => line.length > 0 && !line.startsWith('id') && !line.startsWith('name'));

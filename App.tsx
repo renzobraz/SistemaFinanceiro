@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TransactionList } from './components/TransactionList';
 import { TransactionForm } from './components/TransactionForm';
@@ -7,6 +7,8 @@ import { RegistryManager } from './components/RegistryManager';
 import { Summary } from './components/Summary';
 import { SettingsView } from './components/SettingsView';
 import { CashFlowReport } from './components/CashFlowReport';
+import { ExpenseAnalysisReport } from './components/ExpenseAnalysisReport';
+import { HelpManual } from './components/HelpManual';
 import { financeService } from './services/financeService';
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus } from './types';
 import { 
@@ -19,10 +21,13 @@ import {
   Users, 
   Briefcase,
   Calendar,
-  Filter,
-  X,
-  ArrowRightLeft,
-  Landmark
+  AlertCircle,
+  RefreshCcw,
+  SearchX,
+  Database,
+  Layers,
+  Loader2,
+  XCircle
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 
@@ -30,10 +35,13 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [activeRegistryTab, setActiveRegistryTab] = useState('wallets'); 
   const [loading, setLoading] = useState(true);
-  const [importing, setImporting] = useState(false); 
+  const [refreshing, setRefreshing] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  // Armazena o saldo acumulado ANTES da data de início do filtro
+  const [previousBalances, setPreviousBalances] = useState<{ total: number, byBank: Record<string, number> }>({ total: 0, byBank: {} });
+
   const [registries, setRegistries] = useState<{
     banks: Bank[];
     categories: Category[];
@@ -51,6 +59,7 @@ const App: React.FC = () => {
   const [selectedWalletId, setSelectedWalletId] = useState<string>('');
   const [selectedBankId, setSelectedBankId] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PAID' | 'PENDING'>('ALL'); 
+  
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
@@ -63,115 +72,134 @@ const App: React.FC = () => {
     message: string;
   }>({ isOpen: false, title: '', message: '' });
 
+  // Controle de concorrência para evitar Race Conditions nos filtros
+  const lastRequestIdRef = useRef(0);
+
   const showAlert = (title: string, message: any) => {
     const msg = typeof message === 'string' ? message : (message?.message || message?.details || JSON.stringify(message));
     setAlertState({ isOpen: true, title, message: msg });
   };
+
+  // Carrega apenas os cadastros (uma única vez ou quando conectar)
+  const loadRegistries = useCallback(async () => {
+    try {
+      const [bk, cat, cc, pt, wa] = await Promise.all([
+        financeService.getRegistry<Bank>('banks'),
+        financeService.getRegistry<Category>('categories'),
+        financeService.getRegistry<CostCenter>('costCenters'),
+        financeService.getRegistry<Participant>('participants'),
+        financeService.getRegistry<Wallet>('wallets'),
+      ]);
+      setRegistries({ banks: bk, categories: cat, costCenters: cc, participants: pt, wallets: wa });
+    } catch (error: any) {
+      console.error("Failed to load registries", error);
+    }
+  }, []);
+
+  // Carrega transações baseado nos filtros atuais (Database-side)
+  const loadTransactions = useCallback(async () => {
+    const requestId = ++lastRequestIdRef.current;
+    setRefreshing(true);
+    
+    try {
+      // 1. Busca transações filtradas
+      const trPromise = financeService.getTransactions({
+        startDate,
+        endDate,
+        bankId: selectedBankId,
+        walletId: selectedWalletId,
+        status: statusFilter
+      });
+
+      // 2. Busca saldo anterior (se houver data de início)
+      // Se não houver data de início, o saldo anterior é 0 (assumimos que carregamos tudo desde o início)
+      let balPromise = Promise.resolve({ total: 0, byBank: {} });
+      if (startDate) {
+        balPromise = financeService.getBalancesBefore(startDate, selectedBankId, selectedWalletId);
+      }
+
+      const [tr, bal] = await Promise.all([trPromise, balPromise]);
+      
+      // Só atualiza o estado se esta for a última requisição feita
+      if (requestId === lastRequestIdRef.current) {
+        setTransactions(tr);
+        setPreviousBalances(bal);
+      }
+    } catch (error: any) {
+      if (requestId === lastRequestIdRef.current) {
+        console.error("Failed to load transactions", error);
+        showAlert('Erro de Sincronização', error.message);
+      }
+    } finally {
+      if (requestId === lastRequestIdRef.current) {
+        setRefreshing(false);
+      }
+    }
+  }, [startDate, endDate, selectedBankId, selectedWalletId, statusFilter]);
+
+  const loadAll = async () => {
+    setLoading(true);
+    const currentlyConnected = !!localStorage.getItem('supabase_url') && !!localStorage.getItem('supabase_key');
+    setIsConnected(currentlyConnected);
+    await Promise.all([loadRegistries(), loadTransactions()]);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadAll();
+  }, [isConnected]);
+
+  // Recarrega transações quando os filtros mudam
+  useEffect(() => {
+    if (!loading) {
+        loadTransactions();
+    }
+  }, [startDate, endDate, selectedBankId, selectedWalletId, statusFilter, loadTransactions]);
 
   useEffect(() => {
     if (activeTab === 'payables') {
       setStatusFilter('PENDING');
     } else if (activeTab === 'bank-transactions') {
       setStatusFilter('PAID');
-    } else if (activeTab === 'dashboard' || activeTab === 'cashflow') {
+    } else if (['dashboard', 'cashflow', 'expenses-analysis'].includes(activeTab)) {
       setStatusFilter('ALL');
     }
   }, [activeTab]);
 
-  useEffect(() => {
-    const loadAll = async () => {
-      setLoading(true);
-      const hasUrl = !!localStorage.getItem('supabase_url');
-      const hasKey = !!localStorage.getItem('supabase_key');
-      const currentlyConnected = hasUrl && hasKey;
-      
-      if (currentlyConnected !== isConnected) setIsConnected(currentlyConnected);
-
-      try {
-        const [tr, bk, cat, cc, pt, wa] = await Promise.all([
-          financeService.getTransactions(),
-          financeService.getRegistry<Bank>('banks'),
-          financeService.getRegistry<Category>('categories'),
-          financeService.getRegistry<CostCenter>('costCenters'),
-          financeService.getRegistry<Participant>('participants'),
-          financeService.getRegistry<Wallet>('wallets'),
-        ]);
-
-        setTransactions(tr);
-        setRegistries({ banks: bk, categories: cat, costCenters: cc, participants: pt, wallets: wa });
-      } catch (error: any) {
-        console.error("Failed to load data", error);
-        showAlert('Erro ao Carregar Dados', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadAll();
-  }, [isConnected]);
-
   const globalBalanceMap = useMemo(() => {
     let relevant = transactions.filter(t => t.status === 'PAID');
-    if (selectedWalletId) relevant = relevant.filter(t => t.walletId === selectedWalletId);
-    if (selectedBankId) relevant = relevant.filter(t => t.bankId === selectedBankId);
-
+    
+    // Ordena cronologicamente para calcular o saldo corrente
     relevant.sort((a, b) => {
       const da = new Date(a.date).getTime();
       const db = new Date(b.date).getTime();
-      if (da !== db) return da - db;
-      return a.id.localeCompare(b.id);
+      return da !== db ? da - db : a.id.localeCompare(b.id);
     });
 
     const map: Record<string, number> = {};
-    let running = 0;
+    
+    // O saldo corrente começa com o Saldo Anterior (Histórico)
+    // Se o filtro de banco estiver ativo, pegamos o saldo anterior específico do banco, senão o total
+    let running = selectedBankId && previousBalances.byBank[selectedBankId] !== undefined 
+        ? previousBalances.byBank[selectedBankId] 
+        : previousBalances.total;
+
     relevant.forEach(t => {
       running += (t.type === 'CREDIT' ? t.value : -t.value);
       map[t.id] = running;
     });
     return map;
-  }, [transactions, selectedWalletId, selectedBankId]);
-
-  const displayedTransactions = useMemo(() => {
-    let filtered = transactions;
-    if (selectedWalletId) filtered = filtered.filter(t => t.walletId === selectedWalletId);
-    if (selectedBankId) filtered = filtered.filter(t => t.bankId === selectedBankId);
-    if (startDate) filtered = filtered.filter(t => t.date >= startDate);
-    if (endDate) filtered = filtered.filter(t => t.date <= endDate);
-    if (statusFilter !== 'ALL') filtered = filtered.filter(t => t.status === statusFilter);
-    return filtered;
-  }, [transactions, selectedWalletId, selectedBankId, startDate, endDate, statusFilter]);
-
-  const dashboardTransactions = useMemo(() => {
-    let filtered = transactions;
-    if (selectedWalletId) filtered = filtered.filter(t => t.walletId === selectedWalletId);
-    if (selectedBankId) filtered = filtered.filter(t => t.bankId === selectedBankId);
-    return filtered;
-  }, [transactions, selectedWalletId, selectedBankId]);
-
-  const getDefaultStatus = (): TransactionStatus => {
-    if (activeTab === 'payables') return 'PENDING';
-    if (activeTab === 'bank-transactions') return 'PAID';
-    return 'PENDING';
-  };
+  }, [transactions, previousBalances, selectedBankId]);
 
   const handleSaveTransaction = async (t: Transaction | Transaction[]) => {
     try {
         if (Array.isArray(t)) {
-            const savedItems = await financeService.createManyTransactions(t);
-            setTransactions(prev => [...savedItems, ...prev]);
+            await financeService.createManyTransactions(t);
         } else {
-            const saved = await financeService.saveTransaction(t);
-            setTransactions(prev => {
-                const idx = prev.findIndex(item => item.id === saved.id);
-                if (idx >= 0) {
-                    const copy = [...prev];
-                    copy[idx] = saved;
-                    return copy;
-                }
-                return [saved, ...prev];
-            });
+            await financeService.saveTransaction(t);
         }
+        await loadTransactions(); 
     } catch (e: any) {
-       console.error("Erro ao salvar:", e);
        showAlert('Erro ao Salvar', e);
     }
   };
@@ -179,132 +207,17 @@ const App: React.FC = () => {
   const handleDeleteTransactions = async (ids: string[]) => {
     try {
         await financeService.deleteTransactions(ids);
-        setTransactions(prev => prev.filter(t => !ids.includes(t.id)));
+        await loadTransactions();
     } catch (e: any) {
-        console.error("Erro ao excluir transação:", e);
         showAlert('Erro ao Excluir', e);
     }
   };
 
   const handleQuickAddParticipant = async (name: string): Promise<Participant> => {
-      try {
-          const newP = await financeService.saveRegistryItem('participants', { id: '', name });
-          setRegistries(prev => ({ ...prev, participants: [...prev.participants, newP] }));
-          return newP;
-      } catch (error: any) {
-          showAlert('Erro ao cadastrar participante', error);
-          throw error;
-      }
+      const newP = await financeService.saveRegistryItem('participants', { id: '', name });
+      setRegistries(prev => ({ ...prev, participants: [...prev.participants, newP] }));
+      return newP;
   };
-
-  const handleImportTransactions = async (rawItems: any[]) => {
-      setImporting(true);
-      try {
-          const cache = {
-              banks: new Map<string, string>(registries.banks.map(i => [i.name.toLowerCase(), i.id])),
-              categories: new Map<string, string>(registries.categories.map(i => [i.name.toLowerCase(), i.id])),
-              costCenters: new Map<string, string>(registries.costCenters.map(i => [i.name.toLowerCase(), i.id])),
-              participants: new Map<string, string>(registries.participants.map(i => [i.name.toLowerCase(), i.id])),
-              wallets: new Map<string, string>(registries.wallets.map(i => [i.name.toLowerCase(), i.id])),
-          };
-
-          const resolveEntityId = async (
-              type: 'banks' | 'categories' | 'costCenters' | 'participants' | 'wallets', 
-              rawName: string, 
-              defaultName: string
-          ): Promise<string> => {
-              const name = (rawName || defaultName).trim();
-              const key = name.toLowerCase();
-              if (cache[type].has(key)) return cache[type].get(key)!;
-
-              // @ts-ignore
-              const newItem = await financeService.saveRegistryItem(type, { id: '', name: name });
-              cache[type].set(key, newItem.id);
-              setRegistries(prev => ({ ...prev, [type]: [...prev[type], newItem] }));
-              return newItem.id;
-          };
-
-          const transactionsToSave: Transaction[] = [];
-          for (const item of rawItems) {
-              const bankId = await resolveEntityId('banks', item.bankName, 'Banco Geral');
-              const categoryId = await resolveEntityId('categories', item.categoryName, 'Geral');
-              const costCenterId = await resolveEntityId('costCenters', item.costCenterName, 'Geral');
-              const participantId = await resolveEntityId('participants', item.participantName, 'Diverso');
-              const walletId = await resolveEntityId('wallets', item.walletName || (registries.wallets.find(w => w.id === selectedWalletId)?.name), 'Carteira Principal');
-
-              transactionsToSave.push({
-                  id: '',
-                  date: item.date || new Date().toISOString().split('T')[0],
-                  description: item.description || 'Importado',
-                  docNumber: item.docNumber || '',
-                  value: item.value,
-                  type: item.type,
-                  status: item.status,
-                  bankId, categoryId, costCenterId, participantId, walletId
-              });
-          }
-
-          const savedItems = await financeService.createManyTransactions(transactionsToSave);
-          setTransactions(prev => [...savedItems, ...prev]);
-          showAlert('Importação Concluída', `${savedItems.length} transações importadas.`);
-      } catch (e: any) {
-          console.error("Erro na importação:", e);
-          showAlert('Erro na Importação', e);
-      } finally {
-          setImporting(false);
-      }
-  };
-
-  const handleRegistryAction = (type: keyof typeof registries) => ({
-    onAdd: async (name: string, extraData?: any) => {
-        try {
-            // @ts-ignore
-            const newItem = await financeService.saveRegistryItem(type, { id: '', name, ...extraData });
-            setRegistries(prev => ({ ...prev, [type]: [...prev[type], newItem] }));
-        } catch (e: any) {
-            showAlert('Erro ao Adicionar', e);
-            throw e; 
-        }
-    },
-    onEdit: async (id: string, name: string, extraData?: any) => {
-        try {
-            // @ts-ignore
-            const updated = await financeService.saveRegistryItem(type, { id, name, ...extraData });
-            setRegistries(prev => ({ ...prev, [type]: prev[type].map(item => item.id === id ? updated : item) }));
-        } catch (e: any) {
-            showAlert('Erro ao Editar', e);
-            throw e;
-        }
-    },
-    onDelete: async (id: string) => {
-        try {
-            // @ts-ignore
-            await financeService.deleteRegistryItem(type, id);
-            setRegistries(prev => ({ ...prev, [type]: prev[type].filter(item => item.id !== id) }));
-        } catch (e: any) {
-            showAlert('Erro ao Excluir', e);
-            throw e;
-        }
-    },
-    onImport: async (names: string[]) => {
-        try {
-            const newItems = [];
-            for (const name of names) {
-                // @ts-ignore
-                const newItem = await financeService.saveRegistryItem(type, { id: '', name });
-                newItems.push(newItem);
-            }
-            setRegistries(prev => ({ ...prev, [type]: [...prev[type], ...newItems] }));
-        } catch (e: any) {
-            showAlert('Erro na Importação', e);
-            throw e;
-        }
-    }
-  });
-
-  const handleSaveConfig = (url: string, key: string) => setIsConnected(!!url && !!key);
-  const openNewTransaction = () => { setEditingTransaction(null); setIsFormOpen(true); };
-  const openEditTransaction = (t: Transaction) => { setEditingTransaction(t); setIsFormOpen(true); };
 
   const registryTabs = [
     { id: 'wallets', label: 'Carteiras', icon: WalletIcon },
@@ -316,83 +229,129 @@ const App: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="flex h-screen items-center justify-center bg-white flex-col gap-6">
+        <div className="relative">
+            <div className="w-16 h-16 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
+            <Database className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 text-blue-600" />
+        </div>
+        <div className="text-center">
+            <p className="text-slate-800 font-bold text-lg">Sincronizando Dados</p>
+            <p className="text-slate-500 text-sm">Carregando seus registros do Supabase...</p>
+        </div>
       </div>
     );
   }
 
+  const selectClass = "bg-white border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 outline-none text-slate-700 font-medium cursor-pointer hover:bg-gray-50 transition-colors h-[38px] flex items-center min-w-[140px]";
+
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
-      {importing && (
-          <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center backdrop-blur-sm">
-              <div className="bg-white p-8 rounded-xl shadow-xl flex flex-col items-center">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
-                  <h3 className="text-lg font-bold text-slate-800">Processando Importação...</h3>
-                  <p className="text-sm text-slate-500 mt-2">Sincronizando registros.</p>
-              </div>
-          </div>
-      )}
-
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
       
       <main className="flex-1 flex flex-col overflow-hidden relative">
-        <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-8 flex-shrink-0 z-10">
-          <h1 className="text-xl font-bold text-slate-800 capitalize">
-              {activeTab === 'dashboard' && 'Dashboard'}
-              {activeTab === 'cashflow' && 'Fluxo de Caixa'}
-              {activeTab === 'payables' && 'Contas a Pagar & Receber'}
-              {activeTab === 'bank-transactions' && 'Movimentação Bancária'}
-              {activeTab === 'registries' && 'Cadastros'}
-              {activeTab === 'settings' && 'Configurações'}
-          </h1>
-          
-          <div className="flex items-center gap-3">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${isConnected ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
-              {isConnected ? <CheckCircle2 className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-              <span className="hidden sm:inline">{isConnected ? 'Conectado' : 'Local'}</span>
-            </div>
+        <header className="h-auto py-3 bg-white border-b border-gray-200 flex flex-wrap items-center justify-between px-8 flex-shrink-0 z-10 gap-4 shadow-sm">
+          <div className="flex items-center gap-6">
+              <h1 className="text-xl font-bold text-slate-800 whitespace-nowrap">
+                  {activeTab === 'dashboard' && 'Dashboard'}
+                  {activeTab === 'cashflow' && 'Fluxo de Caixa'}
+                  {activeTab === 'expenses-analysis' && 'Análise de Gastos'}
+                  {activeTab === 'payables' && 'Contas a Pagar & Receber'}
+                  {activeTab === 'bank-transactions' && 'Movimentação Bancária'}
+                  {activeTab === 'registries' && 'Cadastros'}
+                  {activeTab === 'settings' && 'Configurações'}
+                  {activeTab === 'manual' && 'Manual / Ajuda'}
+              </h1>
 
-            {(activeTab === 'dashboard' || activeTab === 'cashflow' || activeTab === 'payables' || activeTab === 'bank-transactions') && (
-                <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1 bg-gray-50 border border-gray-300 rounded-lg px-2 py-1">
-                        <Calendar className="w-3 h-3 text-gray-400" />
-                        <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="bg-transparent border-none text-xs w-[110px] outline-none" />
-                        <span className="text-gray-400">-</span>
-                        <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="bg-transparent border-none text-xs w-[110px] outline-none" />
+              <div className="flex items-center gap-3">
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border transition-colors ${isConnected ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                    {isConnected ? <CheckCircle2 className="w-3 h-3 text-green-500" /> : <WifiOff className="w-3 h-3" />}
+                    <span className="inline">{isConnected ? 'Supabase' : 'Offline'}</span>
+                </div>
+                
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-600 rounded-full text-[10px] font-black uppercase tracking-wider border border-slate-200 shadow-inner">
+                    {refreshing ? <Loader2 className="w-3 h-3 animate-spin text-blue-500" /> : <Layers className="w-3 h-3" />}
+                    <span>{refreshing ? 'Sincronizando...' : `${transactions.length} Registros`}</span>
+                </div>
+              </div>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            {['dashboard', 'cashflow', 'expenses-analysis', 'payables', 'bank-transactions'].includes(activeTab) && (
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1 bg-white border border-gray-300 rounded-lg px-2 py-1.5 shadow-sm h-[38px] group hover:border-blue-300 transition-colors">
+                        <Calendar className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500" />
+                        <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="bg-transparent border-none text-xs w-[110px] outline-none font-medium text-slate-700" title="Data Inicial" />
+                        <span className="text-gray-300 mx-1">-</span>
+                        <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="bg-transparent border-none text-xs w-[110px] outline-none font-medium text-slate-700" title="Data Final" />
+                        {(startDate || endDate) && (
+                           <button onClick={() => { setStartDate(''); setEndDate(''); }} className="ml-1 p-1 hover:bg-red-50 hover:text-red-500 rounded-full text-gray-300 transition-colors" title="Limpar Datas">
+                             <XCircle className="w-3 h-3" />
+                           </button>
+                        )}
                     </div>
 
-                    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 cursor-pointer outline-none hover:bg-white transition-colors">
-                        <option value="ALL">Status: Todos</option>
-                        <option value="PAID">Pagas</option>
-                        <option value="PENDING">Pendentes</option>
+                    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)} className={selectClass}>
+                      <option value="ALL">Todos os Status</option>
+                      <option value="PAID">Apenas Pagas</option>
+                      <option value="PENDING">Apenas Pendentes</option>
                     </select>
 
-                    <select value={selectedBankId} onChange={(e) => setSelectedBankId(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 cursor-pointer outline-none hover:bg-white transition-colors hidden lg:block">
-                        <option value="">Bancos: Todos</option>
-                        {registries.banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    <select value={selectedBankId} onChange={(e) => setSelectedBankId(e.target.value)} className={selectClass}>
+                      <option value="">Todos os Bancos</option>
+                      {registries.banks.map(b => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
                     </select>
 
-                    <select value={selectedWalletId} onChange={(e) => setSelectedWalletId(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 cursor-pointer hidden sm:block outline-none hover:bg-white transition-colors">
-                        <option value="">Carteiras: Todas</option>
-                        {registries.wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    <select value={selectedWalletId} onChange={(e) => setSelectedWalletId(e.target.value)} className={selectClass}>
+                      <option value="">Todas Carteiras</option>
+                      {registries.wallets.map(w => (
+                        <option key={w.id} value={w.id}>{w.name}</option>
+                      ))}
                     </select>
+
+                    <button onClick={() => loadTransactions()} className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-gray-300 h-[38px]" title="Sincronizar">
+                      <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-blue-500' : ''}`} />
+                    </button>
                 </div>
             )}
 
-            {activeTab !== 'registries' && activeTab !== 'dashboard' && activeTab !== 'cashflow' && activeTab !== 'settings' && (
-                <button onClick={openNewTransaction} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm shadow-blue-100">
-                    <Plus className="w-4 h-4" /> <span>Novo</span>
+            {!['registries', 'settings', 'manual'].includes(activeTab) && (
+                <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
+                    <Plus className="w-4 h-4" /> <span>Lançar</span>
                 </button>
             )}
           </div>
         </header>
 
         <div className="flex-1 flex flex-col overflow-hidden relative">
+          {refreshing && (
+              <div className="absolute top-0 left-0 w-full h-1 bg-blue-100 overflow-hidden z-50">
+                  <div className="w-full h-full bg-blue-600 animate-progress"></div>
+              </div>
+          )}
+
+          {transactions.length === 0 && !loading && !refreshing && activeTab !== 'settings' && activeTab !== 'registries' && activeTab !== 'manual' && (
+              <div className="absolute inset-0 flex items-center justify-center flex-col gap-5 bg-gray-50/90 z-20">
+                  <div className="p-6 bg-white rounded-full shadow-lg text-slate-200 border border-slate-100">
+                    <SearchX className="w-16 h-16" />
+                  </div>
+                  <div className="text-center space-y-2">
+                    <h2 className="text-2xl font-black text-slate-800 tracking-tight">Vazio por aqui...</h2>
+                    <p className="text-slate-500 text-sm max-w-sm px-6 mx-auto">
+                      Não encontramos lançamentos para os filtros aplicados.
+                    </p>
+                  </div>
+                  <div className="flex gap-3">
+                      <button onClick={() => { setStartDate(''); setEndDate(''); setSelectedBankId(''); setStatusFilter('ALL'); }} className="px-6 py-2 bg-white border border-slate-300 text-slate-700 font-bold rounded-lg hover:bg-slate-50 transition-colors shadow-sm">Remover Filtros</button>
+                  </div>
+              </div>
+          )}
+
           {activeTab === 'dashboard' && (
             <div className="flex-1 overflow-auto p-8">
               <div className="max-w-7xl mx-auto animate-fade-in">
-                <Summary transactions={dashboardTransactions} banks={registries.banks} />
+                <Summary transactions={transactions} banks={registries.banks} previousBalances={previousBalances} />
               </div>
             </div>
           )}
@@ -400,23 +359,32 @@ const App: React.FC = () => {
           {activeTab === 'cashflow' && (
             <div className="flex-1 overflow-auto p-8">
               <div className="max-w-7xl mx-auto">
-                <CashFlowReport transactions={displayedTransactions} />
+                <CashFlowReport allTransactions={transactions} startDate={startDate} endDate={endDate} registries={registries} />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'expenses-analysis' && (
+            <div className="flex-1 overflow-auto p-8">
+              <div className="max-w-7xl mx-auto">
+                <ExpenseAnalysisReport transactions={transactions} registries={registries} />
               </div>
             </div>
           )}
 
           {(activeTab === 'payables' || activeTab === 'bank-transactions') && (
-            <div className="flex-1 flex flex-col animate-fade-in bg-white h-full">
-               <div className="flex-1 overflow-hidden">
+            <div className="flex-1 flex flex-col animate-fade-in bg-white h-full relative">
+               <div className="absolute inset-0 overflow-hidden flex flex-col">
                    <TransactionList 
-                    transactions={displayedTransactions} 
+                    transactions={transactions} 
                     registries={registries} 
-                    onEdit={openEditTransaction} 
+                    onEdit={(t) => { setEditingTransaction(t); setIsFormOpen(true); }} 
                     onDelete={handleDeleteTransactions} 
-                    onImport={handleImportTransactions} 
+                    onImport={() => {}} 
                     variant="full" 
                     externalBalanceMap={globalBalanceMap} 
-                    initialSortByStatus={statusFilter}
+                    initialSortByStatus={statusFilter === 'ALL' ? undefined : statusFilter as any}
+                    totalInDatabase={transactions.length}
                    />
                </div>
             </div>
@@ -426,21 +394,26 @@ const App: React.FC = () => {
             <div className="flex-1 overflow-auto p-8">
                 <div className="h-full flex flex-col animate-fade-in">
                   <div className="flex flex-wrap gap-2 mb-6">
-                    {registryTabs.map(tab => {
-                      const isActive = activeRegistryTab === tab.id;
-                      return (
-                        <button key={tab.id} onClick={() => setActiveRegistryTab(tab.id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${isActive ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                    {registryTabs.map(tab => (
+                        <button key={tab.id} onClick={() => setActiveRegistryTab(tab.id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeRegistryTab === tab.id ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-200'}`}>
                           <tab.icon className="w-4 h-4" /> {tab.label}
                         </button>
-                      );
-                    })}
+                    ))}
                   </div>
-                  <div className="flex-1 min-h-0 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    {activeRegistryTab === 'wallets' && <RegistryManager title="Carteiras" items={registries.wallets} foreignItems={registries.banks} foreignLabel="Banco" foreignKey="bankId" {...handleRegistryAction('wallets')} />}
-                    {activeRegistryTab === 'banks' && <RegistryManager title="Bancos" items={registries.banks} {...handleRegistryAction('banks')} />}
-                    {activeRegistryTab === 'categories' && <RegistryManager title="Categorias" items={registries.categories} {...handleRegistryAction('categories')} />}
-                    {activeRegistryTab === 'costCenters' && <RegistryManager title="Centros de Custo" items={registries.costCenters} {...handleRegistryAction('costCenters')} />}
-                    {activeRegistryTab === 'participants' && <RegistryManager title="Participantes" items={registries.participants} {...handleRegistryAction('participants')} />}
+                  <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <RegistryManager 
+                        title={registryTabs.find(t => t.id === activeRegistryTab)?.label || ''} 
+                        items={registries[activeRegistryTab as keyof typeof registries]} 
+                        // @ts-ignore
+                        onAdd={(name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id:'', name, ...extra}).then(() => loadRegistries())}
+                        onDelete={(id) => financeService.deleteRegistryItem(activeRegistryTab, id).then(() => loadRegistries())}
+                        // @ts-ignore
+                        onEdit={(id, name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id, name, ...extra}).then(() => loadRegistries())}
+                        onImport={async () => {}}
+                        foreignItems={activeRegistryTab === 'wallets' ? registries.banks : undefined}
+                        foreignLabel={activeRegistryTab === 'wallets' ? 'Selecionar Banco' : undefined}
+                        foreignKey={activeRegistryTab === 'wallets' ? 'bankId' : undefined}
+                    />
                   </div>
                 </div>
             </div>
@@ -448,7 +421,13 @@ const App: React.FC = () => {
 
           {activeTab === 'settings' && (
             <div className="flex-1 overflow-auto p-8">
-               <SettingsView onSaveConfig={handleSaveConfig} />
+               <SettingsView onSaveConfig={() => setIsConnected(true)} />
+            </div>
+          )}
+
+          {activeTab === 'manual' && (
+            <div className="flex-1 overflow-auto p-8">
+               <HelpManual />
             </div>
           )}
         </div>
@@ -460,7 +439,10 @@ const App: React.FC = () => {
         onSave={handleSaveTransaction} 
         onAddParticipant={handleQuickAddParticipant}
         initialData={editingTransaction} 
-        defaultStatus={getDefaultStatus()} 
+        partnerData={editingTransaction?.linkedId ? transactions.find(t => t.linkedId === editingTransaction.linkedId && t.id !== editingTransaction.id) : null}
+        defaultStatus={statusFilter === 'ALL' ? 'PENDING' : statusFilter} 
+        preSelectedBankId={selectedBankId}
+        preSelectedWalletId={selectedWalletId}
         registries={registries} 
       />
 

@@ -1,15 +1,18 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { X, Save, ArrowRightLeft, Repeat, Search, ChevronDown, Plus, Loader2 } from 'lucide-react';
-import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionType, TransactionStatus } from '../types';
+import { X, Save, ArrowRightLeft, Plus, Loader2, Search, User, Repeat, CalendarClock } from 'lucide-react';
+import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus } from '../types';
 
 interface TransactionFormProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (transaction: Transaction | Transaction[]) => void;
+  onSave: (transaction: Transaction | Transaction[]) => Promise<void>;
   onAddParticipant: (name: string) => Promise<Participant>;
   initialData?: Transaction | null;
+  partnerData?: Transaction | null; 
   defaultStatus?: TransactionStatus;
+  preSelectedBankId?: string;
+  preSelectedWalletId?: string;
   registries: {
     banks: Bank[];
     categories: Category[];
@@ -34,7 +37,7 @@ const emptyTransaction: Omit<Transaction, 'id'> = {
 };
 
 type FormMode = 'DEFAULT' | 'TRANSFER';
-type RecurrenceFreq = 'DAILY' | 'BUSINESS_DAYS' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+type RecurrenceFrequency = 'MONTHLY' | 'WEEKLY' | 'YEARLY';
 
 export const TransactionForm: React.FC<TransactionFormProps> = ({ 
   isOpen, 
@@ -42,164 +45,219 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   onSave, 
   onAddParticipant,
   initialData,
+  partnerData,
   defaultStatus = 'PENDING',
+  preSelectedBankId,
+  preSelectedWalletId,
   registries 
 }) => {
   const [formData, setFormData] = useState<Omit<Transaction, 'id'>>(emptyTransaction);
   const [id, setId] = useState<string>('');
   const [mode, setMode] = useState<FormMode>('DEFAULT');
   const [targetBankId, setTargetBankId] = useState('');
+  const [linkedId, setLinkedId] = useState<string | undefined>(undefined);
+  const [isSaving, setIsSaving] = useState(false);
   
+  // Recurrence State
+  const [isRecurrent, setIsRecurrent] = useState(false);
+  const [recurrenceCount, setRecurrenceCount] = useState(2);
+  const [recurrenceFreq, setRecurrenceFreq] = useState<RecurrenceFrequency>('MONTHLY');
+
   const [participantSearch, setParticipantSearch] = useState('');
   const [isParticipantDropdownOpen, setIsParticipantDropdownOpen] = useState(false);
   const [isAddingParticipant, setIsAddingParticipant] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const [isRecurrence, setIsRecurrence] = useState(false);
-  const [recurrenceFreq, setRecurrenceFreq] = useState<RecurrenceFreq>('MONTHLY');
-  const [recurrenceEndDate, setRecurrenceEndDate] = useState('');
-
   const sortedBanks = useMemo(() => [...registries.banks].sort((a, b) => a.name.localeCompare(b.name)), [registries.banks]);
   const sortedCategories = useMemo(() => [...registries.categories].sort((a, b) => a.name.localeCompare(b.name)), [registries.categories]);
-  const sortedWallets = useMemo(() => [...registries.wallets].sort((a, b) => a.name.localeCompare(b.name)), [registries.wallets]);
   const sortedCostCenters = useMemo(() => [...registries.costCenters].sort((a, b) => a.name.localeCompare(b.name)), [registries.costCenters]);
+  const sortedWallets = useMemo(() => [...registries.wallets].sort((a, b) => a.name.localeCompare(b.name)), [registries.wallets]);
+
+  // Fecha o dropdown ao clicar fora
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsParticipantDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [dropdownRef]);
 
   useEffect(() => {
     if (!isOpen) return;
+    setIsSaving(false);
+    setIsParticipantDropdownOpen(false);
 
     if (initialData) {
       setFormData({ ...initialData });
       setId(initialData.id);
-      setMode('DEFAULT');
-      setIsRecurrence(false);
-      setTargetBankId('');
-      setRecurrenceEndDate('');
-      const p = registries.participants.find(x => x.id === initialData.participantId);
-      setParticipantSearch(p?.name || '');
-    } else {
-      setFormData({ ...emptyTransaction, status: defaultStatus });
-      setId('');
-      setMode('DEFAULT');
-      setIsRecurrence(false);
-      setTargetBankId('');
-      setRecurrenceEndDate('');
-      setParticipantSearch('');
-    }
-  }, [initialData, isOpen, defaultStatus]); // Removido registries.participants das dependências para evitar reset indesejado
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsParticipantDropdownOpen(false);
+      setLinkedId(initialData.linkedId);
+      
+      // Reset recurrence on edit mode (usually not supported or complex to manage)
+      setIsRecurrent(false);
+      setRecurrenceCount(2);
+      
+      if (initialData.linkedId) {
+        setMode('TRANSFER');
+        if (partnerData) {
+            setTargetBankId(partnerData.bankId);
+        } else {
+            setTargetBankId('');
+        }
+      } else {
+        setMode('DEFAULT');
+        setTargetBankId('');
       }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
-  const filteredParticipants = useMemo(() => {
-    const term = participantSearch.toLowerCase();
-    return registries.participants
-      .filter(p => p.name.toLowerCase().includes(term))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [registries.participants, participantSearch]);
-
-  const switchToTransfer = () => {
-    setMode('TRANSFER');
-    const targetCategory = sortedCategories.find(c => 
-      c.name.trim().toLowerCase() === "transferência mesma titularidade" ||
-      c.name.trim().toLowerCase() === "transferencia mesma titularidade"
-    );
-    const targetParticipant = registries.participants.find(p => 
-      p.name.trim().toLowerCase() === "renzo do amaral braz"
-    );
-
-    setFormData(prev => ({
-      ...prev,
-      categoryId: targetCategory?.id || prev.categoryId,
-      participantId: targetParticipant?.id || prev.participantId,
-    }));
-
-    if (targetParticipant) {
-      setParticipantSearch(targetParticipant.name);
-    } else if (!formData.participantId) {
-      setParticipantSearch("Renzo do Amaral Braz");
+      const participant = registries.participants.find(p => p.id === initialData.participantId);
+      setParticipantSearch(participant?.name || '');
+    } else {
+      // Novo Lançamento: Usa os pré-selecionados se disponíveis
+      setFormData({ 
+        ...emptyTransaction, 
+        status: defaultStatus,
+        bankId: preSelectedBankId || '',
+        walletId: preSelectedWalletId || ''
+      });
+      setId('');
+      setLinkedId(undefined);
+      setMode('DEFAULT');
+      setTargetBankId('');
+      setParticipantSearch('');
+      setIsRecurrent(false);
+      setRecurrenceCount(2);
+      setRecurrenceFreq('MONTHLY');
     }
-  };
-
-  const switchToDefault = () => setMode('DEFAULT');
+  }, [initialData, partnerData, isOpen, defaultStatus, registries.participants, preSelectedBankId, preSelectedWalletId]);
 
   const handleQuickAddParticipant = async (e: React.MouseEvent) => {
     e.preventDefault();
-    e.stopPropagation();
     if (!participantSearch.trim() || isAddingParticipant) return;
-
     setIsAddingParticipant(true);
     try {
         const newP = await onAddParticipant(participantSearch.trim());
-        handleChange('participantId', newP.id);
+        setFormData(prev => ({...prev, participantId: newP.id}));
         setParticipantSearch(newP.name);
         setIsParticipantDropdownOpen(false);
-    } catch (error) {
-        console.error("Erro ao criar participante rápido:", error);
     } finally {
         setIsAddingParticipant(false);
     }
   };
 
-  const generateRecurrenceDates = (start: string, end: string, freq: RecurrenceFreq): string[] => {
-    const dates: string[] = [];
-    let current = new Date(start + 'T12:00:00');
-    const stop = new Date(end + 'T12:00:00');
-    while (current <= stop) {
-        if (freq === 'BUSINESS_DAYS') {
-            const day = current.getDay();
-            if (day !== 0 && day !== 6) dates.push(current.toISOString().split('T')[0]);
-            current.setDate(current.getDate() + 1);
-        } else {
-            dates.push(current.toISOString().split('T')[0]);
-            if (freq === 'DAILY') current.setDate(current.getDate() + 1);
-            else if (freq === 'WEEKLY') current.setDate(current.getDate() + 7);
-            else if (freq === 'MONTHLY') current.setMonth(current.getMonth() + 1);
-            else if (freq === 'YEARLY') current.setFullYear(current.getFullYear() + 1);
-        }
-    }
-    return dates;
+  const calculateDate = (startDate: string, offset: number, freq: RecurrenceFrequency): string => {
+      const [y, m, d] = startDate.split('-').map(Number);
+      const date = new Date(y, m - 1, d);
+
+      if (freq === 'MONTHLY') {
+          date.setMonth(date.getMonth() + offset);
+          // Ajuste para evitar pular mês (ex: 31 Jan + 1 mês -> 3 Março ou 28 Fev)
+          // Se o dia mudou, significa que o mês destino tinha menos dias
+          if (date.getDate() !== d) {
+              date.setDate(0); // Volta para o último dia do mês anterior
+          }
+      } else if (freq === 'WEEKLY') {
+          date.setDate(date.getDate() + (offset * 7));
+      } else if (freq === 'YEARLY') {
+          date.setFullYear(date.getFullYear() + offset);
+      }
+
+      const yy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      return `${yy}-${mm}-${dd}`;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const transactionsToSave: Transaction[] = [];
-    const baseDates = isRecurrence && recurrenceEndDate ? generateRecurrenceDates(formData.date, recurrenceEndDate, recurrenceFreq) : [formData.date];
+    if (isSaving) return;
+    setIsSaving(true);
 
-    baseDates.forEach((dateStr, index) => {
-        const suffix = isRecurrence ? ` (${index + 1}/${baseDates.length})` : '';
-        if (mode === 'TRANSFER') {
-            const sourceBank = registries.banks.find(b => b.id === formData.bankId);
-            const targetBank = registries.banks.find(b => b.id === targetBankId);
-            transactionsToSave.push({
-                ...formData, id: '', date: dateStr, description: `Transf. enviada p/ ${targetBank?.name || 'Destino'}${suffix}`, type: 'DEBIT', bankId: formData.bankId, walletId: formData.walletId,
-            });
-            transactionsToSave.push({
-                ...formData, id: '', date: dateStr, description: `Transf. recebida de ${sourceBank?.name || 'Origem'}${suffix}`, type: 'CREDIT', bankId: targetBankId, walletId: formData.walletId,
-            });
-        } else {
-            transactionsToSave.push({
-                ...formData, id: isRecurrence ? '' : id, date: dateStr, description: formData.description + suffix
-            });
-        }
-    });
-    onSave(transactionsToSave.length === 1 ? transactionsToSave[0] : transactionsToSave);
-    onClose();
+    try {
+      const transactionsToSave: Transaction[] = [];
+      const isNew = !id;
+      const loops = (isNew && isRecurrent) ? Math.max(1, recurrenceCount) : 1;
+
+      for (let i = 0; i < loops; i++) {
+          const currentData = { ...formData };
+          
+          if (i > 0) {
+              currentData.date = calculateDate(formData.date, i, recurrenceFreq);
+              currentData.status = 'PENDING'; // Recorrências futuras geralmente nascem pendentes
+          }
+          
+          // Sufixo na descrição se for recorrente
+          if (loops > 1) {
+              currentData.description = `${formData.description} (${i+1}/${loops})`;
+          }
+
+          if (mode === 'TRANSFER') {
+              // Garante que o linkedId seja mantido ou gerado agora
+              // Se for edição, mantém o linkedId original. Se for recorrência, gera um novo par.
+              const currentLinkedId = (i === 0 && linkedId) ? linkedId : crypto.randomUUID();
+              
+              const sourceBank = registries.banks.find(b => b.id === formData.bankId);
+              const targetBank = registries.banks.find(b => b.id === targetBankId);
+
+              let debitLegId = '';
+              let creditLegId = '';
+
+              // Se for o primeiro item e estamos editando, tenta manter os IDs originais
+              if (i === 0 && initialData) {
+                   if (initialData.linkedId) {
+                      if (initialData.type === 'DEBIT') {
+                          debitLegId = initialData.id;
+                          creditLegId = partnerData?.id || '';
+                      } else {
+                          creditLegId = initialData.id;
+                          debitLegId = partnerData?.id || '';
+                      }
+                  } else {
+                      debitLegId = initialData.id;
+                      creditLegId = ''; 
+                  }
+              }
+
+              transactionsToSave.push({
+                  ...currentData,
+                  id: debitLegId, // Vazio se for novo ou recorrência > 0
+                  description: `Transf. p/ ${targetBank?.name || 'Destino'} ${loops > 1 ? `(${i+1}/${loops})` : ''}`,
+                  type: 'DEBIT',
+                  linkedId: currentLinkedId,
+                  bankId: formData.bankId
+              });
+
+              transactionsToSave.push({
+                  ...currentData,
+                  id: creditLegId, // Vazio se for novo ou recorrência > 0
+                  description: `Transf. de ${sourceBank?.name || 'Origem'} ${loops > 1 ? `(${i+1}/${loops})` : ''}`,
+                  type: 'CREDIT',
+                  linkedId: currentLinkedId,
+                  bankId: targetBankId
+              });
+          } else {
+              transactionsToSave.push({ 
+                  ...currentData, 
+                  id: (i === 0) ? id : '', // Mantém ID se for edição do primeiro, senão limpa
+                  linkedId: undefined 
+              });
+          }
+      }
+
+      await onSave(transactionsToSave);
+      onClose();
+    } catch (error) {
+      console.error("Erro ao salvar lançamento:", error);
+      alert("Erro ao salvar lançamento. Tente novamente.");
+      setIsSaving(false);
+    }
   };
 
-  const handleChange = (field: keyof Transaction, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
+  const inputClass = "w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 disabled:bg-gray-50 disabled:text-gray-400";
 
   if (!isOpen) return null;
-
-  const inputClass = "w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-slate-800 disabled:bg-gray-100 disabled:text-gray-500";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
@@ -207,213 +265,213 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         <div className="flex flex-col border-b border-gray-100 bg-gray-50">
             <div className="flex justify-between items-center p-6 pb-2">
                 <h2 className="text-xl font-bold text-slate-800">{id ? 'Editar Lançamento' : 'Novo Lançamento'}</h2>
-                <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors"><X className="w-6 h-6" /></button>
+                <button onClick={onClose} disabled={isSaving} className="text-gray-400 hover:text-gray-600 disabled:opacity-50"><X className="w-6 h-6" /></button>
             </div>
-            {!id && (
-                <div className="flex px-6 gap-6">
-                    <button type="button" onClick={switchToDefault} className={`pb-3 text-sm font-medium border-b-2 transition-colors ${mode === 'DEFAULT' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Receita / Despesa</button>
-                    <button type="button" onClick={switchToTransfer} className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${mode === 'TRANSFER' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}><ArrowRightLeft className="w-4 h-4" />Transferência Bancária</button>
-                </div>
-            )}
+            <div className="flex px-6 gap-6">
+                <button type="button" disabled={isSaving} onClick={() => setMode('DEFAULT')} className={`pb-3 text-sm font-medium border-b-2 transition-colors ${mode === 'DEFAULT' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'}`}>Receita / Despesa</button>
+                <button type="button" disabled={isSaving} onClick={() => { setMode('TRANSFER'); const cat = sortedCategories.find(c => c.name.toLowerCase().includes("transferência")); if(cat) setFormData(p => ({...p, categoryId: cat.id})); }} className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${mode === 'TRANSFER' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'}`}><ArrowRightLeft className="w-4 h-4" />Transferência</button>
+            </div>
         </div>
 
-        <div className="p-6 overflow-y-auto bg-white flex-1">
-          <form id="transaction-form" onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto bg-white flex-1 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Data {isRecurrence && 'Inicial'}</label>
-                <input type="date" required value={formData.date} onChange={(e) => handleChange('date', e.target.value)} className={inputClass} />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Data</label>
+                <input type="date" required disabled={isSaving} value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} className={inputClass} />
               </div>
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
-                <input type="text" value={formData.description} onChange={(e) => handleChange('description', e.target.value)} className={inputClass} placeholder={mode === 'TRANSFER' ? "Opcional (Ex: Mensalidade)" : "Ex: Fornecedor de TI"} />
+                <input type="text" disabled={isSaving} value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} className={inputClass} placeholder="Ex: Pagamento Fornecedor" />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Valor (R$)</label>
-                <input type="number" step="0.01" min="0" required value={formData.value} onChange={(e) => handleChange('value', parseFloat(e.target.value) || 0)} className={`${inputClass} font-mono`} />
+                <input type="number" step="0.01" required disabled={isSaving} value={formData.value} onChange={(e) => setFormData({...formData, value: parseFloat(e.target.value) || 0})} className={inputClass} />
               </div>
-              {mode === 'DEFAULT' && (
+              {mode === 'DEFAULT' ? (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
-                    <select value={formData.type} onChange={(e) => handleChange('type', e.target.value as TransactionType)} className={inputClass}>
-                        <option value="DEBIT">Débito (Saída)</option>
-                        <option value="CREDIT">Crédito (Entrada)</option>
+                    <select disabled={isSaving} value={formData.type} onChange={(e) => setFormData({...formData, type: e.target.value as any})} className={inputClass}>
+                        <option value="DEBIT">Débito</option>
+                        <option value="CREDIT">Crédito</option>
                     </select>
                 </div>
+              ) : (
+                <div className="flex items-end pb-2">
+                   <span className="text-xs font-bold text-blue-600 uppercase bg-blue-50 px-3 py-2 rounded-lg border border-blue-100 flex items-center gap-2">
+                     <ArrowRightLeft className="w-3 h-3" /> Modo Transferência
+                   </span>
+                </div>
               )}
-               <div className="flex items-end pb-2">
-                <label className="flex items-center gap-3 cursor-pointer select-none">
-                  <div className="relative">
-                    <input type="checkbox" className="sr-only peer" checked={formData.status === 'PAID'} onChange={(e) => handleChange('status', e.target.checked ? 'PAID' : 'PENDING')} />
-                    <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-green-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                  </div>
-                  <span className={`text-sm font-medium ${formData.status === 'PAID' ? 'text-green-700' : 'text-gray-500'}`}>{formData.status === 'PAID' ? 'Pago' : 'Pendente'}</span>
-                </label>
-              </div>
-              <div className={mode === 'TRANSFER' ? 'hidden' : 'block'}>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Nº Doc</label>
-                  <input type="text" value={formData.docNumber} onChange={(e) => handleChange('docNumber', e.target.value)} className={inputClass} />
-              </div>
-            </div>
-
-            <div className={mode === 'TRANSFER' ? "p-5 bg-blue-50 border border-blue-100 rounded-xl space-y-6 shadow-sm" : "space-y-6"}>
-                {mode === 'TRANSFER' && (
-                    <h3 className="text-sm font-bold text-blue-800 flex items-center gap-2 mb-2"><ArrowRightLeft className="w-4 h-4" />Dados da Transferência</h3>
-                )}
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div>
-                        <label className={`block text-xs font-bold mb-1 uppercase tracking-wider ${mode === 'TRANSFER' ? 'text-blue-900' : 'text-gray-700'}`}>Carteira</label>
-                        <select required value={formData.walletId} onChange={(e) => handleChange('walletId', e.target.value)} className={inputClass}>
-                            <option value="">Selecione...</option>
-                            {sortedWallets.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                        </select>
-                    </div>
-                    {mode === 'TRANSFER' ? (
-                        <>
-                            <div>
-                                <label className="block text-xs font-bold text-blue-900 mb-1 uppercase tracking-wider">Banco Origem</label>
-                                <select required value={formData.bankId} onChange={(e) => handleChange('bankId', e.target.value)} className={inputClass}>
-                                    <option value="">Selecione...</option>
-                                    {sortedBanks.map(r => <option key={r.id} value={r.id} disabled={r.id === targetBankId}>{r.name}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-blue-900 mb-1 uppercase tracking-wider">Banco Destino</label>
-                                <select required value={targetBankId} onChange={(e) => setTargetBankId(e.target.value)} className={inputClass}>
-                                    <option value="">Selecione...</option>
-                                    {sortedBanks.map(r => <option key={r.id} value={r.id} disabled={r.id === formData.bankId}>{r.name}</option>)}
-                                </select>
-                            </div>
-                        </>
-                    ) : (
-                        <div>
-                            <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">Banco</label>
-                            <select required value={formData.bankId} onChange={(e) => handleChange('bankId', e.target.value)} className={inputClass}>
-                                <option value="">Selecione...</option>
-                                {sortedBanks.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                            </select>
-                        </div>
-                    )}
-                </div>
-
-                <div className={`grid grid-cols-1 md:grid-cols-3 gap-6 ${mode === 'TRANSFER' ? 'pt-4 border-t border-blue-100' : ''}`}>
-                    <div>
-                        <label className={`block text-xs font-bold mb-1 uppercase tracking-wider ${mode === 'TRANSFER' ? 'text-blue-900' : 'text-gray-700'}`}>Categoria</label>
-                        <select required value={formData.categoryId} onChange={(e) => handleChange('categoryId', e.target.value)} className={inputClass}>
-                            <option value="">Selecione...</option>
-                            {sortedCategories.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                        </select>
-                    </div>
-                    
-                    <div className="relative md:col-span-2" ref={dropdownRef}>
-                        <label className={`block text-xs font-bold mb-1 uppercase tracking-wider flex justify-between items-center ${mode === 'TRANSFER' ? 'text-blue-900' : 'text-gray-700'}`}>
-                            <span>Participante</span>
-                            {formData.participantId && <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Selecionado</span>}
-                        </label>
-                        <div className="relative">
-                            <input 
-                                type="text"
-                                value={participantSearch}
-                                onChange={(e) => {
-                                    setParticipantSearch(e.target.value);
-                                    setIsParticipantDropdownOpen(true);
-                                    if (!e.target.value) handleChange('participantId', '');
-                                }}
-                                onFocus={() => setIsParticipantDropdownOpen(true)}
-                                className={`${inputClass} pr-10`}
-                                placeholder="Digite para buscar ou criar..."
-                            />
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center pointer-events-none text-slate-400">
-                                <Search className="w-4 h-4" />
-                            </div>
-                        </div>
-                        
-                        {isParticipantDropdownOpen && (
-                            <div className="absolute z-[60] mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto animate-fade-in">
-                                {participantSearch.trim() && (
-                                    <button
-                                        type="button"
-                                        disabled={isAddingParticipant}
-                                        onClick={handleQuickAddParticipant}
-                                        className="w-full text-left px-4 py-3 bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-bold flex items-center gap-2 border-b border-blue-200 transition-colors"
-                                    >
-                                        {isAddingParticipant ? (
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                        ) : (
-                                            <Plus className="w-4 h-4" />
-                                        )}
-                                        Cadastrar novo: "{participantSearch}"
-                                    </button>
-                                )}
-                                {filteredParticipants.length > 0 ? (
-                                    filteredParticipants.map(p => (
-                                        <button
-                                            key={p.id}
-                                            type="button"
-                                            onClick={() => {
-                                                handleChange('participantId', p.id);
-                                                setParticipantSearch(p.name);
-                                                setIsParticipantDropdownOpen(false);
-                                            }}
-                                            className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 transition-colors border-b border-slate-50 last:border-0 ${formData.participantId === p.id ? 'bg-blue-50 font-bold text-blue-700' : 'text-slate-700'}`}
-                                        >
-                                            <div className="truncate">{p.name}</div>
-                                        </button>
-                                    ))
-                                ) : (
-                                    !participantSearch.trim() && <div className="px-4 py-8 text-center text-slate-400 text-sm">Digite para buscar...</div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="md:col-span-1">
-                        <label className={`block text-xs font-bold mb-1 uppercase tracking-wider ${mode === 'TRANSFER' ? 'text-blue-900' : 'text-gray-700'}`}>Centro de Custo (Opcional)</label>
-                        <select value={formData.costCenterId} onChange={(e) => handleChange('costCenterId', e.target.value)} className={inputClass}>
-                            <option value="">Selecione...</option>
-                            {sortedCostCenters.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            {!id && (
-                <div className="border-t border-gray-100 pt-6">
-                    <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 mb-4 select-none">
-                        <input type="checkbox" checked={isRecurrence} onChange={(e) => setIsRecurrence(e.target.checked)} className="w-4 h-4 text-blue-600 rounded" />
-                        <ArrowRightLeft className="w-4 h-4 text-slate-500" /> Repetir este lançamento?
+               
+               {/* Flags: Pago & Recorrência */}
+               <div className="flex flex-col justify-end gap-2 pb-1">
+                 <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" disabled={isSaving} className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked={formData.status === 'PAID'} onChange={(e) => setFormData({...formData, status: e.target.checked ? 'PAID' : 'PENDING'})} />
+                    <span className="text-sm font-medium text-gray-700">Pago / Recebido</span>
+                 </label>
+                 
+                 {!id && (
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input type="checkbox" disabled={isSaving} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" checked={isRecurrent} onChange={(e) => setIsRecurrent(e.target.checked)} />
+                        <span className="text-sm font-medium text-gray-700 flex items-center gap-1"><Repeat className="w-3 h-3 text-purple-500" /> Repetir?</span>
                     </label>
-                    {isRecurrence && (
-                        <div className="p-4 bg-orange-50 border border-orange-100 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium text-orange-900 mb-1">Frequência</label>
-                                <select value={recurrenceFreq} onChange={(e) => setRecurrenceFreq(e.target.value as RecurrenceFreq)} className={inputClass}>
-                                    <option value="BUSINESS_DAYS">Dias úteis</option>
-                                    <option value="WEEKLY">Semanal</option>
-                                    <option value="MONTHLY">Mensal</option>
-                                    <option value="YEARLY">Anual</option>
-                                    <option value="DAILY">Diário</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-orange-900 mb-1">Até quando?</label>
-                                <input type="date" required value={recurrenceEndDate} onChange={(e) => setRecurrenceEndDate(e.target.value)} min={formData.date} className={inputClass} />
-                            </div>
+                 )}
+              </div>
+
+              <div className={mode === 'TRANSFER' ? 'invisible' : ''}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nº Doc</label>
+                  <input type="text" disabled={isSaving} value={formData.docNumber} onChange={(e) => setFormData({...formData, docNumber: e.target.value})} className={inputClass} />
+              </div>
+            </div>
+            
+            {/* Linha Condicional de Recorrência */}
+            {isRecurrent && !id && (
+                <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 animate-fade-in grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-xs font-bold text-purple-700 uppercase mb-1">Frequência</label>
+                        <select 
+                            value={recurrenceFreq} 
+                            onChange={(e) => setRecurrenceFreq(e.target.value as any)} 
+                            className="w-full px-3 py-2 bg-white border border-purple-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-purple-500 outline-none"
+                        >
+                            <option value="MONTHLY">Mensal</option>
+                            <option value="WEEKLY">Semanal</option>
+                            <option value="YEARLY">Anual</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-purple-700 uppercase mb-1">Quantidade (Parcelas)</label>
+                        <div className="flex items-center gap-2">
+                             <input 
+                                type="number" 
+                                min="2" 
+                                max="360" 
+                                value={recurrenceCount} 
+                                onChange={(e) => setRecurrenceCount(parseInt(e.target.value) || 2)} 
+                                className="w-24 px-3 py-2 bg-white border border-purple-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-purple-500 outline-none"
+                            />
+                            <span className="text-xs text-purple-600 italic">vezes</span>
                         </div>
-                    )}
+                    </div>
                 </div>
             )}
-          </form>
-        </div>
 
-        <div className="p-6 border-t border-gray-100 bg-white flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-100 transition-colors">Cancelar</button>
-          <button type="submit" form="transaction-form" className="px-6 py-2 bg-blue-600 rounded-lg text-white font-medium hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-sm shadow-blue-100">
-            <Save className="w-4 h-4" /> {isRecurrence ? 'Gerar Lançamentos' : 'Salvar'}
+            <div className={`grid grid-cols-1 gap-6 ${mode === 'TRANSFER' ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Carteira</label>
+                    <select required disabled={isSaving} value={formData.walletId} onChange={(e) => setFormData({...formData, walletId: e.target.value})} className={inputClass}>
+                        <option value="">Selecione...</option>
+                        {sortedWallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{mode === 'TRANSFER' ? 'Banco Origem' : 'Banco'}</label>
+                    <select required disabled={isSaving} value={formData.bankId} onChange={(e) => setFormData({...formData, bankId: e.target.value})} className={inputClass}>
+                        <option value="">Selecione...</option>
+                        {sortedBanks.map(b => (
+                            <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                    </select>
+                </div>
+                {mode === 'TRANSFER' && (
+                    <div>
+                        <label className="block text-xs font-bold text-blue-600 uppercase mb-1">Banco Destino</label>
+                        <select required disabled={isSaving} value={targetBankId} onChange={(e) => setTargetBankId(e.target.value)} className={`${inputClass} border-blue-200 bg-blue-50/30`}>
+                            <option value="">Selecione...</option>
+                            {sortedBanks.map(b => (
+                                <option key={b.id} value={b.id} disabled={b.id === formData.bankId}>{b.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+                <div className="relative" ref={dropdownRef}>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Participante</label>
+                    <div className="relative">
+                        <input 
+                            type="text" 
+                            disabled={isSaving} 
+                            value={participantSearch} 
+                            onChange={(e) => { 
+                                setParticipantSearch(e.target.value); 
+                                setIsParticipantDropdownOpen(true); 
+                            }} 
+                            onFocus={() => setIsParticipantDropdownOpen(true)} 
+                            className={`${inputClass} pr-10`} 
+                            placeholder="Buscar..." 
+                        />
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                             {participantSearch ? <User className="w-4 h-4 text-blue-500" /> : <Search className="w-4 h-4" />}
+                        </div>
+                    </div>
+
+                    {isParticipantDropdownOpen && !isSaving && (
+                        <div className="absolute z-50 w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-72 overflow-y-auto transform origin-top animate-fade-in custom-scrollbar">
+                            {participantSearch.trim() && !registries.participants.some(p => p.name.toLowerCase() === participantSearch.toLowerCase()) && (
+                                <button type="button" onClick={handleQuickAddParticipant} className="w-full text-left p-4 text-white bg-blue-600 hover:bg-blue-700 font-bold flex items-center gap-2 sticky top-0 z-10 transition-colors">
+                                    <Plus className="w-5 h-5" /> 
+                                    <span>Cadastrar Novo: "{participantSearch}"</span>
+                                </button>
+                            )}
+                            
+                            <div className="py-1">
+                                {registries.participants
+                                    .filter(p => p.name.toLowerCase().includes(participantSearch.toLowerCase()))
+                                    .map((p, idx) => (
+                                    <button 
+                                        key={p.id} 
+                                        type="button" 
+                                        onClick={() => { 
+                                            setFormData({...formData, participantId: p.id}); 
+                                            setParticipantSearch(p.name); 
+                                            setIsParticipantDropdownOpen(false); 
+                                        }} 
+                                        className={`w-full text-left px-4 py-3 text-sm flex items-center gap-3 transition-colors ${
+                                            idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'
+                                        } hover:bg-blue-50 hover:text-blue-700`}
+                                    >
+                                        <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 font-bold text-xs">
+                                            {p.name.substring(0, 2).toUpperCase()}
+                                        </div>
+                                        <span className="font-medium">{p.name}</span>
+                                    </button>
+                                ))}
+                                {registries.participants.filter(p => p.name.toLowerCase().includes(participantSearch.toLowerCase())).length === 0 && !participantSearch.trim() && (
+                                    <div className="p-4 text-center text-gray-400 text-sm italic">
+                                        Digite para buscar...
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Categoria</label>
+                    <select required disabled={isSaving} value={formData.categoryId} onChange={(e) => setFormData({...formData, categoryId: e.target.value})} className={inputClass}>
+                        <option value="">Selecione...</option>
+                        {sortedCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Centro de Custo</label>
+                    <select disabled={isSaving} value={formData.costCenterId} onChange={(e) => setFormData({...formData, costCenterId: e.target.value})} className={inputClass}>
+                        <option value="">Selecione...</option>
+                        {sortedCostCenters.map(cc => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+                    </select>
+                </div>
+            </div>
+        </form>
+
+        <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+          <button type="button" onClick={onClose} disabled={isSaving} className="px-6 py-2 text-gray-600 font-medium hover:bg-gray-200 rounded-lg disabled:opacity-50">Cancelar</button>
+          <button type="submit" disabled={isSaving} onClick={handleSubmit} className="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 flex items-center gap-2 shadow-lg shadow-blue-200 disabled:bg-blue-400">
+            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {isSaving ? 'Salvando...' : `Salvar ${isRecurrent && !id ? 'Lançamentos' : 'Lançamento'}`}
           </button>
         </div>
       </div>

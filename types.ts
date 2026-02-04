@@ -1,3 +1,4 @@
+
 export type TransactionType = 'CREDIT' | 'DEBIT';
 export type TransactionStatus = 'PAID' | 'PENDING';
 
@@ -23,12 +24,15 @@ export interface Transaction {
   type: TransactionType;
   status: TransactionStatus;
   
-  // Relations (Storing IDs usually, but for this UI demo we might store names or objects)
+  // Relations
   bankId: string;
   categoryId: string;
   participantId: string;
   costCenterId: string;
   walletId: string;
+
+  // Link for transfers
+  linkedId?: string;
 }
 
 export interface FinancialSummary {

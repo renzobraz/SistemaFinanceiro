@@ -9,7 +9,9 @@ import {
   CalendarClock,
   ChevronLeft,
   ChevronRight,
-  TrendingUp
+  TrendingUp,
+  PieChart,
+  BookOpen
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -32,6 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'cashflow', label: 'Fluxo de Caixa', icon: TrendingUp },
+    { id: 'expenses-analysis', label: 'Análise de Gastos', icon: PieChart },
     { id: 'payables', label: 'Contas a Pagar/Receber', icon: CalendarClock },
     { id: 'bank-transactions', label: 'Movimentação Bancária', icon: ArrowRightLeft },
     { id: 'registries', label: 'Cadastros', icon: Database },
@@ -83,6 +86,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
       </nav>
 
       <div className="p-2 border-t border-slate-800 space-y-2">
+         <button 
+          onClick={() => setActiveTab('manual')}
+          title={isCollapsed ? 'Manual / Ajuda' : ''}
+          className={`w-full flex items-center px-3 py-3 rounded-lg transition-colors ${
+             activeTab === 'manual' 
+             ? 'bg-blue-600 text-white' 
+             : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          } ${isCollapsed ? 'justify-center' : 'justify-center lg:justify-start'}`}
+        >
+          <BookOpen className="w-5 h-5 flex-shrink-0" />
+          <span className={`ml-3 whitespace-nowrap ${textClass}`}>Manual / Ajuda</span>
+        </button>
+
         <button 
           onClick={() => setActiveTab('settings')}
           title={isCollapsed ? 'Configurações' : ''}
