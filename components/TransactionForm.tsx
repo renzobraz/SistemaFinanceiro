@@ -39,6 +39,20 @@ const emptyTransaction: Omit<Transaction, 'id'> = {
 type FormMode = 'DEFAULT' | 'TRANSFER';
 type RecurrenceFrequency = 'MONTHLY' | 'WEEKLY' | 'YEARLY';
 
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    try {
+        return crypto.randomUUID();
+    } catch (e) {
+        // Fallback se falhar
+    }
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
 export const TransactionForm: React.FC<TransactionFormProps> = ({ 
   isOpen, 
   onClose, 
@@ -73,7 +87,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const sortedCostCenters = useMemo(() => [...registries.costCenters].sort((a, b) => a.name.localeCompare(b.name)), [registries.costCenters]);
   const sortedWallets = useMemo(() => [...registries.wallets].sort((a, b) => a.name.localeCompare(b.name)), [registries.wallets]);
 
-  // Fecha o dropdown ao clicar fora
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -96,7 +109,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       setId(initialData.id);
       setLinkedId(initialData.linkedId);
       
-      // Reset recurrence on edit mode (usually not supported or complex to manage)
       setIsRecurrent(false);
       setRecurrenceCount(2);
       
@@ -115,7 +127,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       const participant = registries.participants.find(p => p.id === initialData.participantId);
       setParticipantSearch(participant?.name || '');
     } else {
-      // Novo Lançamento: Usa os pré-selecionados se disponíveis
       setFormData({ 
         ...emptyTransaction, 
         status: defaultStatus,
@@ -153,10 +164,8 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
 
       if (freq === 'MONTHLY') {
           date.setMonth(date.getMonth() + offset);
-          // Ajuste para evitar pular mês (ex: 31 Jan + 1 mês -> 3 Março ou 28 Fev)
-          // Se o dia mudou, significa que o mês destino tinha menos dias
           if (date.getDate() !== d) {
-              date.setDate(0); // Volta para o último dia do mês anterior
+              date.setDate(0); 
           }
       } else if (freq === 'WEEKLY') {
           date.setDate(date.getDate() + (offset * 7));
@@ -185,18 +194,15 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           
           if (i > 0) {
               currentData.date = calculateDate(formData.date, i, recurrenceFreq);
-              currentData.status = 'PENDING'; // Recorrências futuras geralmente nascem pendentes
+              // Mantém o status original (não força PENDING), respeitando a seleção do usuário
           }
           
-          // Sufixo na descrição se for recorrente
           if (loops > 1) {
               currentData.description = `${formData.description} (${i+1}/${loops})`;
           }
 
           if (mode === 'TRANSFER') {
-              // Garante que o linkedId seja mantido ou gerado agora
-              // Se for edição, mantém o linkedId original. Se for recorrência, gera um novo par.
-              const currentLinkedId = (i === 0 && linkedId) ? linkedId : crypto.randomUUID();
+              const currentLinkedId = (i === 0 && linkedId) ? linkedId : generateUUID();
               
               const sourceBank = registries.banks.find(b => b.id === formData.bankId);
               const targetBank = registries.banks.find(b => b.id === targetBankId);
@@ -204,7 +210,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               let debitLegId = '';
               let creditLegId = '';
 
-              // Se for o primeiro item e estamos editando, tenta manter os IDs originais
               if (i === 0 && initialData) {
                    if (initialData.linkedId) {
                       if (initialData.type === 'DEBIT') {
@@ -222,7 +227,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
 
               transactionsToSave.push({
                   ...currentData,
-                  id: debitLegId, // Vazio se for novo ou recorrência > 0
+                  id: debitLegId, 
                   description: `Transf. p/ ${targetBank?.name || 'Destino'} ${loops > 1 ? `(${i+1}/${loops})` : ''}`,
                   type: 'DEBIT',
                   linkedId: currentLinkedId,
@@ -231,7 +236,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
 
               transactionsToSave.push({
                   ...currentData,
-                  id: creditLegId, // Vazio se for novo ou recorrência > 0
+                  id: creditLegId, 
                   description: `Transf. de ${sourceBank?.name || 'Origem'} ${loops > 1 ? `(${i+1}/${loops})` : ''}`,
                   type: 'CREDIT',
                   linkedId: currentLinkedId,
@@ -240,7 +245,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           } else {
               transactionsToSave.push({ 
                   ...currentData, 
-                  id: (i === 0) ? id : '', // Mantém ID se for edição do primeiro, senão limpa
+                  id: (i === 0) ? id : '', 
                   linkedId: undefined 
               });
           }
@@ -306,7 +311,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 </div>
               )}
                
-               {/* Flags: Pago & Recorrência */}
                <div className="flex flex-col justify-end gap-2 pb-1">
                  <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input type="checkbox" disabled={isSaving} className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked={formData.status === 'PAID'} onChange={(e) => setFormData({...formData, status: e.target.checked ? 'PAID' : 'PENDING'})} />
@@ -327,7 +331,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               </div>
             </div>
             
-            {/* Linha Condicional de Recorrência */}
             {isRecurrent && !id && (
                 <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 animate-fade-in grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
