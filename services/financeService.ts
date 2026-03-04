@@ -10,6 +10,11 @@ import {
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+export const DEFAULT_SUPABASE_CONFIG = {
+  url: "https://uiekbavvgvrcsmbvoqtt.supabase.co",
+  key: "sb_publishable_L3w_v81e9H5oz9fWt-DW2Q_bMtQjQsx"
+};
+
 const uuidv4 = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -55,8 +60,15 @@ function saveEntityLocal<T>(key: string, data: T[]) {
 }
 
 const getSupabase = (): SupabaseClient | null => {
-  const url = localStorage.getItem('supabase_url')?.trim();
-  const key = localStorage.getItem('supabase_key')?.trim();
+  let url = localStorage.getItem('supabase_url')?.trim();
+  let key = localStorage.getItem('supabase_key')?.trim();
+
+  // Use defaults if localStorage is empty
+  if (!url || !key) {
+    url = DEFAULT_SUPABASE_CONFIG.url;
+    key = DEFAULT_SUPABASE_CONFIG.key;
+  }
+
   if (url && key) {
     try {
       return createClient(url, key);
@@ -70,7 +82,8 @@ const getSupabase = (): SupabaseClient | null => {
 
 const formatSupabaseError = (error: any): string => {
     if (!error) return "Erro desconhecido";
-    return error.message || error.details || JSON.stringify(error);
+    const code = error.code ? ` (Code: ${error.code})` : '';
+    return (error.message || error.details || JSON.stringify(error)) + code;
 };
 
 const mapTransactionFromDb = (db: any): Transaction => ({

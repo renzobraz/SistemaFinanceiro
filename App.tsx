@@ -9,7 +9,7 @@ import { SettingsView } from './components/SettingsView';
 import { CashFlowReport } from './components/CashFlowReport';
 import { ExpenseAnalysisReport } from './components/ExpenseAnalysisReport';
 import { HelpManual } from './components/HelpManual';
-import { financeService } from './services/financeService';
+import { financeService, DEFAULT_SUPABASE_CONFIG } from './services/financeService';
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus } from './types';
 import { 
   Plus, 
@@ -128,7 +128,15 @@ const App: React.FC = () => {
     } catch (error: any) {
       if (requestId === lastRequestIdRef.current) {
         console.error("Failed to load transactions", error);
-        showAlert('Erro de Sincronização', error.message);
+        
+        const msg = error.message || '';
+        // Detect Permission Denied (42501) or general permission errors
+        if (msg.includes('permission denied') || msg.includes('42501') || msg.includes('policy')) {
+            setActiveTab('settings');
+            showAlert('Configuração Necessária', 'Detectamos um erro de permissão no banco de dados. Por favor, execute o "Código SQL" na aba de Configurações para corrigir.');
+        } else {
+            showAlert('Erro de Sincronização', error.message);
+        }
       }
     } finally {
       if (requestId === lastRequestIdRef.current) {
@@ -139,7 +147,10 @@ const App: React.FC = () => {
 
   const loadAll = async () => {
     setLoading(true);
-    const currentlyConnected = !!localStorage.getItem('supabase_url') && !!localStorage.getItem('supabase_key');
+    const lsUrl = localStorage.getItem('supabase_url');
+    const lsKey = localStorage.getItem('supabase_key');
+    const currentlyConnected = (!!lsUrl && !!lsKey) || (!!DEFAULT_SUPABASE_CONFIG.url && !!DEFAULT_SUPABASE_CONFIG.key);
+    
     setIsConnected(currentlyConnected);
     await Promise.all([loadRegistries(), loadTransactions()]);
     setLoading(false);

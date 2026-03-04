@@ -1,5 +1,4 @@
-
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
@@ -8,11 +7,30 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       @keyframes progress {
-        0% { transform: translateX(-100%); }
-        100% { transform: translateX(100%); }
+        0% {
+          transform: translateX(-100%);
+        }
+        100% {
+          transform: translateX(100%);
+        }
       }
       .animate-progress {
         animation: progress 1.5s infinite ease-in-out;
+      }
+
+      /* Custom Scrollbar for Dropdowns */
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background-color: #cbd5e1;
+        border-radius: 20px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background-color: #94a3b8;
       }
     </style>
     <script>
@@ -20,35 +38,35 @@
         theme: {
           extend: {
             colors: {
-              primary: '#0f172a',
-              secondary: '#334155',
-              accent: '#3b82f6',
-              success: '#10b981',
-              danger: '#ef4444',
-              warning: '#f59e0b',
-            }
-          }
+              primary: "#0f172a",
+              secondary: "#334155",
+              accent: "#3b82f6",
+              success: "#10b981",
+              danger: "#ef4444",
+              warning: "#f59e0b",
+            },
+          },
+        },
+      };
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "react-dom/": "https://esm.sh/react-dom@18.3.1/",
+          "react-dom": "https://esm.sh/react-dom@18.3.1",
+          "lucide-react": "https://esm.sh/lucide-react@0.344.0",
+          "react/": "https://esm.sh/react@18.3.1/",
+          "react": "https://esm.sh/react@18.3.1",
+          "recharts": "https://esm.sh/recharts@2.12.7",
+          "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.42.0",
+          "@google/genai": "https://esm.sh/@google/genai@^1.38.0"
         }
       }
     </script>
-  <script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://esm.sh/react-dom@18.3.1/",
-    "react-dom": "https://esm.sh/react-dom@18.3.1",
-    "lucide-react": "https://esm.sh/lucide-react@0.344.0",
-    "react/": "https://esm.sh/react@18.3.1/",
-    "react": "https://esm.sh/react@18.3.1",
-    "recharts": "https://esm.sh/recharts@2.12.7",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.42.0",
-    "@google/genai": "https://esm.sh/@google/genai@^1.38.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
+    <link rel="stylesheet" href="/index.css" />
+  </head>
   <body class="bg-gray-50 text-slate-800 antialiased">
     <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
-</body>
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>
