@@ -421,6 +421,12 @@ const App: React.FC = () => {
                         // @ts-ignore
                         onEdit={(id, name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id, name, ...extra}).then(() => loadRegistries())}
                         onImport={async () => {}}
+                        onDeduplicate={async (onProgress) => {
+                            const res = await financeService.deduplicateRegistry(activeRegistryTab, onProgress);
+                            await loadRegistries();
+                            await loadTransactions();
+                            return res;
+                        }}
                         foreignItems={activeRegistryTab === 'wallets' ? registries.banks : undefined}
                         foreignLabel={activeRegistryTab === 'wallets' ? 'Selecionar Banco' : undefined}
                         foreignKey={activeRegistryTab === 'wallets' ? 'bankId' : undefined}

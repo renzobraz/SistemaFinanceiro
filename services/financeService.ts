@@ -82,6 +82,11 @@ const getSupabase = (): SupabaseClient | null => {
 
 const formatSupabaseError = (error: any): string => {
     if (!error) return "Erro desconhecido";
+    
+    if (error.code === '23503') {
+        return "Não é possível excluir este registro pois ele está sendo usado em um ou mais lançamentos financeiros.";
+    }
+
     const code = error.code ? ` (Code: ${error.code})` : '';
     return (error.message || error.details || JSON.stringify(error)) + code;
 };
@@ -153,6 +158,7 @@ export const financeService = {
         // Range é aplicado sobre a query já filtrada
         const { data, error } = await query
           .order('date', { ascending: false })
+          .order('id')
           .range(from, to);
 
         if (error) throw new Error(formatSupabaseError(error));
@@ -169,7 +175,8 @@ export const financeService = {
           }
         }
       }
-      return allData.map(mapTransactionFromDb);
+      const uniqueData = Array.from(new Map(allData.map(item => [item.id, item])).values());
+      return uniqueData.map(mapTransactionFromDb);
     }
     
     // FALLBACK LOCAL
@@ -319,6 +326,7 @@ export const financeService = {
           .from(tableMap[type])
           .select('*')
           .order('name')
+          .order('id')
           .range(from, to);
 
         if (error) throw new Error(formatSupabaseError(error));
@@ -336,8 +344,11 @@ export const financeService = {
         }
       }
       
-      if (type === 'wallets') return allData.map((d: any) => ({ id: d.id, name: d.name, bankId: d.bank_id })) as any;
-      return allData as T[];
+      if (type === 'wallets') {
+        const mapped = allData.map((d: any) => ({ id: d.id, name: d.name, bankId: d.bank_id })) as any;
+        return Array.from(new Map(mapped.map((item: any) => [item.id, item])).values()) as T[];
+      }
+      return Array.from(new Map(allData.map(item => [item.id, item])).values()) as T[];
     }
 
     await delay(200);
@@ -372,14 +383,179 @@ export const financeService = {
   async deleteRegistryItem(type: string, id: string): Promise<void> {
     const supabase = getSupabase();
     const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
+    
     if (supabase) {
         const { error } = await supabase.from(tableMap[type]).delete().eq('id', id);
         if (error) throw new Error(formatSupabaseError(error));
         return;
     }
+    
+    const localFkMap: any = { banks: 'bankId', categories: 'categoryId', costCenters: 'costCenterId', participants: 'participantId', wallets: 'walletId' };
+    const localFkName = localFkMap[type];
+    
+    if (localFkName) {
+        const transactions = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, []);
+        const isUsedInTransactions = transactions.some(t => (t as any)[localFkName] === id);
+        if (isUsedInTransactions) {
+            throw new Error("Não é possível excluir este registro pois ele está sendo usado em um ou mais lançamentos financeiros.");
+        }
+    }
+
+    if (type === 'banks') {
+        const wallets = getEntityLocal<Wallet>(KEYS.WALLETS, []);
+        const isUsedInWallets = wallets.some(w => w.bankId === id);
+        if (isUsedInWallets) {
+            throw new Error("Não é possível excluir este registro pois ele está sendo usado em um ou mais lançamentos financeiros.");
+        }
+    }
+
     const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
     let list = getEntityLocal<BaseEntity>(keyMap[type], (INITIAL_DATA as any)[type]);
     list = list.filter(x => x.id !== id);
     saveEntityLocal(keyMap[type], list);
+  },
+
+  async deduplicateRegistry(type: string, onProgress?: (current: number, total: number) => void): Promise<{ merged: number, deleted: number }> {
+    const supabase = getSupabase();
+    const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
+    const fkMap: any = { banks: 'bank_id', categories: 'category_id', costCenters: 'cost_center_id', participants: 'participant_id', wallets: 'wallet_id' };
+    const localFkMap: any = { banks: 'bankId', categories: 'categoryId', costCenters: 'costCenterId', participants: 'participantId', wallets: 'walletId' };
+    
+    const tableName = tableMap[type];
+    const fkName = fkMap[type];
+    const localFkName = localFkMap[type];
+
+    let mergedCount = 0;
+    let deletedCount = 0;
+
+    const normalizeName = (name: string) => {
+      return name
+        .normalize('NFD') // Decompose accents
+        .replace(/[\u0300-\u036f]/g, '') // Remove accents
+        .toLowerCase() // Convert to lowercase
+        .replace(/[^a-z0-9]/g, ''); // Remove all non-alphanumeric characters (spaces, hyphens, dots, etc.)
+    };
+
+    if (supabase) {
+      let items: any[] = [];
+      let from = 0;
+      let finished = false;
+      while (!finished) {
+        const { data, error: fetchError } = await supabase.from(tableName).select('*').range(from, from + 999);
+        if (fetchError) throw new Error(formatSupabaseError(fetchError));
+        if (!data || data.length === 0) {
+          finished = true;
+        } else {
+          items = [...items, ...data];
+          from += 1000;
+        }
+      }
+
+      const groups = new Map<string, any[]>();
+      for (const item of items) {
+        const norm = normalizeName(item.name);
+        if (!groups.has(norm)) groups.set(norm, []);
+        groups.get(norm)!.push(item);
+      }
+
+      const groupsToProcess = Array.from(groups.values()).filter(g => g.length > 1);
+      const totalGroups = groupsToProcess.length;
+      let processedGroups = 0;
+
+      if (totalGroups > 0 && onProgress) onProgress(0, totalGroups);
+
+      for (const group of groupsToProcess) {
+        group.sort((a, b) => a.id.localeCompare(b.id));
+        const master = group[0];
+        const duplicates = group.slice(1);
+        const duplicateIds = duplicates.map(d => d.id);
+
+        const { error: updateError } = await supabase
+          .from('transactions')
+          .update({ [fkName]: master.id })
+          .in(fkName, duplicateIds);
+        
+        if (updateError) throw new Error(formatSupabaseError(updateError));
+
+        if (type === 'banks') {
+          await supabase.from('wallets').update({ bank_id: master.id }).in('bank_id', duplicateIds);
+        }
+
+        const { error: deleteError } = await supabase
+          .from(tableName)
+          .delete()
+          .in('id', duplicateIds);
+        
+        if (deleteError) throw new Error(formatSupabaseError(deleteError));
+
+        mergedCount += duplicateIds.length;
+        deletedCount += duplicateIds.length;
+
+        processedGroups++;
+        if (onProgress) onProgress(processedGroups, totalGroups);
+      }
+      return { merged: mergedCount, deleted: deletedCount };
+    }
+
+    const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+    let items = getEntityLocal<any>(keyMap[type], []);
+    let transactions = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, []);
+    let wallets = getEntityLocal<Wallet>(KEYS.WALLETS, []);
+
+    const groups = new Map<string, any[]>();
+    for (const item of items) {
+      const norm = normalizeName(item.name);
+      if (!groups.has(norm)) groups.set(norm, []);
+      groups.get(norm)!.push(item);
+    }
+
+    const duplicateIdsToRemove = new Set<string>();
+
+    const groupsToProcess = Array.from(groups.values()).filter(g => g.length > 1);
+    const totalGroups = groupsToProcess.length;
+    let processedGroups = 0;
+
+    if (totalGroups > 0 && onProgress) onProgress(0, totalGroups);
+
+    for (const group of groupsToProcess) {
+      group.sort((a, b) => a.id.localeCompare(b.id));
+      const master = group[0];
+      const duplicates = group.slice(1);
+      const duplicateIds = duplicates.map(d => d.id);
+
+      duplicateIds.forEach(id => duplicateIdsToRemove.add(id));
+
+      transactions = transactions.map(t => {
+        if (duplicateIds.includes((t as any)[localFkName])) {
+          return { ...t, [localFkName]: master.id };
+        }
+        return t;
+      });
+
+      if (type === 'banks') {
+        wallets = wallets.map(w => {
+          if (duplicateIds.includes(w.bankId)) {
+            return { ...w, bankId: master.id };
+          }
+          return w;
+        });
+      }
+
+      mergedCount += duplicateIds.length;
+      deletedCount += duplicateIds.length;
+
+      processedGroups++;
+      if (onProgress) onProgress(processedGroups, totalGroups);
+      await new Promise(r => setTimeout(r, 10)); // small delay to allow UI to update
+    }
+
+    if (deletedCount > 0) {
+      items = items.filter(i => !duplicateIdsToRemove.has(i.id));
+      saveEntityLocal(keyMap[type], items);
+      saveEntityLocal(KEYS.TRANSACTIONS, transactions);
+      if (type === 'banks') saveEntityLocal(KEYS.WALLETS, wallets);
+    }
+
+    return { merged: mergedCount, deleted: deletedCount };
   }
 };

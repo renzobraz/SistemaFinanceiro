@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { Plus, Trash2, Edit2, Save, X, Upload, Search, Tag, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Upload, Search, Tag, Loader2, Wand2 } from 'lucide-react';
 import { BaseEntity } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -11,6 +11,7 @@ interface RegistryManagerProps {
   onDelete: (id: string) => Promise<void>;
   onEdit: (id: string, name: string, extraData?: any) => Promise<void>;
   onImport: (names: string[]) => Promise<void>;
+  onDeduplicate?: (onProgress?: (current: number, total: number) => void) => Promise<{ merged: number, deleted: number }>;
   foreignItems?: BaseEntity[];
   foreignLabel?: string;
   foreignKey?: string;
@@ -23,6 +24,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   onDelete,
   onEdit,
   onImport,
+  onDeduplicate,
   foreignItems,
   foreignLabel,
   foreignKey
@@ -33,11 +35,12 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [tempForeignKey, setTempForeignKey] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [dedupProgress, setDedupProgress] = useState<{current: number, total: number} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
-    type: 'DELETE' | 'IMPORT';
+    type: 'DELETE' | 'IMPORT' | 'DEDUPLICATE';
     data: any;
     message: string;
     title: string;
@@ -138,9 +141,28 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
 
   const handleConfirmAction = async () => {
       if (confirmModal.type === 'DELETE') {
-          await onDelete(confirmModal.data);
+          try {
+              await onDelete(confirmModal.data);
+          } catch (error: any) {
+              alert(error.message);
+          }
       } else if (confirmModal.type === 'IMPORT') {
           await onImport(confirmModal.data);
+      } else if (confirmModal.type === 'DEDUPLICATE' && onDeduplicate) {
+          setConfirmModal(prev => ({...prev, isOpen: false}));
+          setIsSaving(true);
+          setDedupProgress({ current: 0, total: 1 });
+          try {
+              const result = await onDeduplicate((current, total) => {
+                  setDedupProgress({ current, total });
+              });
+              alert(`${result.deleted} registros duplicados foram unificados com sucesso!`);
+          } catch (error: any) {
+              alert('Erro ao unificar: ' + error.message);
+          } finally {
+              setIsSaving(false);
+              setDedupProgress(null);
+          }
       }
   };
 
@@ -159,6 +181,21 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               </span>
             </h3>
             <div className="flex gap-2">
+              {onDeduplicate && (
+                <button 
+                  onClick={() => setConfirmModal({
+                    isOpen: true,
+                    type: 'DEDUPLICATE',
+                    data: null,
+                    title: 'Limpar Duplicados',
+                    message: 'Esta ação irá procurar registros com o nome exatamente igual, unificá-los e atualizar todos os lançamentos vinculados. Deseja continuar?'
+                  })}
+                  className="p-2 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors" 
+                  title="Limpar Duplicados"
+                >
+                  <Wand2 className="w-5 h-5" />
+                </button>
+              )}
               <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".csv,.txt" />
               <button onClick={handleImportClick} className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
                 <Upload className="w-5 h-5" />
@@ -286,9 +323,28 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         onConfirm={handleConfirmAction}
         title={confirmModal.title}
         message={confirmModal.message}
-        isDestructive={confirmModal.type === 'DELETE'}
-        confirmText={confirmModal.type === 'DELETE' ? 'Excluir' : 'Importar'}
+        isDestructive={confirmModal.type === 'DELETE' || confirmModal.type === 'DEDUPLICATE'}
+        confirmText={confirmModal.type === 'DELETE' ? 'Excluir' : confirmModal.type === 'DEDUPLICATE' ? 'Unificar' : 'Importar'}
       />
+
+      {dedupProgress && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 flex flex-col items-center text-center">
+            <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-4" />
+            <h3 className="text-lg font-bold text-slate-800 mb-2">Unificando Registros...</h3>
+            <p className="text-slate-500 text-sm mb-4">Por favor, aguarde. Isso pode levar alguns minutos dependendo da quantidade de dados.</p>
+            <div className="w-full bg-slate-100 rounded-full h-3 mb-2 overflow-hidden">
+              <div 
+                className="bg-blue-600 h-full transition-all duration-300 ease-out"
+                style={{ width: `${dedupProgress.total > 0 ? (dedupProgress.current / dedupProgress.total) * 100 : 0}%` }}
+              ></div>
+            </div>
+            <p className="text-sm font-medium text-slate-700">
+              {dedupProgress.current} de {dedupProgress.total} grupos processados
+            </p>
+          </div>
+        </div>
+      )}
     </>
   );
 };

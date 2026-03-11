@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import { 
   Edit2, 
   Trash2, 
@@ -14,7 +14,8 @@ import {
   Info,
   ChevronFirst,
   ChevronLast,
-  Zap
+  Zap,
+  History
 } from 'lucide-react';
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet } from '../types';
 import { ConfirmModal } from './ConfirmModal';
@@ -71,8 +72,10 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 }) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const deferredSearchTerm = useDeferredValue(searchTerm);
   const [columnFilters, setColumnFilters] = useState<ColumnFilters>(initialFilters);
   const [showColumnFilters, setShowColumnFilters] = useState(false);
+  const [showLast5, setShowLast5] = useState(false);
   
   const defaultSort: { key: keyof Transaction, direction: 'asc' | 'desc' } = useMemo(() => {
     if (initialSortByStatus === 'PENDING') return { key: 'date', direction: 'asc' };
@@ -92,7 +95,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, columnFilters, sortConfig, transactions, itemsPerPage]);
+  }, [deferredSearchTerm, columnFilters, sortConfig, transactions, itemsPerPage]);
 
   const getName = (list: { id: string, name: string }[] | undefined, id: string | null | undefined) => {
     if (!list || !id) return '-';
@@ -104,8 +107,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const { filteredTransactions, balanceMap } = useMemo(() => {
     let data = [...transactions];
 
-    if (searchTerm) {
-      const lowerTerm = searchTerm.toLowerCase();
+    if (deferredSearchTerm) {
+      const lowerTerm = deferredSearchTerm.toLowerCase();
       data = data.filter(t => 
         t.description.toLowerCase().includes(lowerTerm) ||
         t.docNumber.toLowerCase().includes(lowerTerm) ||
@@ -127,6 +130,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     }
     if (columnFilters.credit) {
         data = data.filter(t => t.type === 'CREDIT' && t.value.toString().includes(columnFilters.credit));
+    }
+
+    if (showLast5) {
+      data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      data = data.slice(0, 5);
     }
 
     if (sortConfig) {
@@ -164,7 +172,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     }
 
     return { filteredTransactions: data, balanceMap: bMap };
-  }, [transactions, searchTerm, columnFilters, sortConfig, registries, externalBalanceMap]);
+  }, [transactions, deferredSearchTerm, columnFilters, sortConfig, registries, externalBalanceMap, showLast5]);
 
   const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -262,9 +270,10 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const clearFilters = () => {
       setColumnFilters(initialFilters);
       setSearchTerm('');
+      setShowLast5(false);
   };
 
-  const hasActiveFilters = Object.values(columnFilters).some(v => v !== '') || searchTerm !== '';
+  const hasActiveFilters = Object.values(columnFilters).some(v => v !== '') || deferredSearchTerm !== '' || showLast5;
 
   const filterInputClass = "w-full px-2 py-1 bg-white border border-slate-200 rounded text-[11px] font-normal normal-case outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-300";
 
@@ -309,6 +318,15 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 <button onClick={findDuplicates} className="p-2 text-blue-600 bg-white border border-gray-300 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium" title="Remover Duplicados">
                     <Zap className="w-4 h-4" />
                     <span className="hidden lg:inline">Limpar Duplicados</span>
+                </button>
+
+                <button 
+                    onClick={() => setShowLast5(!showLast5)} 
+                    className={`p-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium border ${showLast5 ? 'bg-purple-600 text-white border-purple-600' : 'text-purple-600 bg-white border-gray-300 hover:bg-purple-50'}`}
+                    title="Últimos 5 Lançamentos"
+                >
+                    <History className="w-4 h-4" />
+                    <span className="hidden lg:inline">Últimos 5</span>
                 </button>
             </div>
 

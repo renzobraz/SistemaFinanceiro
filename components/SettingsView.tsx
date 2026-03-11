@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Database, Save, CheckCircle2, AlertCircle, Copy, Terminal, Unplug, Info, AlertTriangle, Loader2, Play, Search, CheckCircle } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { ConfirmModal } from './ConfirmModal';
+import { DEFAULT_SUPABASE_CONFIG } from '../services/financeService';
 
 interface SettingsViewProps {
   onSaveConfig: (url: string, key: string) => void;
@@ -23,6 +24,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig }) => {
         setUrl(savedUrl);
         setKey(savedKey);
         setStatus('SUCCESS');
+    } else if (DEFAULT_SUPABASE_CONFIG.url && DEFAULT_SUPABASE_CONFIG.key) {
+        // Use default config if nothing is saved
+        setUrl(DEFAULT_SUPABASE_CONFIG.url);
+        setKey(DEFAULT_SUPABASE_CONFIG.key);
+        setStatus('SUCCESS');
     }
   }, []);
 
@@ -35,6 +41,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig }) => {
           if (error) {
               if (error.code === '42P01') {
                   setTableCheck({checked: true, exists: false, details: 'Tabelas não encontradas. Por favor, execute o SQL de criação.'});
+              } else if (error.code === '42501') {
+                  setTableCheck({checked: true, exists: false, details: 'Permissão negada (Erro 42501). Execute o SQL abaixo para corrigir.'});
               } else {
                   throw error;
               }
@@ -58,8 +66,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig }) => {
       
       const { error } = await client.from('banks').select('id').limit(1);
       
-      if (error && error.code === '42P01') {
-          // Tabela não existe mas a conexão funcionou
+      // Ignora erro de permissão ou tabela inexistente durante conexão inicial, 
+      // pois o usuário pode ainda não ter rodado o SQL.
+      if (error && (error.code === '42P01' || error.code === '42501')) {
           localStorage.setItem('supabase_url', cleanUrl);
           localStorage.setItem('supabase_key', cleanKey);
           setStatus('SUCCESS');
@@ -82,22 +91,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig }) => {
   const confirmDisconnect = () => {
     localStorage.removeItem('supabase_url');
     localStorage.removeItem('supabase_key');
-    setUrl('');
-    setKey('');
-    setStatus('IDLE');
+    // Don't clear fields if they match default, but reset status
+    if (url === DEFAULT_SUPABASE_CONFIG.url) {
+        setStatus('IDLE');
+    } else {
+        setUrl('');
+        setKey('');
+        setStatus('IDLE');
+    }
     setTableCheck({checked: false, exists: false, details: ''});
     onSaveConfig('', '');
   };
 
-  const sqlFullSchema = `-- 1. Tabelas de Cadastro
-create table if not exists banks (id uuid default gen_random_uuid() primary key, name text not null);
-create table if not exists categories (id uuid default gen_random_uuid() primary key, name text not null);
-create table if not exists cost_centers (id uuid default gen_random_uuid() primary key, name text not null);
-create table if not exists participants (id uuid default gen_random_uuid() primary key, name text not null);
-create table if not exists wallets (id uuid default gen_random_uuid() primary key, name text not null, bank_id uuid references banks(id));
+  const sqlFullSchema = `-- 1. Configuração de Schema e Extensões
+grant usage on schema public to anon, authenticated, service_role;
+grant all on all tables in schema public to anon, authenticated, service_role;
+grant all on all sequences in schema public to anon, authenticated, service_role;
+grant all on all functions in schema public to anon, authenticated, service_role;
 
--- 2. Tabela de Transações
-create table if not exists transactions (
+-- 2. Tabelas de Cadastro
+create table if not exists public.banks (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.categories (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.cost_centers (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.participants (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.wallets (id uuid default gen_random_uuid() primary key, name text not null, bank_id uuid references public.banks(id));
+
+-- 3. Tabela de Transações
+create table if not exists public.transactions (
   id uuid default gen_random_uuid() primary key,
   date date not null,
   description text not null,
@@ -105,22 +125,38 @@ create table if not exists transactions (
   value numeric(15,2) not null,
   type text not null check (type in ('CREDIT', 'DEBIT')),
   status text not null check (status in ('PAID', 'PENDING')),
-  bank_id uuid references banks(id),
-  category_id uuid references categories(id),
-  cost_center_id uuid references cost_centers(id),
-  participant_id uuid references participants(id),
-  wallet_id uuid references wallets(id),
+  bank_id uuid references public.banks(id),
+  category_id uuid references public.categories(id),
+  cost_center_id uuid references public.cost_centers(id),
+  participant_id uuid references public.participants(id),
+  wallet_id uuid references public.wallets(id),
   linked_id uuid, -- Vínculo para transferências
   created_at timestamp with time zone default now()
 );
 
--- Desabilitar RLS para desenvolvimento
-alter table banks disable row level security;
-alter table categories disable row level security;
-alter table cost_centers disable row level security;
-alter table participants disable row level security;
-alter table wallets disable row level security;
-alter table transactions disable row level security;`;
+-- 4. Garantir Permissões Explícitas (Corrigir Erro 42501)
+grant all on public.banks to anon, authenticated, service_role;
+grant all on public.categories to anon, authenticated, service_role;
+grant all on public.cost_centers to anon, authenticated, service_role;
+grant all on public.participants to anon, authenticated, service_role;
+grant all on public.wallets to anon, authenticated, service_role;
+grant all on public.transactions to anon, authenticated, service_role;
+
+-- 5. Habilitar RLS e criar políticas de acesso (Resolve avisos de segurança)
+alter table public.banks enable row level security;
+alter table public.categories enable row level security;
+alter table public.cost_centers enable row level security;
+alter table public.participants enable row level security;
+alter table public.wallets enable row level security;
+alter table public.transactions enable row level security;
+
+-- Criar política permitindo acesso total (já que o app não exige login)
+create policy "Allow all operations" on public.banks for all using (true) with check (true);
+create policy "Allow all operations" on public.categories for all using (true) with check (true);
+create policy "Allow all operations" on public.cost_centers for all using (true) with check (true);
+create policy "Allow all operations" on public.participants for all using (true) with check (true);
+create policy "Allow all operations" on public.wallets for all using (true) with check (true);
+create policy "Allow all operations" on public.transactions for all using (true) with check (true);`;
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
@@ -184,7 +220,7 @@ alter table transactions disable row level security;`;
                       </div>
                       <h3 className="font-bold text-slate-800">Verificador de Tabelas</h3>
                   </div>
-                  <p className="text-sm text-slate-500 mb-6">Verifique se o seu projeto Supabase já possui as tabelas necessárias criadas.</p>
+                  <p className="text-sm text-slate-500 mb-6">Verifique se o seu projeto Supabase já possui as tabelas necessárias criadas e permissões corretas.</p>
                   
                   <div className="mt-auto space-y-4">
                       {tableCheck.checked && (
@@ -206,7 +242,7 @@ alter table transactions disable row level security;`;
                       </div>
                       <h3 className="font-bold">Configuração Inicial</h3>
                   </div>
-                  <p className="text-sm text-blue-50/80 mb-6 leading-relaxed">Se as tabelas ainda não existem, copie o código SQL e cole no seu **SQL Editor** do Supabase.</p>
+                  <p className="text-sm text-blue-50/80 mb-6 leading-relaxed">Se as tabelas não existem ou você vê "Permission Denied", copie o código SQL abaixo e execute no <strong>SQL Editor</strong> do Supabase.</p>
                   
                   <button 
                     onClick={() => { navigator.clipboard.writeText(sqlFullSchema); alert("SQL Copiado com sucesso!"); }}
