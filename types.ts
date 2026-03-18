@@ -35,6 +35,15 @@ export interface Transaction {
   linkedId?: string;
 }
 
+export type DateRangeOption = 'CURRENT_MONTH' | 'CURRENT_WEEK' | 'LAST_3_DAYS' | 'TODAY' | 'LAST_30_DAYS' | 'PREVIOUS_MONTH' | 'ALL';
+
+export interface UserPreferences {
+  defaultDateRange: DateRangeOption;
+  defaultStatus: 'ALL' | 'PENDING' | 'PAID';
+  defaultBankId: string;
+  defaultWalletId: string;
+}
+
 export interface FinancialSummary {
   totalBalance: number;
   totalIncome: number;

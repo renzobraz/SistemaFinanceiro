@@ -3,19 +3,32 @@ import React, { useState, useEffect } from 'react';
 import { Database, Save, CheckCircle2, AlertCircle, Copy, Terminal, Unplug, Info, AlertTriangle, Loader2, Play, Search, CheckCircle } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { ConfirmModal } from './ConfirmModal';
-import { DEFAULT_SUPABASE_CONFIG } from '../services/financeService';
+import { DEFAULT_SUPABASE_CONFIG, financeService } from '../services/financeService';
+import { Bank, Wallet, UserPreferences, DateRangeOption } from '../types';
 
 interface SettingsViewProps {
   onSaveConfig: (url: string, key: string) => void;
+  onSavePrefs: (prefs: UserPreferences) => void;
+  registries: { banks: Bank[], wallets: Wallet[] };
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig, onSavePrefs, registries }) => {
   const [url, setUrl] = useState('');
   const [key, setKey] = useState('');
   const [status, setStatus] = useState<'IDLE' | 'TESTING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [errorMessage, setErrorMessage] = useState('');
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [tableCheck, setTableCheck] = useState<{checked: boolean, exists: boolean, details: string}>({checked: false, exists: false, details: ''});
+
+  const [prefs, setPrefs] = useState<UserPreferences>(() => financeService.getUserPreferences());
+  const [prefsSaved, setPrefsSaved] = useState(false);
+
+  const handleSavePrefs = () => {
+    financeService.saveUserPreferences(prefs);
+    onSavePrefs(prefs);
+    setPrefsSaved(true);
+    setTimeout(() => setPrefsSaved(false), 3000);
+  };
 
   useEffect(() => {
     const savedUrl = localStorage.getItem('supabase_url');
@@ -160,6 +173,92 @@ create policy "Allow all operations" on public.transactions for all using (true)
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
+      
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
+          <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-600 rounded-lg text-white">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 tracking-tight">Filtros Padrão de Inicialização</h2>
+                <p className="text-sm text-slate-500">Defina como o sistema deve carregar os lançamentos ao ser aberto.</p>
+              </div>
+          </div>
+        </div>
+
+        <div className="p-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Período Padrão</label>
+                <select 
+                  value={prefs.defaultDateRange} 
+                  onChange={(e) => setPrefs({...prefs, defaultDateRange: e.target.value as DateRangeOption})}
+                  className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all bg-slate-50/50"
+                >
+                  <option value="CURRENT_MONTH">Mês Atual</option>
+                  <option value="CURRENT_WEEK">Semana Corrente</option>
+                  <option value="LAST_3_DAYS">Últimos 3 dias</option>
+                  <option value="TODAY">Dia Atual</option>
+                  <option value="LAST_30_DAYS">Últimos 30 dias</option>
+                  <option value="PREVIOUS_MONTH">Mês Anterior</option>
+                  <option value="ALL">Todas as Datas</option>
+                </select>
+            </div>
+            <div className="space-y-2">
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Status Padrão</label>
+                <select 
+                  value={prefs.defaultStatus} 
+                  onChange={(e) => setPrefs({...prefs, defaultStatus: e.target.value as any})}
+                  className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all bg-slate-50/50"
+                >
+                  <option value="ALL">Todos os Status</option>
+                  <option value="PAID">Apenas Pagos/Recebidos</option>
+                  <option value="PENDING">Apenas Pendentes</option>
+                </select>
+            </div>
+            <div className="space-y-2">
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Banco Padrão</label>
+                <select 
+                  value={prefs.defaultBankId} 
+                  onChange={(e) => setPrefs({...prefs, defaultBankId: e.target.value})}
+                  className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all bg-slate-50/50"
+                >
+                  <option value="">Todos os Bancos</option>
+                  {registries.banks.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+            </div>
+            <div className="space-y-2">
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Carteira Padrão</label>
+                <select 
+                  value={prefs.defaultWalletId} 
+                  onChange={(e) => setPrefs({...prefs, defaultWalletId: e.target.value})}
+                  className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all bg-slate-50/50"
+                >
+                  <option value="">Todas as Carteiras</option>
+                  {registries.wallets.map(w => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+            </div>
+          </div>
+          
+          <div className="mt-8 flex items-center gap-4">
+              <button onClick={handleSavePrefs} className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 flex items-center gap-2 transform active:scale-95">
+                  <Save className="w-5 h-5" />
+                  Salvar Preferências
+              </button>
+              {prefsSaved && (
+                <span className="text-green-600 font-bold text-sm flex items-center gap-1 animate-fade-in">
+                  <CheckCircle2 className="w-4 h-4" /> Salvo com sucesso!
+                </span>
+              )}
+          </div>
+        </div>
+      </div>
+
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
           <div className="flex items-center gap-3">

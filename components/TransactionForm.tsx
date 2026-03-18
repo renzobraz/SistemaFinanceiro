@@ -235,24 +235,31 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     setIsParticipantDropdownOpen(false);
 
     if (initialData) {
-      setFormData({ ...initialData });
-      setId(initialData.id);
-      setLinkedId(initialData.linkedId);
-
-      setIsRecurrent(false);
-      setRecurrenceCount(2);
+      const newFormData = { ...initialData };
 
       if (initialData.linkedId) {
         setMode("TRANSFER");
-        if (partnerData) {
-          setTargetBankId(partnerData.bankId);
+        if (initialData.type === "CREDIT" && partnerData) {
+          newFormData.bankId = partnerData.bankId;
+          setTargetBankId(initialData.bankId);
         } else {
-          setTargetBankId("");
+          if (partnerData) {
+            setTargetBankId(partnerData.bankId);
+          } else {
+            setTargetBankId("");
+          }
         }
       } else {
         setMode("DEFAULT");
         setTargetBankId("");
       }
+
+      setFormData(newFormData);
+      setId(initialData.id);
+      setLinkedId(initialData.linkedId);
+
+      setIsRecurrent(false);
+      setRecurrenceCount(2);
 
       const participant = registries.participants.find(
         (p) => p.id === initialData.participantId,

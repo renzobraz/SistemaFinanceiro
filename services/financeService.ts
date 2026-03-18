@@ -41,6 +41,7 @@ const KEYS = {
   COST_CENTERS: 'fincontrol_cost_centers',
   PARTICIPANTS: 'fincontrol_participants',
   WALLETS: 'fincontrol_wallets',
+  PREFERENCES: 'fincontrol_preferences',
 };
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -137,6 +138,91 @@ export interface TransactionFilters {
 }
 
 export const financeService = {
+  getUserPreferences(): any {
+    const saved = localStorage.getItem(KEYS.PREFERENCES);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Failed to parse preferences", e);
+      }
+    }
+    return {
+      defaultDateRange: 'CURRENT_MONTH',
+      defaultStatus: 'ALL',
+      defaultBankId: '',
+      defaultWalletId: ''
+    };
+  },
+
+  saveUserPreferences(prefs: any): void {
+    localStorage.setItem(KEYS.PREFERENCES, JSON.stringify(prefs));
+  },
+
+  getDateRangeFromPreference(option: string): { start: string, end: string } {
+    const today = new Date();
+    const yy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${yy}-${mm}-${dd}`;
+
+    if (option === 'TODAY') {
+      return { start: todayStr, end: todayStr };
+    }
+    if (option === 'LAST_3_DAYS') {
+      const d = new Date(today);
+      d.setDate(d.getDate() - 2);
+      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return { start: startStr, end: todayStr };
+    }
+    if (option === 'CURRENT_WEEK') {
+      const d = new Date(today);
+      const day = d.getDay(); // 0 (Sun) to 6 (Sat)
+      const diffStart = d.getDate() - day;
+      const start = new Date(d.setDate(diffStart));
+      const end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      
+      const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+      const endStr = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+      return { start: startStr, end: endStr };
+    }
+    if (option === 'CURRENT_MONTH') {
+      const startStr = `${yy}-${mm}-01`;
+      const lastDay = new Date(yy, today.getMonth() + 1, 0).getDate();
+      const endStr = `${yy}-${mm}-${String(lastDay).padStart(2, '0')}`;
+      return { start: startStr, end: endStr };
+    }
+    if (option === 'PREVIOUS_MONTH') {
+      const d = new Date(yy, today.getMonth() - 1, 1);
+      const prevYy = d.getFullYear();
+      const prevMm = String(d.getMonth() + 1).padStart(2, '0');
+      const startStr = `${prevYy}-${prevMm}-01`;
+      const lastDay = new Date(prevYy, d.getMonth() + 1, 0).getDate();
+      const endStr = `${prevYy}-${prevMm}-${String(lastDay).padStart(2, '0')}`;
+      return { start: startStr, end: endStr };
+    }
+    if (option === 'LAST_30_DAYS') {
+      const d = new Date(today);
+      d.setDate(d.getDate() - 30);
+      const startStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return { start: startStr, end: todayStr };
+    }
+    return { start: '', end: '' }; // 'ALL' or unknown
+  },
+
+  async getTransactionsByLinkedId(linkedId: string): Promise<Transaction[]> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase.from('transactions').select('*').eq('linked_id', linkedId);
+      if (error) throw error;
+      return (data || []).map(mapTransactionFromDb);
+    } else {
+      const all = await this.getTransactions();
+      return all.filter(t => t.linkedId === linkedId);
+    }
+  },
+
   async getTransactions(filters?: TransactionFilters): Promise<Transaction[]> {
     const supabase = getSupabase();
     if (supabase) {

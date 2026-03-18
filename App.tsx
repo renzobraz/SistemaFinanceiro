@@ -56,15 +56,16 @@ const App: React.FC = () => {
     wallets: []
   });
 
-  const [selectedWalletId, setSelectedWalletId] = useState<string>('');
-  const [selectedBankId, setSelectedBankId] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PAID' | 'PENDING'>('ALL'); 
+  const [selectedWalletId, setSelectedWalletId] = useState<string>(() => financeService.getUserPreferences().defaultWalletId);
+  const [selectedBankId, setSelectedBankId] = useState<string>(() => financeService.getUserPreferences().defaultBankId);
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PAID' | 'PENDING'>(() => financeService.getUserPreferences().defaultStatus); 
   
-  const [startDate, setStartDate] = useState<string>('');
-  const [endDate, setEndDate] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>(() => financeService.getDateRangeFromPreference(financeService.getUserPreferences().defaultDateRange).start);
+  const [endDate, setEndDate] = useState<string>(() => financeService.getDateRangeFromPreference(financeService.getUserPreferences().defaultDateRange).end);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [partnerTransaction, setPartnerTransaction] = useState<Transaction | null>(null);
 
   const [alertState, setAlertState] = useState<{
     isOpen: boolean;
@@ -173,7 +174,7 @@ const App: React.FC = () => {
     } else if (activeTab === 'bank-transactions') {
       setStatusFilter('PAID');
     } else if (['dashboard', 'cashflow', 'expenses-analysis'].includes(activeTab)) {
-      setStatusFilter('ALL');
+      setStatusFilter(financeService.getUserPreferences().defaultStatus);
     }
   }, [activeTab]);
 
@@ -389,7 +390,27 @@ const App: React.FC = () => {
                    <TransactionList 
                     transactions={transactions} 
                     registries={registries} 
-                    onEdit={(t) => { setEditingTransaction(t); setIsFormOpen(true); }} 
+                    onEdit={async (t) => { 
+                      setEditingTransaction(t); 
+                      if (t.linkedId) {
+                        const partner = transactions.find(x => x.linkedId === t.linkedId && x.id !== t.id);
+                        if (partner) {
+                          setPartnerTransaction(partner);
+                        } else {
+                          try {
+                            const linkedTxs = await financeService.getTransactionsByLinkedId(t.linkedId);
+                            const p = linkedTxs.find(x => x.id !== t.id);
+                            setPartnerTransaction(p || null);
+                          } catch (e) {
+                            console.error("Error fetching partner transaction", e);
+                            setPartnerTransaction(null);
+                          }
+                        }
+                      } else {
+                        setPartnerTransaction(null);
+                      }
+                      setIsFormOpen(true); 
+                    }} 
                     onDelete={handleDeleteTransactions} 
                     onImport={() => {}} 
                     variant="full" 
@@ -438,7 +459,18 @@ const App: React.FC = () => {
 
           {activeTab === 'settings' && (
             <div className="flex-1 overflow-auto p-8">
-               <SettingsView onSaveConfig={() => setIsConnected(true)} />
+               <SettingsView 
+                 onSaveConfig={() => setIsConnected(true)} 
+                 onSavePrefs={(prefs) => {
+                   setSelectedWalletId(prefs.defaultWalletId);
+                   setSelectedBankId(prefs.defaultBankId);
+                   setStatusFilter(prefs.defaultStatus);
+                   const range = financeService.getDateRangeFromPreference(prefs.defaultDateRange);
+                   setStartDate(range.start);
+                   setEndDate(range.end);
+                 }}
+                 registries={registries} 
+               />
             </div>
           )}
 
@@ -456,7 +488,7 @@ const App: React.FC = () => {
         onSave={handleSaveTransaction} 
         onAddParticipant={handleQuickAddParticipant}
         initialData={editingTransaction} 
-        partnerData={editingTransaction?.linkedId ? transactions.find(t => t.linkedId === editingTransaction.linkedId && t.id !== editingTransaction.id) : null}
+        partnerData={partnerTransaction}
         defaultStatus={statusFilter === 'ALL' ? 'PENDING' : statusFilter} 
         preSelectedBankId={selectedBankId}
         preSelectedWalletId={selectedWalletId}
