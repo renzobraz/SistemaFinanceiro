@@ -407,7 +407,13 @@ const App: React.FC = () => {
           {activeTab === 'cashflow' && (
             <div className="flex-1 overflow-auto p-8">
               <div className="max-w-7xl mx-auto">
-                <CashFlowReport allTransactions={transactions} startDate={startDate} endDate={endDate} registries={registries} />
+                <CashFlowReport 
+                  allTransactions={transactions} 
+                  startDate={startDate} 
+                  endDate={endDate} 
+                  previousBalances={previousBalances}
+                  registries={registries} 
+                />
               </div>
             </div>
           )}

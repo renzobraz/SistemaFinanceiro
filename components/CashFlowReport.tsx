@@ -32,6 +32,7 @@ interface CashFlowReportProps {
   allTransactions: Transaction[];
   startDate: string;
   endDate: string;
+  previousBalances: { total: number, byBank: Record<string, number> };
   registries: {
     banks: Bank[];
     categories: Category[];
@@ -57,6 +58,7 @@ export const CashFlowReport: React.FC<CashFlowReportProps> = ({
   allTransactions, 
   startDate, 
   endDate, 
+  previousBalances,
   registries 
 }) => {
   const [granularity, setGranularity] = useState<Granularity>('MONTHLY');
@@ -87,13 +89,15 @@ export const CashFlowReport: React.FC<CashFlowReportProps> = ({
   };
 
   const cashFlowData = useMemo(() => {
-    // 1. Calcular Saldo Inicial Histórico (Tudo antes de startDate para os bancos selecionados)
+    // 1. Calcular Saldo Inicial Histórico baseado nos bancos selecionados e no previousBalances
     let historicalBalance = 0;
-    if (startDate) {
-      allTransactions.forEach(t => {
-        if (t.date < startDate && selectedBankIds.has(t.bankId) && t.status === 'PAID') {
-          historicalBalance += (t.type === 'CREDIT' ? t.value : -t.value);
-        }
+    if (selectedBankIds.size === registries.banks.length) {
+      // Se todos os bancos estão selecionados, usamos o total
+      historicalBalance = previousBalances.total;
+    } else {
+      // Senão, somamos apenas os bancos selecionados
+      selectedBankIds.forEach(bankId => {
+        historicalBalance += (previousBalances.byBank[bankId] || 0);
       });
     }
 
@@ -317,24 +321,38 @@ export const CashFlowReport: React.FC<CashFlowReportProps> = ({
                                         <thead className="bg-slate-50 text-[10px] text-slate-400 uppercase tracking-tighter">
                                             <tr>
                                                 <th className="p-3">Data</th>
-                                                <th className="p-3">Descrição</th>
                                                 <th className="p-3">Banco</th>
                                                 <th className="p-3">Categoria</th>
+                                                <th className="p-3">Participante</th>
+                                                <th className="p-3">Centro de Custo</th>
+                                                <th className="p-3">Descrição</th>
                                                 <th className="p-3 text-right">Valor</th>
+                                                <th className="p-3 text-right">Saldo</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
-                                            {row.transactions.map((t) => (
-                                                <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                                                    <td className="p-3 text-xs text-slate-500">{t.date.split('-').reverse().join('/')}</td>
-                                                    <td className="p-3 text-xs font-semibold text-slate-700">{t.description}</td>
-                                                    <td className="p-3 text-xs text-slate-400 font-medium">{getName(registries.banks, t.bankId)}</td>
-                                                    <td className="p-3 text-xs text-slate-500">{getName(registries.categories, t.categoryId)}</td>
-                                                    <td className={`p-3 text-xs text-right font-bold ${t.type === 'CREDIT' ? 'text-green-600' : 'text-red-600'}`}>
-                                                        {t.type === 'CREDIT' ? '+' : '-'} {formatCurrency(t.value)}
-                                                    </td>
-                                                </tr>
-                                            ))}
+                                            {(() => {
+                                                let currentBalance = row.initial;
+                                                return row.transactions.map((t) => {
+                                                    currentBalance += (t.type === 'CREDIT' ? t.value : -t.value);
+                                                    return (
+                                                        <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                                                            <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{t.date.split('-').reverse().join('/')}</td>
+                                                            <td className="p-3 text-xs text-slate-400 font-medium">{getName(registries.banks, t.bankId)}</td>
+                                                            <td className="p-3 text-xs text-slate-500">{getName(registries.categories, t.categoryId)}</td>
+                                                            <td className="p-3 text-xs text-slate-500">{getName(registries.participants, t.participantId)}</td>
+                                                            <td className="p-3 text-xs text-slate-500">{getName(registries.costCenters, t.costCenterId)}</td>
+                                                            <td className="p-3 text-xs font-semibold text-slate-700">{t.description}</td>
+                                                            <td className={`p-3 text-xs text-right font-bold whitespace-nowrap ${t.type === 'CREDIT' ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {t.type === 'CREDIT' ? '+' : '-'} {formatCurrency(t.value)}
+                                                            </td>
+                                                            <td className="p-3 text-xs text-right font-mono text-slate-500 whitespace-nowrap">
+                                                                {formatCurrency(currentBalance)}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                });
+                                            })()}
                                         </tbody>
                                     </table>
                                 </div>
