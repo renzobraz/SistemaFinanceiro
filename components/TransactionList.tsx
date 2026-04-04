@@ -147,7 +147,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         
         if (sortConfig.key === 'date') {
             const dir = sortConfig.direction === 'asc' ? 1 : -1;
-            return a.id.localeCompare(b.id) * dir;
+            return (a.id || '').localeCompare(b.id || '') * dir;
         }
 
         return 0;

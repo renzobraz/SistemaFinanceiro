@@ -75,13 +75,23 @@
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
     <script>
+      // Limpeza agressiva de Service Worker e Caches para resolver tela branca
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('Service Worker registrado!', reg))
-            .catch(err => console.log('Erro ao registrar Service Worker:', err));
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for(let registration of registrations) {
+            registration.unregister();
+          }
         });
       }
+      
+      // Limpa todos os caches do navegador para este site
+      if (window.caches) {
+        caches.keys().then(function(names) {
+          for (let name of names) caches.delete(name);
+        });
+      }
+      
+      console.log('Cache e Service Worker limpos com sucesso.');
     </script>
   </body>
 </html>

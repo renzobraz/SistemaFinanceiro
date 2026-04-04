@@ -9,6 +9,7 @@ import {
   User,
   Repeat,
   CalendarClock,
+  RotateCcw,
 } from "lucide-react";
 import {
   Transaction,
@@ -97,7 +98,9 @@ const getLevenshteinDistance = (a: string, b: string): number => {
 };
 
 const HighlightMatch = ({ text, search }: { text: string; search: string }) => {
-  if (!search.trim()) return <>{text}</>;
+  if (!text) return null;
+  if (!search || typeof search !== 'string' || !search.trim()) return <>{text}</>;
+  
   const terms = search
     .toLowerCase()
     .split(" ")
@@ -109,15 +112,17 @@ const HighlightMatch = ({ text, search }: { text: string; search: string }) => {
 
   return (
     <>
-      {parts.map((part, i) =>
-        terms.some((t) => t.toLowerCase() === part.toLowerCase()) ? (
+      {parts.map((part, i) => {
+        if (!part) return null;
+        const isMatch = terms.some((t) => t.toLowerCase() === part.toLowerCase());
+        return isMatch ? (
           <strong key={i} className="font-extrabold text-blue-700">
             {part}
           </strong>
         ) : (
           <span key={i}>{part}</span>
-        )
-      )}
+        );
+      })}
     </>
   );
 };
@@ -141,6 +146,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [targetBankId, setTargetBankId] = useState("");
   const [linkedId, setLinkedId] = useState<string | undefined>(undefined);
   const [isSaving, setIsSaving] = useState(false);
+  const [discountValue, setDiscountValue] = useState<number>(0);
 
   // Recurrence State
   const [isRecurrent, setIsRecurrent] = useState(false);
@@ -176,11 +182,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   );
 
   const filteredParticipants = useMemo(() => {
+    const search = (deferredParticipantSearch || "").toLowerCase();
+    const searchTerms = search
+      .split(" ")
+      .filter((t) => t.trim() !== "");
+
     return registries.participants.filter((p) => {
-      const searchTerms = deferredParticipantSearch
-        .toLowerCase()
-        .split(" ")
-        .filter((t) => t.trim() !== "");
+      if (!p || !p.name) return false;
       if (searchTerms.length === 0) return true;
       const nameLower = p.name.toLowerCase();
       return searchTerms.every((term) => nameLower.includes(term));
@@ -188,19 +196,23 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   }, [registries.participants, deferredParticipantSearch]);
 
   const exactMatchExists = useMemo(() => {
+    const search = (deferredParticipantSearch || "").trim().toLowerCase();
+    if (!search) return false;
     return registries.participants.some(
-      (p) => p.name.toLowerCase() === deferredParticipantSearch.trim().toLowerCase()
+      (p) => p && p.name && p.name.toLowerCase() === search
     );
   }, [registries.participants, deferredParticipantSearch]);
 
   const similarParticipant = useMemo(() => {
-    if (exactMatchExists || deferredParticipantSearch.trim().length < 3) return null;
+    const search = (deferredParticipantSearch || "").trim().toLowerCase();
+    if (exactMatchExists || search.length < 3) return null;
     let closest = null;
     let minDistance = Infinity;
     for (const p of registries.participants) {
+      if (!p || !p.name) continue;
       const dist = getLevenshteinDistance(
         p.name.toLowerCase(),
-        deferredParticipantSearch.trim().toLowerCase()
+        search
       );
       if (dist < minDistance && dist <= 2) {
         minDistance = dist;
@@ -265,6 +277,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         (p) => p.id === initialData.participantId,
       );
       setParticipantSearch(participant?.name || "");
+      setDiscountValue(0);
     } else {
       setFormData({
         ...emptyTransaction,
@@ -277,6 +290,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       setMode("DEFAULT");
       setTargetBankId("");
       setParticipantSearch("");
+      setDiscountValue(0);
       setIsRecurrent(false);
       setRecurrenceCount(2);
       setRecurrenceFreq("MONTHLY");
@@ -330,7 +344,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     return `${yy}-${mm}-${dd}`;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, withDiscount = false) => {
     e.preventDefault();
     if (isSaving) return;
     setIsSaving(true);
@@ -339,6 +353,9 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       const transactionsToSave: Transaction[] = [];
       const isNew = !id;
       const loops = isNew && isRecurrent ? Math.max(1, recurrenceCount) : 1;
+
+      // Se estivermos gerando um desconto simultâneo, precisamos de um linkedId comum
+      const refundLinkedId = withDiscount ? (linkedId || generateUUID()) : undefined;
 
       for (let i = 0; i < loops; i++) {
         const currentData = { ...formData };
@@ -402,9 +419,23 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           transactionsToSave.push({
             ...currentData,
             id: i === 0 ? id : "",
-            linkedId: undefined,
+            linkedId: i === 0 ? refundLinkedId : undefined,
           });
         }
+      }
+
+      if (withDiscount && discountValue > 0) {
+        // Cria a transação de desconto baseada na original
+        const refund: Transaction = {
+          ...formData,
+          id: "", // Novo ID
+          value: discountValue,
+          type: formData.type === "DEBIT" ? "CREDIT" : "DEBIT",
+          description: `Desconto: ${formData.description}`,
+          linkedId: refundLinkedId,
+          status: "PAID", // Descontos costumam ser considerados pagos imediatamente
+        };
+        transactionsToSave.push(refund);
       }
 
       await onSave(transactionsToSave);
@@ -502,7 +533,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div>
+            <div className={id ? "md:col-span-1" : "md:col-span-1"}>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Valor (R$)
               </label>
@@ -521,6 +552,23 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 className={inputClass}
               />
             </div>
+
+            {id && (
+              <div className="md:col-span-1 animate-fade-in">
+                <label className="block text-sm font-medium text-emerald-700 mb-1 flex items-center gap-1">
+                  <RotateCcw className="w-3 h-3" /> Desconto (R$)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  disabled={isSaving}
+                  value={discountValue || ""}
+                  onChange={(e) => setDiscountValue(parseFloat(e.target.value) || 0)}
+                  className="w-full px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-emerald-800 placeholder:text-emerald-300"
+                  placeholder="Valor parcial..."
+                />
+              </div>
+            )}
             {mode === "DEFAULT" ? (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -918,7 +966,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           </div>
         </form>
 
-        <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+        <div className="p-6 border-t border-gray-100 bg-gray-50 flex flex-wrap justify-end gap-3">
           <button
             type="button"
             onClick={onClose}
@@ -927,10 +975,24 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           >
             Cancelar
           </button>
+
+          {id && mode === "DEFAULT" && (
+            <button
+              type="button"
+              disabled={isSaving || discountValue <= 0}
+              onClick={(e) => handleSubmit(e, true)}
+              className="px-6 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium rounded-lg hover:bg-emerald-100 flex items-center gap-2 transition-colors disabled:opacity-50"
+              title={discountValue > 0 ? `Salva as alterações e cria um desconto de R$ ${discountValue.toFixed(2)}` : "Digite um valor de desconto para usar esta opção"}
+            >
+              <RotateCcw className="w-4 h-4" />
+              Salvar + Desconto
+            </button>
+          )}
+
           <button
             type="submit"
             disabled={isSaving}
-            onClick={handleSubmit}
+            onClick={(e) => handleSubmit(e, false)}
             className="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 flex items-center gap-2 shadow-lg shadow-blue-200 disabled:bg-blue-400"
           >
             {isSaving ? (

@@ -82,14 +82,30 @@ const App: React.FC = () => {
   };
 
   // Carrega apenas os cadastros (uma única vez ou quando conectar)
-  const loadRegistries = useCallback(async () => {
+  const loadRegistries = useCallback(async (forceRefresh = false) => {
     try {
+      // Tenta carregar do localStorage primeiro para exibição imediata
+      if (!forceRefresh) {
+        const keyMap: any = { banks: 'fincontrol_banks', categories: 'fincontrol_categories', costCenters: 'fincontrol_cost_centers', participants: 'fincontrol_participants', wallets: 'fincontrol_wallets' };
+        const localData = {
+          banks: JSON.parse(localStorage.getItem(keyMap.banks) || '[]'),
+          categories: JSON.parse(localStorage.getItem(keyMap.categories) || '[]'),
+          costCenters: JSON.parse(localStorage.getItem(keyMap.costCenters) || '[]'),
+          participants: JSON.parse(localStorage.getItem(keyMap.participants) || '[]'),
+          wallets: JSON.parse(localStorage.getItem(keyMap.wallets) || '[]'),
+        };
+        
+        if (localData.banks.length > 0 || localData.categories.length > 0) {
+          setRegistries(localData);
+        }
+      }
+
       const [bk, cat, cc, pt, wa] = await Promise.all([
-        financeService.getRegistry<Bank>('banks'),
-        financeService.getRegistry<Category>('categories'),
-        financeService.getRegistry<CostCenter>('costCenters'),
-        financeService.getRegistry<Participant>('participants'),
-        financeService.getRegistry<Wallet>('wallets'),
+        financeService.getRegistry<Bank>('banks', forceRefresh),
+        financeService.getRegistry<Category>('categories', forceRefresh),
+        financeService.getRegistry<CostCenter>('costCenters', forceRefresh),
+        financeService.getRegistry<Participant>('participants', forceRefresh),
+        financeService.getRegistry<Wallet>('wallets', forceRefresh),
       ]);
       setRegistries({ banks: bk, categories: cat, costCenters: cc, participants: pt, wallets: wa });
     } catch (error: any) {
@@ -153,7 +169,26 @@ const App: React.FC = () => {
     const currentlyConnected = (!!lsUrl && !!lsKey) || (!!DEFAULT_SUPABASE_CONFIG.url && !!DEFAULT_SUPABASE_CONFIG.key);
     
     setIsConnected(currentlyConnected);
-    await Promise.all([loadRegistries(), loadTransactions()]);
+
+    // Carrega registros (tenta local primeiro)
+    const registriesPromise = loadRegistries();
+    
+    // Carrega transações
+    const transactionsPromise = loadTransactions();
+
+    // Se já temos registros no localStorage, podemos liberar o loading mais cedo
+    const keyMap: any = { banks: 'fincontrol_banks', categories: 'fincontrol_categories' };
+    const hasLocalData = !!localStorage.getItem(keyMap.banks) || !!localStorage.getItem(keyMap.categories);
+
+    if (hasLocalData) {
+        // Se tem dados locais, esperamos apenas as transações (que são o dado principal)
+        // Os registros (nomes de bancos, etc) serão atualizados em background pelo registriesPromise
+        await transactionsPromise;
+    } else {
+        // Se não tem nada local, esperamos tudo para não mostrar tela vazia
+        await Promise.all([registriesPromise, transactionsPromise]);
+    }
+
     setLoading(false);
   };
 
@@ -185,7 +220,8 @@ const App: React.FC = () => {
     relevant.sort((a, b) => {
       const da = new Date(a.date).getTime();
       const db = new Date(b.date).getTime();
-      return da !== db ? da - db : a.id.localeCompare(b.id);
+      if (da !== db) return da - db;
+      return (a.id || '').localeCompare(b.id || '');
     });
 
     const map: Record<string, number> = {};
@@ -390,26 +426,33 @@ const App: React.FC = () => {
                    <TransactionList 
                     transactions={transactions} 
                     registries={registries} 
-                    onEdit={async (t) => { 
-                      setEditingTransaction(t); 
-                      if (t.linkedId) {
-                        const partner = transactions.find(x => x.linkedId === t.linkedId && x.id !== t.id);
-                        if (partner) {
-                          setPartnerTransaction(partner);
-                        } else {
-                          try {
-                            const linkedTxs = await financeService.getTransactionsByLinkedId(t.linkedId);
-                            const p = linkedTxs.find(x => x.id !== t.id);
-                            setPartnerTransaction(p || null);
-                          } catch (e) {
-                            console.error("Error fetching partner transaction", e);
-                            setPartnerTransaction(null);
-                          }
+                    onEdit={(t) => { 
+                      const handleEdit = async () => {
+                        const transactionToEdit = { ...t };
+                        if (activeTab === 'payables' && t.status === 'PENDING') {
+                          transactionToEdit.status = 'PAID';
                         }
-                      } else {
-                        setPartnerTransaction(null);
-                      }
-                      setIsFormOpen(true); 
+                        setEditingTransaction(transactionToEdit); 
+                        if (t.linkedId) {
+                          const partner = transactions.find(x => x.linkedId === t.linkedId && x.id !== t.id);
+                          if (partner) {
+                            setPartnerTransaction(partner);
+                          } else {
+                            try {
+                              const linkedTxs = await financeService.getTransactionsByLinkedId(t.linkedId);
+                              const p = linkedTxs.find(x => x.id !== t.id);
+                              setPartnerTransaction(p || null);
+                            } catch (e) {
+                              console.error("Error fetching partner transaction", e);
+                              setPartnerTransaction(null);
+                            }
+                          }
+                        } else {
+                          setPartnerTransaction(null);
+                        }
+                        setIsFormOpen(true); 
+                      };
+                      handleEdit();
                     }} 
                     onDelete={handleDeleteTransactions} 
                     onImport={() => {}} 

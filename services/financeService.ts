@@ -46,6 +46,13 @@ const KEYS = {
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Cache em memória para evitar requisições repetidas ao Supabase
+const cache = {
+  registries: {} as Record<string, { data: any[], timestamp: number }>,
+  balances: {} as Record<string, { data: any, timestamp: number }>,
+  TTL: 1000 * 60 * 5 // 5 minutos de cache para cadastros
+};
+
 function getEntityLocal<T>(key: string, initial: T[]): T[] {
   const stored = localStorage.getItem(key);
   if (!stored) return initial;
@@ -60,6 +67,10 @@ function saveEntityLocal<T>(key: string, data: T[]) {
   localStorage.setItem(key, JSON.stringify(data));
 }
 
+let supabaseInstance: SupabaseClient | null = null;
+let lastUrl = '';
+let lastKey = '';
+
 const getSupabase = (): SupabaseClient | null => {
   let url = localStorage.getItem('supabase_url')?.trim();
   let key = localStorage.getItem('supabase_key')?.trim();
@@ -71,12 +82,18 @@ const getSupabase = (): SupabaseClient | null => {
   }
 
   if (url && key) {
-    try {
-      return createClient(url, key);
-    } catch (e) {
-      console.error("Erro ao instanciar Supabase:", e);
-      return null;
+    // Se as credenciais mudaram ou o cliente ainda não existe, cria um novo
+    if (!supabaseInstance || url !== lastUrl || key !== lastKey) {
+      try {
+        supabaseInstance = createClient(url, key);
+        lastUrl = url;
+        lastKey = key;
+      } catch (e) {
+        console.error("Erro ao instanciar Supabase:", e);
+        return null;
+      }
     }
+    return supabaseInstance;
   }
   return null;
 };
@@ -290,24 +307,31 @@ export const financeService = {
     if (!dateLimit) return { total: 0, byBank: {} };
 
     const supabase = getSupabase();
+    const cacheKey = `balance_${dateLimit}_${bankId || 'all'}_${walletId || 'all'}`;
+    
     let rows: any[] = [];
 
     if (supabase) {
-        let query = supabase
-            .from('transactions')
-            .select('value, type, bank_id')
-            .eq('status', 'PAID')
-            .lt('date', dateLimit);
+        // Verifica cache
+        const cached = cache.balances[cacheKey];
+        if (cached && (Date.now() - cached.timestamp < cache.TTL)) {
+            return cached.data;
+        }
 
-        if (bankId) query = query.eq('bank_id', bankId);
-        if (walletId) query = query.eq('wallet_id', walletId);
-
-        // Fetch all previous history (could be optimized with database functions, but this is safer for now)
         let from = 0;
         let to = 999;
         let finished = false;
 
         while (!finished) {
+            let query = supabase
+                .from('transactions')
+                .select('value, type, bank_id')
+                .eq('status', 'PAID')
+                .lt('date', dateLimit);
+
+            if (bankId) query = query.eq('bank_id', bankId);
+            if (walletId) query = query.eq('wallet_id', walletId);
+
             const { data, error } = await query.range(from, to);
             if (error) { console.error(error); break; }
             if (!data || data.length === 0) {
@@ -340,7 +364,12 @@ export const financeService = {
         }
     });
 
-    return { total, byBank };
+    const result = { total, byBank };
+    // Atualiza cache se estiver usando Supabase
+    if (supabase) {
+        cache.balances[cacheKey] = { data: result, timestamp: Date.now() };
+    }
+    return result;
   },
 
   async saveTransaction(transaction: Transaction): Promise<Transaction> {
@@ -349,6 +378,9 @@ export const financeService = {
         ...transaction,
         id: (transaction.id && transaction.id.trim() !== '') ? transaction.id : uuidv4()
     };
+
+    // Invalida cache de saldos quando houver alteração
+    cache.balances = {};
 
     if (supabase) {
       const payload = mapTransactionToDb(transactionToSave);
@@ -371,6 +403,9 @@ export const financeService = {
         id: (t.id && t.id.trim() !== '') ? t.id : uuidv4()
     }));
 
+    // Invalida cache de saldos
+    cache.balances = {};
+
     if (supabase) {
         const payloads = transactionsWithIds.map(mapTransactionToDb);
         const { data, error } = await supabase.from('transactions').upsert(payloads).select();
@@ -386,6 +421,10 @@ export const financeService = {
 
   async deleteTransactions(ids: string[]): Promise<void> {
     const supabase = getSupabase();
+    
+    // Invalida cache de saldos
+    cache.balances = {};
+
     if (supabase) {
       const { error } = await supabase.from('transactions').delete().in('id', ids);
       if (error) throw new Error(formatSupabaseError(error));
@@ -397,11 +436,17 @@ export const financeService = {
     saveEntityLocal(KEYS.TRANSACTIONS, list);
   },
 
-  async getRegistry<T extends BaseEntity>(type: string): Promise<T[]> {
+  async getRegistry<T extends BaseEntity>(type: string, forceRefresh = false): Promise<T[]> {
     const supabase = getSupabase();
     const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
     
     if (supabase) {
+      // Verifica cache
+      const cached = cache.registries[type];
+      if (!forceRefresh && cached && (Date.now() - cached.timestamp < cache.TTL)) {
+        return cached.data as T[];
+      }
+
       let allData: any[] = [];
       let from = 0;
       let to = 999;
@@ -430,11 +475,22 @@ export const financeService = {
         }
       }
       
+      let result: T[] = [];
       if (type === 'wallets') {
         const mapped = allData.map((d: any) => ({ id: d.id, name: d.name, bankId: d.bank_id })) as any;
-        return Array.from(new Map(mapped.map((item: any) => [item.id, item])).values()) as T[];
+        result = Array.from(new Map(mapped.map((item: any) => [item.id, item])).values()) as T[];
+      } else {
+        result = Array.from(new Map(allData.map(item => [item.id, item])).values()) as T[];
       }
-      return Array.from(new Map(allData.map(item => [item.id, item])).values()) as T[];
+
+      // Atualiza cache em memória
+      cache.registries[type] = { data: result, timestamp: Date.now() };
+
+      // Salva no localStorage para persistência entre sessões
+      const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+      saveEntityLocal(keyMap[type], result);
+
+      return result;
     }
 
     await delay(200);
@@ -449,6 +505,9 @@ export const financeService = {
         ...item,
         id: (item.id && item.id.trim() !== '') ? item.id : uuidv4()
     };
+
+    // Invalida cache do registro específico
+    delete cache.registries[type];
 
     if (supabase) {
         const payload: any = { name: itemToSave.name, id: itemToSave.id };
@@ -470,6 +529,9 @@ export const financeService = {
     const supabase = getSupabase();
     const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
     
+    // Invalida cache do registro específico
+    delete cache.registries[type];
+
     if (supabase) {
         const { error } = await supabase.from(tableMap[type]).delete().eq('id', id);
         if (error) throw new Error(formatSupabaseError(error));
