@@ -1,7 +1,21 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+let aiInstance: any = null;
+
+function getAi() {
+  if (!aiInstance) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      // In production, we don't want to crash, but we need to inform the user.
+      // However, the SDK will throw if we pass an empty string.
+      // We'll return a proxy or handle it in the service methods.
+      console.warn("GEMINI_API_KEY is not defined. AI features will be disabled.");
+    }
+    aiInstance = new GoogleGenAI({ apiKey: apiKey || 'MISSING_KEY' });
+  }
+  return aiInstance;
+}
 
 export interface AssetPrice {
   ticker: string;
@@ -73,6 +87,7 @@ export const geminiService = {
     }
 
     try {
+      const ai = getAi();
       const prompt = `Forneça o preço de fechamento mais recente (ou cotação atual) para os seguintes ativos: ${tickers.join(', ')}. 
       Retorne APENAS um objeto JSON onde as chaves são os tickers e os valores são os preços numéricos. 
       Exemplo: {"PETR4": 36.50, "AAPL": 185.40}`;
@@ -142,6 +157,7 @@ export const geminiService = {
     if (assets.length === 0) return [];
 
     try {
+      const ai = getAi();
       const assetsSummary = assets.map(a => `${a.ticker}: Preço Médio ${a.averagePrice}, Preço Atual ${a.lastPrice || 'N/A'}, Qtd ${a.currentQuantity}`).join('\n');
       const prompt = `Analise os seguintes ativos da minha carteira e dê sugestões de COMPRA, VENDA ou MANUTENÇÃO (HOLD) com base no cenário atual do mercado:
       ${assetsSummary}
@@ -190,6 +206,7 @@ export const geminiService = {
     }
 
     try {
+      const ai = getAi();
       const today = new Date().toLocaleDateString('pt-BR');
       const prompt = `Hoje é dia ${today}. Forneça a cotação ATUAL E REAL (tempo real) do Dólar (USD), Euro (EUR), Libra (GBP) em relação ao Real Brasileiro (BRL).
       Retorne APENAS um objeto JSON com as taxas de câmbio onde 1 unidade da moeda estrangeira vale X Reais.
