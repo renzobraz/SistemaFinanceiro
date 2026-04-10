@@ -7,7 +7,8 @@ import {
   AlertTriangle, 
   ArrowRightLeft, 
   Filter,
-  DollarSign
+  DollarSign,
+  PieChart as PieChartIcon
 } from 'lucide-react';
 
 export const HelpManual: React.FC = () => {
@@ -72,8 +73,41 @@ export const HelpManual: React.FC = () => {
 
           <section className="space-y-4">
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 pb-2 border-b border-slate-100">
+              <PieChartIcon className="w-5 h-5 text-blue-500" />
+              3. Como Controlar Investimentos?
+            </h2>
+            <div className="text-slate-600 space-y-3 leading-relaxed text-sm">
+              <p>
+                Para que o <strong>Relatório de Performance</strong> funcione corretamente, siga este fluxo ao comprar um ativo:
+              </p>
+              <div className="bg-blue-50 p-5 rounded-xl border border-blue-100 space-y-4">
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">1</div>
+                  <p><strong>Aporte de Capital:</strong> Faça uma <strong>Transferência</strong> da sua conta corrente para sua conta de investimento. Isso apenas move o "dinheiro vivo" (caixa) entre as contas.</p>
+                </div>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">2</div>
+                  <p><strong>Compra do Ativo:</strong> Na conta de investimento, crie um lançamento de <strong>Débito</strong>. Selecione o <strong>Ativo (Participante)</strong>, preencha a <strong>Quantidade</strong> e o <strong>Preço Unitário</strong>.</p>
+                </div>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">3</div>
+                  <p><strong>Recebimento de Proventos:</strong> Crie um lançamento de <strong>Crédito</strong> com o valor <strong>BRUTO</strong>, selecione o <strong>Ativo</strong> e a categoria <strong>"Proventos"</strong>.</p>
+                </div>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">4</div>
+                  <p><strong>Impostos Retidos:</strong> Se houver imposto (ex: 30% nos EUA), crie um lançamento de <strong>Débito</strong> com o valor do imposto, selecione o mesmo <strong>Ativo</strong> e a categoria <strong>"Impostos s/ Proventos"</strong>. O sistema calculará automaticamente o <strong>Valor Líquido</strong> no relatório de performance.</p>
+                </div>
+              </div>
+              <p className="text-xs italic text-slate-500">
+                * Por que não usar Transferência direto para o Ativo? Porque a transferência gera uma entrada (crédito) na conta destino, o que o sistema interpretaria como uma "venda" ou "recebimento" no relatório de performance.
+              </p>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 pb-2 border-b border-slate-100">
               <CheckCircle2 className="w-5 h-5 text-green-600" />
-              3. Status: Pago vs Pendente
+              4. Status: Pago vs Pendente
             </h2>
             <div className="text-slate-600 space-y-3 leading-relaxed text-sm">
               <p>O sistema diferencia claramente o que é previsão do que é realidade:</p>

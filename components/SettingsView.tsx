@@ -123,7 +123,12 @@ grant all on all sequences in schema public to anon, authenticated, service_role
 grant all on all functions in schema public to anon, authenticated, service_role;
 
 -- 2. Tabelas de Cadastro
-create table if not exists public.banks (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.banks (
+  id uuid default gen_random_uuid() primary key, 
+  name text not null,
+  type text default 'CHECKING', -- 'CHECKING' ou 'INVESTMENT'
+  currency text default 'BRL'
+);
 create table if not exists public.categories (id uuid default gen_random_uuid() primary key, name text not null);
 create table if not exists public.cost_centers (id uuid default gen_random_uuid() primary key, name text not null);
 create table if not exists public.participants (id uuid default gen_random_uuid() primary key, name text not null);
@@ -170,6 +175,13 @@ create policy "Allow all operations" on public.cost_centers for all using (true)
 create policy "Allow all operations" on public.participants for all using (true) with check (true);
 create policy "Allow all operations" on public.wallets for all using (true) with check (true);
 create policy "Allow all operations" on public.transactions for all using (true) with check (true);`;
+
+  const sqlMigration = `-- EXECUTE ESTE SQL SE VOCÊ JÁ TEM AS TABELAS CRIADAS:
+alter table public.banks add column if not exists type text default 'CHECKING';
+alter table public.banks add column if not exists currency text default 'BRL';
+
+-- Recarregar o cache do PostgREST (opcional, o Supabase faz automático em alguns segundos)
+-- NOTA: Se o erro PGRST204 persistir, tente rodar os comandos acima novamente.`;
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
@@ -343,12 +355,21 @@ create policy "Allow all operations" on public.transactions for all using (true)
                   </div>
                   <p className="text-sm text-blue-50/80 mb-6 leading-relaxed">Se as tabelas não existem ou você vê "Permission Denied", copie o código SQL abaixo e execute no <strong>SQL Editor</strong> do Supabase.</p>
                   
-                  <button 
-                    onClick={() => { navigator.clipboard.writeText(sqlFullSchema); alert("SQL Copiado com sucesso!"); }}
-                    className="w-full mt-auto py-3 bg-white text-blue-600 rounded-xl text-sm font-black hover:bg-blue-50 transition-all flex items-center justify-center gap-2 shadow-lg"
-                  >
-                    <Copy className="w-4 h-4" /> Copiar Código SQL
-                  </button>
+                  <div className="space-y-3 mt-auto">
+                    <button 
+                      onClick={() => { navigator.clipboard.writeText(sqlMigration); alert("SQL de Migração Copiado!"); }}
+                      className="w-full py-3 bg-blue-500 text-white rounded-xl text-sm font-black hover:bg-blue-400 transition-all flex items-center justify-center gap-2 border border-blue-400 shadow-inner"
+                    >
+                      <Copy className="w-4 h-4" /> Copiar SQL de Migração
+                    </button>
+
+                    <button 
+                      onClick={() => { navigator.clipboard.writeText(sqlFullSchema); alert("SQL Completo Copiado!"); }}
+                      className="w-full py-3 bg-white text-blue-600 rounded-xl text-sm font-black hover:bg-blue-50 transition-all flex items-center justify-center gap-2 shadow-lg"
+                    >
+                      <Copy className="w-4 h-4" /> Copiar SQL Completo
+                    </button>
+                  </div>
               </div>
           </div>
       )}

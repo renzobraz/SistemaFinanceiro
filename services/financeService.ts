@@ -25,13 +25,116 @@ const uuidv4 = () => {
   });
 };
 
-const INITIAL_DATA = {
-  transactions: [],
-  banks: [],
-  categories: [],
-  costCenters: [],
-  participants: [],
-  wallets: [],
+const INITIAL_DATA: {
+  transactions: Transaction[];
+  banks: Bank[];
+  categories: Category[];
+  costCenters: CostCenter[];
+  participants: Participant[];
+  wallets: Wallet[];
+} = {
+  transactions: [
+    {
+      id: '1',
+      date: new Date().toISOString().split('T')[0],
+      description: 'Saldo Inicial Mercado Pago',
+      docNumber: '001',
+      value: 5000,
+      type: 'CREDIT',
+      status: 'PAID',
+      bankId: 'bank-1',
+      categoryId: 'cat-1',
+      participantId: 'part-1',
+      costCenterId: 'cc-1',
+      walletId: 'wall-1'
+    },
+    {
+      id: '2',
+      date: new Date().toISOString().split('T')[0],
+      description: 'Compra NVIDIA Corp.',
+      docNumber: '002',
+      value: 1414.68,
+      quantity: 10,
+      unitPrice: 141.468,
+      type: 'DEBIT',
+      status: 'PAID',
+      bankId: 'bank-2',
+      categoryId: 'cat-2',
+      participantId: 'part-2',
+      costCenterId: 'cc-2',
+      walletId: 'wall-1'
+    },
+    {
+      id: '3',
+      date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+      description: 'Supermercado Mensal',
+      docNumber: '003',
+      value: 450.50,
+      type: 'DEBIT',
+      status: 'PAID',
+      bankId: 'bank-1',
+      categoryId: 'cat-3',
+      participantId: 'part-3',
+      costCenterId: 'cc-1',
+      walletId: 'wall-1'
+    },
+    {
+      id: '4',
+      date: new Date(Date.now() - 172800000).toISOString().split('T')[0],
+      description: 'Recebimento Projeto Freelance',
+      docNumber: '004',
+      value: 2500.00,
+      type: 'CREDIT',
+      status: 'PAID',
+      bankId: 'bank-1',
+      categoryId: 'cat-4',
+      participantId: 'part-4',
+      costCenterId: 'cc-1',
+      walletId: 'wall-1'
+    },
+    {
+      id: '5',
+      date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+      description: 'Conta de Luz',
+      docNumber: '005',
+      value: 180.00,
+      type: 'DEBIT',
+      status: 'PENDING',
+      bankId: 'bank-1',
+      categoryId: 'cat-5',
+      participantId: 'part-5',
+      costCenterId: 'cc-1',
+      walletId: 'wall-1'
+    }
+  ],
+  banks: [
+    { id: 'bank-1', name: 'Mercado Pago', currency: 'BRL', type: 'CHECKING' },
+    { id: 'bank-2', name: 'Banco Inter Global Acount Investimentos', currency: 'USD', type: 'INVESTMENT' },
+    { id: 'bank-3', name: 'Nubank', currency: 'BRL', type: 'CHECKING' }
+  ],
+  categories: [
+    { id: 'cat-1', name: 'Saldo Inicial' },
+    { id: 'cat-2', name: 'Investimentos' },
+    { id: 'cat-3', name: 'Alimentação' },
+    { id: 'cat-4', name: 'Receitas' },
+    { id: 'cat-5', name: 'Contas Fixas' },
+    { id: 'cat-6', name: 'Proventos' },
+    { id: 'cat-7', name: 'Impostos s/ Proventos' }
+  ],
+  costCenters: [
+    { id: 'cc-1', name: 'Geral' },
+    { id: 'cc-2', name: 'Investimentos' }
+  ],
+  participants: [
+    { id: 'part-1', name: 'Mercado Pago' },
+    { id: 'part-2', name: 'NVIDIA Corp.', ticker: 'NVDA', category: 'Ação', currency: 'USD' },
+    { id: 'part-3', name: 'Pão de Açúcar' },
+    { id: 'part-4', name: 'Cliente X' },
+    { id: 'part-5', name: 'Enel' }
+  ],
+  wallets: [
+    { id: 'wall-1', name: 'Renzo Braz' }
+  ],
 };
 
 const KEYS = {
@@ -42,6 +145,7 @@ const KEYS = {
   PARTICIPANTS: 'fincontrol_participants',
   WALLETS: 'fincontrol_wallets',
   PREFERENCES: 'fincontrol_preferences',
+  IGNORED_UNIFICATIONS: 'fincontrol_ignored_unifications',
 };
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -72,30 +176,24 @@ let lastUrl = '';
 let lastKey = '';
 
 const getSupabase = (): SupabaseClient | null => {
-  let url = localStorage.getItem('supabase_url')?.trim();
-  let key = localStorage.getItem('supabase_key')?.trim();
+  const url = localStorage.getItem('supabase_url')?.trim() || DEFAULT_SUPABASE_CONFIG.url;
+  const key = localStorage.getItem('supabase_key')?.trim() || DEFAULT_SUPABASE_CONFIG.key;
 
-  // Use defaults if localStorage is empty
-  if (!url || !key) {
-    url = DEFAULT_SUPABASE_CONFIG.url;
-    key = DEFAULT_SUPABASE_CONFIG.key;
-  }
+  if (!url || !key) return null;
 
-  if (url && key) {
-    // Se as credenciais mudaram ou o cliente ainda não existe, cria um novo
-    if (!supabaseInstance || url !== lastUrl || key !== lastKey) {
-      try {
-        supabaseInstance = createClient(url, key);
-        lastUrl = url;
-        lastKey = key;
-      } catch (e) {
-        console.error("Erro ao instanciar Supabase:", e);
-        return null;
-      }
-    }
+  if (supabaseInstance && url === lastUrl && key === lastKey) {
     return supabaseInstance;
   }
-  return null;
+
+  try {
+    supabaseInstance = createClient(url, key);
+    lastUrl = url;
+    lastKey = key;
+    return supabaseInstance;
+  } catch (e) {
+    console.error("Error creating Supabase client", e);
+    return null;
+  }
 };
 
 const formatSupabaseError = (error: any): string => {
@@ -115,6 +213,8 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   description: db.description,
   docNumber: db.doc_number || '',
   value: Number(db.value),
+  quantity: db.quantity ? Number(db.quantity) : undefined,
+  unitPrice: db.unit_price ? Number(db.unit_price) : undefined,
   type: db.type,
   status: db.status,
   bankId: db.bank_id || '',
@@ -122,7 +222,13 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   participantId: db.participant_id || '',
   costCenterId: db.cost_center_id || '',
   walletId: db.wallet_id || '',
-  linkedId: db.linked_id || undefined
+  linkedId: db.linked_id || undefined,
+  exchangeRate: db.exchange_rate ? Number(db.exchange_rate) : undefined,
+  spread: db.spread ? Number(db.spread) : undefined,
+  iof: db.iof ? Number(db.iof) : undefined,
+  vet: db.vet ? Number(db.vet) : undefined,
+  originalValue: db.original_value ? Number(db.original_value) : undefined,
+  originalCurrency: db.original_currency || undefined
 });
 
 const mapTransactionToDb = (t: Transaction) => {
@@ -131,6 +237,8 @@ const mapTransactionToDb = (t: Transaction) => {
     description: t.description,
     doc_number: t.docNumber,
     value: t.value,
+    quantity: t.quantity || null,
+    unit_price: t.unitPrice || null,
     type: t.type,
     status: t.status,
     bank_id: t.bankId || null,
@@ -138,8 +246,17 @@ const mapTransactionToDb = (t: Transaction) => {
     participant_id: t.participantId || null,
     cost_center_id: t.costCenterId || null,
     wallet_id: t.walletId || null,
-    linked_id: t.linkedId || null 
+    linked_id: t.linkedId || null,
   };
+
+  // Only include exchange fields if they have actual values to prevent PGRST204 errors on older schemas
+  if (t.exchangeRate && t.exchangeRate > 0) payload.exchange_rate = t.exchangeRate;
+  if (t.spread && t.spread > 0) payload.spread = t.spread;
+  if (t.iof && t.iof > 0) payload.iof = t.iof;
+  if (t.vet && t.vet > 0) payload.vet = t.vet;
+  if (t.originalValue && t.originalValue > 0) payload.original_value = t.originalValue;
+  if (t.originalCurrency) payload.original_currency = t.originalCurrency;
+
   if (t.id && t.id.trim() !== '') {
     payload.id = t.id;
   }
@@ -174,6 +291,10 @@ export const financeService = {
 
   saveUserPreferences(prefs: any): void {
     localStorage.setItem(KEYS.PREFERENCES, JSON.stringify(prefs));
+  },
+
+  getSupabase(): any {
+    return getSupabase();
   },
 
   getDateRangeFromPreference(option: string): { start: string, end: string } {
@@ -243,43 +364,52 @@ export const financeService = {
   async getTransactions(filters?: TransactionFilters): Promise<Transaction[]> {
     const supabase = getSupabase();
     if (supabase) {
-      let query = supabase.from('transactions').select('*');
+      try {
+        let query = supabase.from('transactions').select('*');
 
-      // Aplicar filtros no servidor
-      if (filters?.startDate && filters.startDate.trim() !== '') query = query.gte('date', filters.startDate);
-      if (filters?.endDate && filters.endDate.trim() !== '') query = query.lte('date', filters.endDate);
-      if (filters?.bankId && filters.bankId.trim() !== '') query = query.eq('bank_id', filters.bankId);
-      if (filters?.walletId && filters.walletId.trim() !== '') query = query.eq('wallet_id', filters.walletId);
-      if (filters?.status && filters.status !== 'ALL') query = query.eq('status', filters.status);
+        // Aplicar filtros no servidor
+        if (filters?.startDate && filters.startDate.trim() !== '') query = query.gte('date', filters.startDate);
+        if (filters?.endDate && filters.endDate.trim() !== '') query = query.lte('date', filters.endDate);
+        if (filters?.bankId && filters.bankId.trim() !== '') query = query.eq('bank_id', filters.bankId);
+        if (filters?.walletId && filters.walletId.trim() !== '') query = query.eq('wallet_id', filters.walletId);
+        if (filters?.status && filters.status !== 'ALL') query = query.eq('status', filters.status);
 
-      let allData: any[] = [];
-      let from = 0;
-      let to = 999;
-      let finished = false;
+        let allData: any[] = [];
+        let from = 0;
+        let to = 999;
+        let finished = false;
 
-      while (!finished) {
-        // Range é aplicado sobre a query já filtrada
-        const { data, error } = await query
-          .order('date', { ascending: false })
-          .order('id')
-          .range(from, to);
+        while (!finished) {
+          // Range é aplicado sobre a query já filtrada
+          const { data, error } = await query
+            .order('date', { ascending: false })
+            .order('id')
+            .range(from, to);
 
-        if (error) throw new Error(formatSupabaseError(error));
-        
-        if (!data || data.length === 0) {
-          finished = true;
-        } else {
-          allData = [...allData, ...data];
-          if (data.length < 1000) {
+          if (error) throw new Error(formatSupabaseError(error));
+          
+          if (!data || data.length === 0) {
             finished = true;
           } else {
-            from += 1000;
-            to += 1000;
+            allData = [...allData, ...data];
+            if (data.length < 1000) {
+              finished = true;
+            } else {
+              from += 1000;
+              to += 1000;
+            }
           }
         }
+        const uniqueData = Array.from(new Map(allData.map(item => [item.id, item])).values());
+        return uniqueData.map(mapTransactionFromDb);
+      } catch (e: any) {
+        console.error("Supabase fetch failed, falling back to local data", e);
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
       }
-      const uniqueData = Array.from(new Map(allData.map(item => [item.id, item])).values());
-      return uniqueData.map(mapTransactionFromDb);
     }
     
     // FALLBACK LOCAL
@@ -312,6 +442,7 @@ export const financeService = {
     let rows: any[] = [];
 
     if (supabase) {
+      try {
         // Verifica cache
         const cached = cache.balances[cacheKey];
         if (cached && (Date.now() - cached.timestamp < cache.TTL)) {
@@ -342,6 +473,21 @@ export const financeService = {
                 else { from += 1000; to += 1000; }
             }
         }
+      } catch (e: any) {
+        console.error("Supabase balance fetch failed, falling back to local data", e);
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fallback logic below
+          const local = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
+          rows = local.filter(t => 
+              t.status === 'PAID' && 
+              t.date < dateLimit &&
+              (!bankId || t.bankId === bankId) &&
+              (!walletId || t.walletId === walletId)
+          ).map(t => ({ value: Number(t.value), type: t.type, bank_id: t.bankId }));
+        } else {
+          throw e;
+        }
+      }
     } else {
         // Local Fallback
         const local = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
@@ -383,10 +529,19 @@ export const financeService = {
     cache.balances = {};
 
     if (supabase) {
-      const payload = mapTransactionToDb(transactionToSave);
-      const { data, error } = await supabase.from('transactions').upsert(payload).select().single();
-      if (error) throw new Error(formatSupabaseError(error));
-      return mapTransactionFromDb(data);
+      try {
+        const payload = mapTransactionToDb(transactionToSave);
+        const { data, error } = await supabase.from('transactions').upsert(payload).select().single();
+        if (error) throw new Error(formatSupabaseError(error));
+        return mapTransactionFromDb(data);
+      } catch (e: any) {
+        console.error("Supabase save failed, falling back to local data", e);
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
     }
     await delay(300);
     const list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
@@ -407,10 +562,19 @@ export const financeService = {
     cache.balances = {};
 
     if (supabase) {
+      try {
         const payloads = transactionsWithIds.map(mapTransactionToDb);
         const { data, error } = await supabase.from('transactions').upsert(payloads).select();
         if (error) throw new Error(formatSupabaseError(error));
         return (data || []).map(mapTransactionFromDb);
+      } catch (e: any) {
+        console.error("Supabase bulk save failed, falling back to local data", e);
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
     }
     await delay(500);
     const list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
@@ -426,9 +590,18 @@ export const financeService = {
     cache.balances = {};
 
     if (supabase) {
-      const { error } = await supabase.from('transactions').delete().in('id', ids);
-      if (error) throw new Error(formatSupabaseError(error));
-      return;
+      try {
+        const { error } = await supabase.from('transactions').delete().in('id', ids);
+        if (error) throw new Error(formatSupabaseError(error));
+        return;
+      } catch (e: any) {
+        console.error("Supabase delete failed, falling back to local data", e);
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
     }
     await delay(300);
     let list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
@@ -441,56 +614,86 @@ export const financeService = {
     const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
     
     if (supabase) {
-      // Verifica cache
-      const cached = cache.registries[type];
-      if (!forceRefresh && cached && (Date.now() - cached.timestamp < cache.TTL)) {
-        return cached.data as T[];
-      }
+      try {
+        // Verifica cache
+        const cached = cache.registries[type];
+        if (!forceRefresh && cached && (Date.now() - cached.timestamp < cache.TTL)) {
+          return cached.data as T[];
+        }
 
-      let allData: any[] = [];
-      let from = 0;
-      let to = 999;
-      let finished = false;
+        let allData: any[] = [];
+        let from = 0;
+        let to = 999;
+        let finished = false;
 
-      while (!finished) {
-        const { data, error } = await supabase
-          .from(tableMap[type])
-          .select('*')
-          .order('name')
-          .order('id')
-          .range(from, to);
+        while (!finished) {
+          const { data, error } = await supabase
+            .from(tableMap[type])
+            .select('*')
+            .order('name')
+            .order('id')
+            .range(from, to);
 
-        if (error) throw new Error(formatSupabaseError(error));
-        
-        if (!data || data.length === 0) {
-          finished = true;
-        } else {
-          allData = [...allData, ...data];
-          if (data.length < 1000) {
+          if (error) throw new Error(formatSupabaseError(error));
+          
+          if (!data || data.length === 0) {
             finished = true;
           } else {
-            from += 1000;
-            to += 1000;
+            allData = [...allData, ...data];
+            if (data.length < 1000) {
+              finished = true;
+            } else {
+              from += 1000;
+              to += 1000;
+            }
           }
         }
+        
+        let result: T[] = [];
+        if (type === 'banks') {
+          result = allData.map((d: any) => ({ 
+            id: d.id, 
+            name: d.name, 
+            type: d.type || 'CHECKING', 
+            currency: d.currency || 'BRL' 
+          })) as any;
+        } else if (type === 'wallets') {
+          result = allData.map((d: any) => ({ 
+            id: d.id, 
+            name: d.name 
+          })) as any;
+        } else if (type === 'participants') {
+          const virtualTargetPrices = JSON.parse(localStorage.getItem('fincontrol_virtual_target_prices') || '{}');
+          result = allData.map((d: any) => ({ 
+            id: d.id, 
+            name: d.name, 
+            category: d.category,
+            ticker: d.ticker,
+            currency: d.currency || 'BRL',
+            currentPrice: d.current_price,
+            targetPrice: d.target_price !== undefined ? d.target_price : virtualTargetPrices[d.id],
+            lastUpdate: d.last_update
+          })) as any;
+        } else {
+          result = Array.from(new Map(allData.map(item => [item.id, item])).values()) as T[];
+        }
+
+        // Atualiza cache em memória
+        cache.registries[type] = { data: result, timestamp: Date.now() };
+
+        // Salva no localStorage para persistência entre sessões
+        const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+        saveEntityLocal(keyMap[type], result);
+
+        return result;
+      } catch (e: any) {
+        console.error(`Supabase registry fetch failed for ${type}, falling back to local data`, e);
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
       }
-      
-      let result: T[] = [];
-      if (type === 'wallets') {
-        const mapped = allData.map((d: any) => ({ id: d.id, name: d.name, bankId: d.bank_id })) as any;
-        result = Array.from(new Map(mapped.map((item: any) => [item.id, item])).values()) as T[];
-      } else {
-        result = Array.from(new Map(allData.map(item => [item.id, item])).values()) as T[];
-      }
-
-      // Atualiza cache em memória
-      cache.registries[type] = { data: result, timestamp: Date.now() };
-
-      // Salva no localStorage para persistência entre sessões
-      const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
-      saveEntityLocal(keyMap[type], result);
-
-      return result;
     }
 
     await delay(200);
@@ -510,19 +713,84 @@ export const financeService = {
     delete cache.registries[type];
 
     if (supabase) {
+      try {
         const payload: any = { name: itemToSave.name, id: itemToSave.id };
-        if (type === 'wallets') payload.bank_id = (item as any).bankId || null;
-        const { data, error } = await supabase.from(tableMap[type]).upsert(payload).select().single();
+        if (type === 'banks') {
+            payload.type = (item as any).type || 'CHECKING';
+            payload.currency = (item as any).currency || 'BRL';
+        }
+        if (type === 'wallets') {
+            // Wallet is now just a portfolio/company name
+        }
+        if (type === 'participants') {
+            payload.category = (item as any).category || null;
+            payload.ticker = (item as any).ticker || null;
+            payload.currency = (item as any).currency || 'BRL';
+            payload.current_price = (item as any).currentPrice || null;
+            payload.target_price = (item as any).targetPrice || null;
+            payload.last_update = (item as any).lastUpdate || null;
+        }
+        
+        let { data, error } = await supabase.from(tableMap[type]).upsert(payload).select().single();
+        
+        // Fallback para quando a coluna target_price não existe no Supabase (Erro PGRST204)
+        if (error && error.code === 'PGRST204' && type === 'participants') {
+            console.warn("Coluna 'target_price' não encontrada no Supabase. Salvando localmente como fallback.");
+            const virtualTargetPrices = JSON.parse(localStorage.getItem('fincontrol_virtual_target_prices') || '{}');
+            if ((item as any).targetPrice !== undefined) {
+                virtualTargetPrices[itemToSave.id] = (item as any).targetPrice;
+                localStorage.setItem('fincontrol_virtual_target_prices', JSON.stringify(virtualTargetPrices));
+            }
+            
+            // Tenta salvar novamente sem a coluna problemática
+            const cleanPayload = { ...payload };
+            delete cleanPayload.target_price;
+            const retry = await supabase.from(tableMap[type]).upsert(cleanPayload).select().single();
+            data = retry.data;
+            error = retry.error;
+        }
+
         if (error) throw new Error(formatSupabaseError(error));
-        if (type === 'wallets') return { id: data.id, name: data.name, bankId: data.bank_id } as any;
+        
+        if (type === 'wallets') return { id: data.id, name: data.name, bankId: data.bank_id, currency: data.currency, type: data.type } as any;
+        if (type === 'participants') {
+            const virtualTargetPrices = JSON.parse(localStorage.getItem('fincontrol_virtual_target_prices') || '{}');
+            return { 
+                id: data.id, 
+                name: data.name, 
+                category: data.category,
+                ticker: data.ticker,
+                currency: data.currency,
+                currentPrice: data.current_price,
+                targetPrice: data.target_price !== undefined ? data.target_price : virtualTargetPrices[data.id],
+                lastUpdate: data.last_update
+            } as any;
+        }
         return data as T;
+      } catch (e: any) {
+        console.error(`Supabase registry save failed for ${type}, falling back to local data`, e);
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
     }
     const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
     const list = getEntityLocal<T>(keyMap[type], (INITIAL_DATA as any)[type]);
     const index = list.findIndex(x => x.id === itemToSave.id);
-    if (index >= 0) list[index] = itemToSave as T; else list.push(itemToSave as T);
+    
+    const finalItem = { ...itemToSave };
+    if (type === 'banks' && !(finalItem as any).currency) {
+        (finalItem as any).currency = 'BRL';
+    }
+    if (type === 'banks' && !(finalItem as any).type) {
+        (finalItem as any).type = 'CHECKING';
+    }
+
+    if (index >= 0) list[index] = finalItem as T; else list.push(finalItem as T);
     saveEntityLocal(keyMap[type], list);
-    return itemToSave as T;
+    return finalItem as T;
   },
 
   async deleteRegistryItem(type: string, id: string): Promise<void> {
@@ -533,9 +801,18 @@ export const financeService = {
     delete cache.registries[type];
 
     if (supabase) {
+      try {
         const { error } = await supabase.from(tableMap[type]).delete().eq('id', id);
         if (error) throw new Error(formatSupabaseError(error));
         return;
+      } catch (e: any) {
+        console.error(`Supabase registry delete failed for ${type}, falling back to local data`, e);
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
     }
     
     const localFkMap: any = { banks: 'bankId', categories: 'categoryId', costCenters: 'costCenterId', participants: 'participantId', wallets: 'walletId' };
@@ -550,11 +827,8 @@ export const financeService = {
     }
 
     if (type === 'banks') {
-        const wallets = getEntityLocal<Wallet>(KEYS.WALLETS, []);
-        const isUsedInWallets = wallets.some(w => w.bankId === id);
-        if (isUsedInWallets) {
-            throw new Error("Não é possível excluir este registro pois ele está sendo usado em um ou mais lançamentos financeiros.");
-        }
+        // Banks are accounts, they are used in transactions. 
+        // We already check localFkMap above.
     }
 
     const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
@@ -626,7 +900,7 @@ export const financeService = {
         if (updateError) throw new Error(formatSupabaseError(updateError));
 
         if (type === 'banks') {
-          await supabase.from('wallets').update({ bank_id: master.id }).in('bank_id', duplicateIds);
+          // Bank is now the account, no need to update wallets
         }
 
         const { error: deleteError } = await supabase
@@ -681,12 +955,7 @@ export const financeService = {
       });
 
       if (type === 'banks') {
-        wallets = wallets.map(w => {
-          if (duplicateIds.includes(w.bankId)) {
-            return { ...w, bankId: master.id };
-          }
-          return w;
-        });
+        // Bank is now the account, no need to update wallets
       }
 
       mergedCount += duplicateIds.length;
@@ -705,5 +974,236 @@ export const financeService = {
     }
 
     return { merged: mergedCount, deleted: deletedCount };
+  },
+
+  async findSimilarGroups(type: string): Promise<Array<{ master: any, duplicates: any[] }>> {
+    const items = await this.getRegistry(type);
+    const groups: Array<{ master: any, duplicates: any[] }> = [];
+    const processed = new Set<string>();
+    
+    const ignoredKey = `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
+    const ignoredPairs: string[] = JSON.parse(localStorage.getItem(ignoredKey) || '[]');
+
+    const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+    // Ordena por tamanho do nome (menor primeiro) para que o "master" tenda a ser o nome mais curto/limpo
+    const sortedItems = [...items].sort((a, b) => a.name.length - b.name.length);
+
+    for (let i = 0; i < sortedItems.length; i++) {
+      if (processed.has(sortedItems[i].id)) continue;
+      
+      const current = sortedItems[i];
+      const currentNorm = normalize(current.name);
+      if (currentNorm.length < 3) continue; // Evita nomes muito curtos que gerariam muitos falsos positivos
+
+      const group = { master: current, duplicates: [] as any[] };
+
+      for (let j = i + 1; j < sortedItems.length; j++) {
+        if (processed.has(sortedItems[j].id)) continue;
+        
+        const other = sortedItems[j];
+        const otherNorm = normalize(other.name);
+
+        // Verifica se este par já foi ignorado
+        const pairId = [current.id, other.id].sort().join(':');
+        if (ignoredPairs.includes(pairId)) continue;
+
+        // Critério: Um contém o outro (ex: "Petrobras" e "Petrobras S.A.")
+        if (otherNorm.includes(currentNorm) || currentNorm.includes(otherNorm)) {
+           group.duplicates.push(other);
+        }
+      }
+
+      if (group.duplicates.length > 0) {
+        groups.push(group);
+        processed.add(current.id);
+        group.duplicates.forEach(d => processed.add(d.id));
+      }
+    }
+
+    return groups;
+  },
+
+  async ignoreUnification(type: string, masterId: string, duplicateIds: string[]): Promise<void> {
+    const ignoredKey = `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
+    const ignoredPairs: string[] = JSON.parse(localStorage.getItem(ignoredKey) || '[]');
+    
+    duplicateIds.forEach(dupId => {
+      const pairId = [masterId, dupId].sort().join(':');
+      if (!ignoredPairs.includes(pairId)) {
+        ignoredPairs.push(pairId);
+      }
+    });
+
+    localStorage.setItem(ignoredKey, JSON.stringify(ignoredPairs));
+  },
+
+  async getIgnoredUnifications(type: string): Promise<Array<{ id: string, name1: string, name2: string, pairId: string }>> {
+    const items = await this.getRegistry(type);
+    const ignoredKey = `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
+    const ignoredPairs: string[] = JSON.parse(localStorage.getItem(ignoredKey) || '[]');
+    
+    const result: any[] = [];
+    ignoredPairs.forEach(pairId => {
+      const [id1, id2] = pairId.split(':');
+      const item1 = items.find(i => i.id === id1);
+      const item2 = items.find(i => i.id === id2);
+      
+      if (item1 && item2) {
+        result.push({
+          id: pairId,
+          name1: item1.name,
+          name2: item2.name,
+          pairId
+        });
+      }
+    });
+    
+    return result;
+  },
+
+  async removeIgnoredUnification(type: string, pairId: string): Promise<void> {
+    const ignoredKey = `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
+    let ignoredPairs: string[] = JSON.parse(localStorage.getItem(ignoredKey) || '[]');
+    ignoredPairs = ignoredPairs.filter(id => id !== pairId);
+    localStorage.setItem(ignoredKey, JSON.stringify(ignoredPairs));
+  },
+
+  async mergeItems(type: string, masterId: string, duplicateIds: string[]): Promise<void> {
+    const supabase = getSupabase();
+    const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
+    const fkMap: any = { banks: 'bank_id', categories: 'category_id', costCenters: 'cost_center_id', participants: 'participant_id', wallets: 'wallet_id' };
+    const localFkMap: any = { banks: 'bankId', categories: 'categoryId', costCenters: 'costCenterId', participants: 'participantId', wallets: 'walletId' };
+    
+    const tableName = tableMap[type];
+    const fkName = fkMap[type];
+    const localFkName = localFkMap[type];
+
+    if (supabase) {
+      const { error: updateError } = await supabase
+        .from('transactions')
+        .update({ [fkName]: masterId })
+        .in(fkName, duplicateIds);
+      
+      if (updateError) throw new Error(formatSupabaseError(updateError));
+
+      if (type === 'banks') {
+        // Bank is now the account, no need to update wallets
+      }
+
+      const { error: deleteError } = await supabase
+        .from(tableName)
+        .delete()
+        .in('id', duplicateIds);
+      
+      if (deleteError) throw new Error(formatSupabaseError(deleteError));
+    } else {
+      const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+      let items = getEntityLocal<any>(keyMap[type], []);
+      let transactions = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, []);
+      let wallets = getEntityLocal<Wallet>(KEYS.WALLETS, []);
+
+      transactions = transactions.map(t => {
+        if (duplicateIds.includes((t as any)[localFkName])) {
+          return { ...t, [localFkName]: masterId };
+        }
+        return t;
+      });
+
+      if (type === 'banks') {
+        // Bank is now the account, no need to update wallets
+      }
+
+      items = items.filter(i => !duplicateIds.includes(i.id));
+      
+      saveEntityLocal(keyMap[type], items);
+      saveEntityLocal(KEYS.TRANSACTIONS, transactions);
+      if (type === 'banks') saveEntityLocal(KEYS.WALLETS, wallets);
+    }
+
+    // Invalida cache
+    delete cache.registries[type];
+    cache.balances = {};
+  },
+
+  async autoFillTickers(): Promise<number> {
+    const B3_MAPPING: Record<string, string> = {
+      'petrobras': 'PETR4',
+      'vale': 'VALE3',
+      'itau': 'ITUB4',
+      'bradesco': 'BBDC4',
+      'ambev': 'ABEV3',
+      'banco do brasil': 'BBAS3',
+      'magazine luiza': 'MGLU3',
+      'magalu': 'MGLU3',
+      'weg': 'WEGE3',
+      'b3': 'B3SA3',
+      'suzano': 'SUZB3',
+      'gerdau': 'GGBR4',
+      'jbs': 'JBSS3',
+      'localiza': 'RENT3',
+      'cosan': 'CSAN3',
+      'raia drogasil': 'RADL3',
+      'natura': 'NTCO3',
+      'lojas renner': 'LREN3',
+      'btg pactual': 'BPAC11',
+      'santander': 'SANB11',
+      'eletrobras': 'ELET3',
+      'itausa': 'ITSA4',
+      'bb seguridade': 'BBSE3',
+      'vibra': 'VBBR3',
+      'equatorial': 'EQTL3',
+      'rumo': 'RAIL3',
+      'klabin': 'KLBN11',
+      'engie': 'EGIE3',
+      'hypera': 'HYPE3',
+      'totvs': 'TOTS3',
+      'cpfl': 'CPFE3',
+      'energisa': 'ENGI11',
+      'bradespar': 'BRAP4',
+      'azul': 'AZUL4',
+      'gol': 'GOLL4',
+      'embraer': 'EMBR3',
+      'mrv': 'MRVE3',
+      'cyrela': 'CYRE3',
+      'via': 'VIIA3',
+      'casas bahia': 'BHIA3',
+      'petrorio': 'PRIO3',
+      'prio': 'PRIO3',
+      '3r petroleum': 'RRRP3',
+      'brava': 'BRAV3',
+      'multiplan': 'MULT3',
+      'iguatemi': 'IGTI11',
+      'brf': 'BRFS3',
+      'marfrig': 'MRFG3',
+      'slc agricola': 'SLCE3',
+      'sao martinho': 'SMTO3',
+      'uol': 'UOL',
+      'petroleo brasileiro': 'PETR4',
+      'itau unibanco': 'ITUB4',
+    };
+
+    const participants = (await this.getRegistry('participants')) as Participant[];
+    let updatedCount = 0;
+    
+    for (const p of participants) {
+      if (p.ticker) continue;
+      
+      const normName = p.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      let foundTicker = '';
+      
+      for (const [key, ticker] of Object.entries(B3_MAPPING)) {
+        if (normName.includes(key)) {
+          foundTicker = ticker;
+          break;
+        }
+      }
+      
+      if (foundTicker) {
+        await this.saveRegistryItem('participants', { ...p, ticker: foundTicker, currency: p.currency || 'BRL' });
+        updatedCount++;
+      }
+    }
+    return updatedCount;
   }
 };

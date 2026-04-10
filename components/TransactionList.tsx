@@ -423,13 +423,31 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     </td>
                     <td className="p-3 text-slate-600 whitespace-nowrap">{formatDateDisplay(t.date)}</td>
                     <td className="p-3 text-slate-600 truncate max-w-[120px]">{getName(registries.banks, t.bankId)}</td>
-                    <td className="p-3 text-slate-600 truncate max-w-[120px]">{getName(registries.wallets, t.walletId)}</td>
+                    <td className="p-3 text-slate-600 truncate max-w-[120px]">
+                        {getName(registries.wallets, t.walletId)}
+                        {(() => {
+                            const bank = registries.banks?.find(b => b.id === t.bankId);
+                            if (bank?.currency && bank.currency !== 'BRL') {
+                                return (
+                                    <span className="ml-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[8px] font-black rounded uppercase">
+                                        {bank.currency}
+                                    </span>
+                                );
+                            }
+                            return null;
+                        })()}
+                    </td>
                     <td className="p-3 text-slate-600 truncate max-w-[120px]">{getName(registries.categories, t.categoryId)}</td>
                     <td className="p-3 text-slate-600 truncate max-w-[120px]" title={getName(registries.participants, t.participantId)}>{getName(registries.participants, t.participantId)}</td>
                     <td className="p-3 text-slate-600 truncate max-w-[120px]">{getName(registries.costCenters, t.costCenterId)}</td>
                     <td className="p-3 text-slate-800 font-bold">
                         {t.description}
                         {t.docNumber && <span className="text-[10px] text-slate-400 font-medium block">Nº {t.docNumber}</span>}
+                        {t.exchangeRate && t.exchangeRate > 0 && (
+                            <span className="text-[9px] text-blue-500 font-bold block mt-0.5">
+                                Câmbio: {t.exchangeRate.toFixed(4)} | VET: {t.vet?.toFixed(4)}
+                            </span>
+                        )}
                     </td>
                     <td className="p-3 text-right text-red-600 font-bold">{t.type === 'DEBIT' ? formatMoney(t.value) : '-'}</td>
                     <td className="p-3 text-right text-green-600 font-bold">{t.type === 'CREDIT' ? formatMoney(t.value) : '-'}</td>

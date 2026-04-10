@@ -144,9 +144,18 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [id, setId] = useState<string>("");
   const [mode, setMode] = useState<FormMode>("DEFAULT");
   const [targetBankId, setTargetBankId] = useState("");
+  const [targetWalletId, setTargetWalletId] = useState("");
   const [linkedId, setLinkedId] = useState<string | undefined>(undefined);
   const [isSaving, setIsSaving] = useState(false);
   const [discountValue, setDiscountValue] = useState<number>(0);
+
+  // Exchange State
+  const [exchangeRate, setExchangeRate] = useState<number>(0);
+  const [spread, setSpread] = useState<number>(0);
+  const [iof, setIof] = useState<number>(0);
+  const [vet, setVet] = useState<number>(0);
+  const [originalValue, setOriginalValue] = useState<number>(0);
+  const [originalCurrency, setOriginalCurrency] = useState<string>("");
 
   // Recurrence State
   const [isRecurrent, setIsRecurrent] = useState(false);
@@ -242,6 +251,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   }, [dropdownRef]);
 
   useEffect(() => {
+    if (exchangeRate > 0) {
+      const calculatedVet = exchangeRate * (1 + (spread + iof) / 100);
+      setVet(Number(calculatedVet.toFixed(4)));
+    }
+  }, [exchangeRate, spread, iof]);
+
+  useEffect(() => {
     if (!isOpen) return;
     setIsSaving(false);
     setIsParticipantDropdownOpen(false);
@@ -253,17 +269,36 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         setMode("TRANSFER");
         if (initialData.type === "CREDIT" && partnerData) {
           newFormData.bankId = partnerData.bankId;
+          newFormData.walletId = partnerData.walletId;
           setTargetBankId(initialData.bankId);
+          setTargetWalletId(initialData.walletId);
         } else {
           if (partnerData) {
             setTargetBankId(partnerData.bankId);
+            setTargetWalletId(partnerData.walletId);
           } else {
             setTargetBankId("");
+            setTargetWalletId("");
           }
         }
+        
+        // Load exchange fields if they exist
+        setExchangeRate(initialData.exchangeRate || 0);
+        setSpread(initialData.spread || 0);
+        setIof(initialData.iof || 0);
+        setVet(initialData.vet || 0);
+        setOriginalValue(initialData.originalValue || 0);
+        setOriginalCurrency(initialData.originalCurrency || "");
       } else {
         setMode("DEFAULT");
         setTargetBankId("");
+        setTargetWalletId("");
+        setExchangeRate(0);
+        setSpread(0);
+        setIof(0);
+        setVet(0);
+        setOriginalValue(0);
+        setOriginalCurrency("");
       }
 
       setFormData(newFormData);
@@ -289,11 +324,18 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       setLinkedId(undefined);
       setMode("DEFAULT");
       setTargetBankId("");
+      setTargetWalletId("");
       setParticipantSearch("");
       setDiscountValue(0);
       setIsRecurrent(false);
       setRecurrenceCount(2);
       setRecurrenceFreq("MONTHLY");
+      setExchangeRate(0);
+      setSpread(0);
+      setIof(0);
+      setVet(0);
+      setOriginalValue(0);
+      setOriginalCurrency("");
     }
   }, [
     initialData,
@@ -304,6 +346,27 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     preSelectedBankId,
     preSelectedWalletId,
   ]);
+
+  useEffect(() => {
+    // Se temos quantidade e preço unitário, calculamos o valor total
+    if (formData.quantity && formData.unitPrice) {
+      const calculatedValue = Number((formData.quantity * formData.unitPrice).toFixed(2));
+      if (Math.abs(formData.value - calculatedValue) > 0.01) {
+        setFormData(prev => ({
+          ...prev,
+          value: calculatedValue
+        }));
+      }
+    } 
+    // Se temos valor total e quantidade, calculamos o preço unitário
+    else if (formData.value && formData.quantity && !formData.unitPrice) {
+      const calculatedUnitPrice = Number((formData.value / formData.quantity).toFixed(6));
+      setFormData(prev => ({
+        ...prev,
+        unitPrice: calculatedUnitPrice
+      }));
+    }
+  }, [formData.quantity, formData.unitPrice, formData.value]);
 
   const handleQuickAddParticipant = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -347,6 +410,29 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const handleSubmit = async (e: React.FormEvent, withDiscount = false) => {
     e.preventDefault();
     if (isSaving) return;
+
+    // Validação de Investimento
+    const category = registries.categories.find(c => c.id === formData.categoryId);
+    const participant = registries.participants.find(p => p.id === formData.participantId);
+    const bank = registries.banks.find(b => b.id === formData.bankId);
+    const isInvestmentBank = bank?.type === 'INVESTMENT';
+
+    const isDividendOrTax = category?.name.toLowerCase() === 'proventos' || 
+                           category?.name.toLowerCase() === 'impostos s/ proventos';
+
+    const isInvestment = !!participant?.category && isInvestmentBank && !isDividendOrTax;
+
+    if (isInvestment) {
+      if (!formData.quantity || formData.quantity <= 0) {
+        alert("Para investimentos, a quantidade é obrigatória e deve ser maior que zero.");
+        return;
+      }
+      if (!formData.unitPrice || formData.unitPrice <= 0) {
+        alert("Para investimentos, o preço unitário é obrigatório.");
+        return;
+      }
+    }
+
     setIsSaving(true);
 
     try {
@@ -379,6 +465,12 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           const targetBank = registries.banks.find(
             (b) => b.id === targetBankId,
           );
+          const sourceWallet = registries.wallets.find(
+            (w) => w.id === formData.walletId,
+          );
+          const targetWallet = registries.wallets.find(
+            (w) => w.id === targetWalletId,
+          );
 
           let debitLegId = "";
           let creditLegId = "";
@@ -398,6 +490,9 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             }
           }
 
+          const isMultiCurrency = sourceBank && targetBank && sourceBank.currency !== targetBank.currency;
+
+          // Debit Leg (Always in source currency)
           transactionsToSave.push({
             ...currentData,
             id: debitLegId,
@@ -405,15 +500,33 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             type: "DEBIT",
             linkedId: currentLinkedId,
             bankId: formData.bankId,
+            walletId: formData.walletId,
+            exchangeRate,
+            spread,
+            iof,
+            vet,
+            originalValue: isMultiCurrency ? formData.value : undefined,
+            originalCurrency: isMultiCurrency ? sourceBank.currency : undefined
           });
+
+          // Credit Leg (In target currency if multi-currency)
+          const creditValue = isMultiCurrency && vet > 0 ? formData.value / vet : formData.value;
 
           transactionsToSave.push({
             ...currentData,
             id: creditLegId,
+            value: creditValue,
             description: `Transf. de ${sourceBank?.name || "Origem"} ${loops > 1 ? `(${i + 1}/${loops})` : ""}`,
             type: "CREDIT",
             linkedId: currentLinkedId,
             bankId: targetBankId,
+            walletId: targetWalletId,
+            exchangeRate,
+            spread,
+            iof,
+            vet,
+            originalValue: isMultiCurrency ? formData.value : undefined,
+            originalCurrency: isMultiCurrency ? sourceBank.currency : undefined
           });
         } else {
           transactionsToSave.push({
@@ -553,6 +666,64 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               />
             </div>
 
+            {/* Campos de Investimento (Quantidade e Preço Unitário) */}
+            {(() => {
+              const category = registries.categories.find(c => c.id === formData.categoryId);
+              const participant = registries.participants.find(p => p.id === formData.participantId);
+              const bank = registries.banks.find(b => b.id === formData.bankId);
+              const isInvestmentBank = bank?.type === 'INVESTMENT';
+
+              const isDividendOrTax = category?.name.toLowerCase() === 'proventos' || 
+                                     category?.name.toLowerCase() === 'impostos s/ proventos';
+
+              const isInvestment = !!participant?.category && isInvestmentBank && !isDividendOrTax;
+              
+              if (!isInvestment) return null;
+
+              return (
+                <>
+                  <div className="md:col-span-1 animate-fade-in">
+                    <label className="block text-sm font-medium text-blue-700 mb-1">
+                      Quantidade
+                    </label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      disabled={isSaving}
+                      value={formData.quantity || ""}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          quantity: parseFloat(e.target.value) || 0,
+                        })
+                      }
+                      className="w-full px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-blue-800 placeholder:text-blue-300"
+                      placeholder="Ex: 100"
+                    />
+                  </div>
+                  <div className="md:col-span-1 animate-fade-in">
+                    <label className="block text-sm font-medium text-blue-700 mb-1">
+                      Preço Unit. (R$)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      disabled={isSaving}
+                      value={formData.unitPrice || ""}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          unitPrice: parseFloat(e.target.value) || 0,
+                        })
+                      }
+                      className="w-full px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-blue-800 placeholder:text-blue-300"
+                      placeholder="Ex: 10.50"
+                    />
+                  </div>
+                </>
+              );
+            })()}
+
             {id && (
               <div className="md:col-span-1 animate-fade-in">
                 <label className="block text-sm font-medium text-emerald-700 mb-1 flex items-center gap-1">
@@ -687,7 +858,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           >
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                Carteira
+                Carteira/Portfólio
               </label>
               <select
                 required
@@ -708,7 +879,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                {mode === "TRANSFER" ? "Banco Origem" : "Banco"}
+                {mode === "TRANSFER" ? "Conta/Banco Origem" : "Conta/Banco"}
               </label>
               <select
                 required
@@ -728,31 +899,129 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               </select>
             </div>
             {mode === "TRANSFER" && (
-              <div>
-                <label className="block text-xs font-bold text-blue-600 uppercase mb-1">
-                  Banco Destino
-                </label>
-                <select
-                  required
-                  disabled={isSaving}
-                  value={targetBankId}
-                  onChange={(e) => setTargetBankId(e.target.value)}
-                  className={`${inputClass} border-blue-200 bg-blue-50/30`}
-                >
-                  <option value="">Selecione...</option>
-                  {sortedBanks.map((b) => (
-                    <option
-                      key={b.id}
-                      value={b.id}
-                      disabled={b.id === formData.bankId}
-                    >
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <>
+                <div>
+                  <label className="block text-xs font-bold text-blue-600 uppercase mb-1">
+                    Carteira Destino
+                  </label>
+                  <select
+                    required
+                    disabled={isSaving}
+                    value={targetWalletId}
+                    onChange={(e) => setTargetWalletId(e.target.value)}
+                    className={`${inputClass} border-blue-200 bg-blue-50/30`}
+                  >
+                    <option value="">Selecione...</option>
+                    {sortedWallets.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-blue-600 uppercase mb-1">
+                    Conta/Banco Destino
+                  </label>
+                  <select
+                    required
+                    disabled={isSaving}
+                    value={targetBankId}
+                    onChange={(e) => setTargetBankId(e.target.value)}
+                    className={`${inputClass} border-blue-200 bg-blue-50/30`}
+                  >
+                    <option value="">Selecione...</option>
+                    {sortedBanks.map((b) => (
+                      <option
+                        key={b.id}
+                        value={b.id}
+                        disabled={b.id === formData.bankId}
+                      >
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
             )}
-            <div className="relative" ref={dropdownRef}>
+          </div>
+
+          {mode === "TRANSFER" && formData.bankId && targetBankId && (
+            (() => {
+              const sourceBank = registries.banks.find(b => b.id === formData.bankId);
+              const targetBank = registries.banks.find(b => b.id === targetBankId);
+              
+              if (sourceBank && targetBank && sourceBank.currency !== targetBank.currency) {
+                return (
+                  <div className="bg-blue-50 p-6 rounded-xl border border-blue-100 animate-fade-in space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <ArrowRightLeft className="w-5 h-5 text-blue-600" />
+                      <h4 className="text-sm font-bold text-blue-800 uppercase tracking-wider">Câmbio e Taxas ({sourceBank.currency} → {targetBank.currency})</h4>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-blue-700 uppercase mb-1">Cotação Comercial</label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={exchangeRate || ''}
+                          onChange={(e) => setExchangeRate(Number(e.target.value))}
+                          className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Ex: 5.15"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-blue-700 uppercase mb-1">Spread (%)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={spread || ''}
+                          onChange={(e) => setSpread(Number(e.target.value))}
+                          className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Ex: 1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-blue-700 uppercase mb-1">IOF (%)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={iof || ''}
+                          onChange={(e) => setIof(Number(e.target.value))}
+                          className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Ex: 1.1"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-blue-700 uppercase mb-1">VET (Final)</label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={vet || ''}
+                          onChange={(e) => setVet(Number(e.target.value))}
+                          className="w-full px-3 py-2 bg-blue-100 border border-blue-300 rounded-lg text-sm font-bold text-blue-800 outline-none"
+                          placeholder="VET"
+                        />
+                      </div>
+                    </div>
+
+                    {vet > 0 && formData.value > 0 && (
+                      <div className="pt-2 border-t border-blue-100 flex justify-between items-center">
+                        <span className="text-xs text-blue-600 font-medium">Valor Estimado no Destino:</span>
+                        <span className="text-lg font-bold text-blue-800">
+                          {targetBank.currency} {(formData.value / vet).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              return null;
+            })()
+          )}
+
+          <div className="relative" ref={dropdownRef}>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
                 Participante
               </label>
@@ -919,7 +1188,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 </div>
               )}
             </div>
-          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>

@@ -11,7 +11,8 @@ import {
   ChevronRight,
   TrendingUp,
   PieChart,
-  BookOpen
+  BookOpen,
+  BarChart3
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -35,6 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'cashflow', label: 'Fluxo de Caixa', icon: TrendingUp },
     { id: 'expenses-analysis', label: 'Análise de Gastos', icon: PieChart },
+    { id: 'investments', label: 'Investimentos', icon: BarChart3 },
     { id: 'payables', label: 'Contas a Pagar/Receber', icon: CalendarClock },
     { id: 'bank-transactions', label: 'Movimentação Bancária', icon: ArrowRightLeft },
     { id: 'registries', label: 'Cadastros', icon: Database },

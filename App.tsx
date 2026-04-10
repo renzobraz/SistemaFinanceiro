@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef, type FC } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TransactionList } from './components/TransactionList';
 import { TransactionForm } from './components/TransactionForm';
@@ -8,6 +8,7 @@ import { Summary } from './components/Summary';
 import { SettingsView } from './components/SettingsView';
 import { CashFlowReport } from './components/CashFlowReport';
 import { ExpenseAnalysisReport } from './components/ExpenseAnalysisReport';
+import { AssetPerformanceReport } from './components/AssetPerformanceReport';
 import { HelpManual } from './components/HelpManual';
 import { financeService, DEFAULT_SUPABASE_CONFIG } from './services/financeService';
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus } from './types';
@@ -31,12 +32,14 @@ import {
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 
-const App: React.FC = () => {
+const App: FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [activeRegistryTab, setActiveRegistryTab] = useState('wallets'); 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [isLocalMode, setIsLocalMode] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   // Armazena o saldo acumulado ANTES da data de início do filtro
@@ -119,19 +122,21 @@ const App: React.FC = () => {
     setRefreshing(true);
     
     try {
+      // Na aba de investimentos, precisamos de TODO o histórico para calcular preço médio e quantidade corretamente
+      const isInvestmentsTab = activeTab === 'investments';
+
       // 1. Busca transações filtradas
       const trPromise = financeService.getTransactions({
-        startDate,
-        endDate,
-        bankId: selectedBankId,
-        walletId: selectedWalletId,
-        status: statusFilter
+        startDate: isInvestmentsTab ? '' : startDate,
+        endDate: isInvestmentsTab ? '' : endDate,
+        bankId: isInvestmentsTab ? '' : selectedBankId,
+        walletId: isInvestmentsTab ? '' : selectedWalletId,
+        status: isInvestmentsTab ? 'PAID' : statusFilter
       });
 
       // 2. Busca saldo anterior (se houver data de início)
-      // Se não houver data de início, o saldo anterior é 0 (assumimos que carregamos tudo desde o início)
       let balPromise = Promise.resolve({ total: 0, byBank: {} });
-      if (startDate) {
+      if (startDate && !isInvestmentsTab) {
         balPromise = financeService.getBalancesBefore(startDate, selectedBankId, selectedWalletId);
       }
 
@@ -160,15 +165,30 @@ const App: React.FC = () => {
         setRefreshing(false);
       }
     }
-  }, [startDate, endDate, selectedBankId, selectedWalletId, statusFilter]);
+  }, [startDate, endDate, selectedBankId, selectedWalletId, statusFilter, activeTab]);
 
   const loadAll = async () => {
     setLoading(true);
-    const lsUrl = localStorage.getItem('supabase_url');
-    const lsKey = localStorage.getItem('supabase_key');
-    const currentlyConnected = (!!lsUrl && !!lsKey) || (!!DEFAULT_SUPABASE_CONFIG.url && !!DEFAULT_SUPABASE_CONFIG.key);
     
-    setIsConnected(currentlyConnected);
+    // Verifica conexão
+    const supabase = financeService.getSupabase();
+    setIsConnected(!!supabase);
+    setIsLocalMode(!supabase);
+    setIsOffline(false);
+
+    if (supabase) {
+        try {
+            // Teste rápido de conexão
+            const { error } = await supabase.from('banks').select('id').limit(1);
+            if (error && (error.message?.includes('fetch') || error.name === 'TypeError')) {
+                setIsOffline(true);
+            }
+        } catch (e: any) {
+            if (e.message?.includes('fetch') || e.name === 'TypeError') {
+                setIsOffline(true);
+            }
+        }
+    }
 
     // Carrega registros (tenta local primeiro)
     const registriesPromise = loadRegistries();
@@ -208,7 +228,7 @@ const App: React.FC = () => {
       setStatusFilter('PENDING');
     } else if (activeTab === 'bank-transactions') {
       setStatusFilter('PAID');
-    } else if (['dashboard', 'cashflow', 'expenses-analysis'].includes(activeTab)) {
+    } else if (['dashboard', 'cashflow', 'expenses-analysis', 'investments'].includes(activeTab)) {
       setStatusFilter(financeService.getUserPreferences().defaultStatus);
     }
   }, [activeTab]);
@@ -311,9 +331,9 @@ const App: React.FC = () => {
               </h1>
 
               <div className="flex items-center gap-3">
-                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border transition-colors ${isConnected ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                    {isConnected ? <CheckCircle2 className="w-3 h-3 text-green-500" /> : <WifiOff className="w-3 h-3" />}
-                    <span className="inline">{isConnected ? 'Supabase' : 'Offline'}</span>
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border transition-colors ${isLocalMode ? 'bg-blue-50 text-blue-700 border-blue-200' : isConnected ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                    {isLocalMode ? <Database className="w-3 h-3 text-blue-500" /> : isConnected ? <CheckCircle2 className="w-3 h-3 text-green-500" /> : <WifiOff className="w-3 h-3" />}
+                    <span className="inline">{isLocalMode ? 'Modo Local (Mock)' : isConnected ? 'Supabase' : 'Offline'}</span>
                 </div>
                 
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-600 rounded-full text-[10px] font-black uppercase tracking-wider border border-slate-200 shadow-inner">
@@ -373,6 +393,21 @@ const App: React.FC = () => {
         </header>
 
         <div className="flex-1 flex flex-col overflow-hidden relative">
+          {isOffline && (
+            <div className="bg-amber-50 border-b border-amber-100 px-6 py-2 flex items-center justify-between animate-fade-in">
+              <div className="flex items-center gap-3 text-amber-800">
+                <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+                <span className="text-xs font-bold uppercase tracking-wider">Modo de Emergência (Offline)</span>
+                <span className="text-xs opacity-75 hidden md:inline">Não conseguimos conectar ao Supabase. Usando dados locais.</span>
+              </div>
+              <button 
+                onClick={() => loadAll()} 
+                className="text-[10px] font-black uppercase text-amber-700 hover:text-amber-900 underline underline-offset-2"
+              >
+                Tentar Reconectar
+              </button>
+            </div>
+          )}
           {refreshing && (
               <div className="absolute top-0 left-0 w-full h-1 bg-blue-100 overflow-hidden z-50">
                   <div className="w-full h-full bg-blue-600 animate-progress"></div>
@@ -422,6 +457,21 @@ const App: React.FC = () => {
             <div className="flex-1 overflow-auto p-8">
               <div className="max-w-7xl mx-auto">
                 <ExpenseAnalysisReport transactions={transactions} registries={registries} />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'investments' && (
+            <div className="flex-1 overflow-auto p-8">
+              <div className="max-w-7xl mx-auto">
+                <AssetPerformanceReport 
+                  transactions={transactions} 
+                  registries={{
+                    ...registries,
+                    wallets: registries.wallets
+                  }} 
+                  onUpdateRegistry={loadRegistries}
+                />
               </div>
             </div>
           )}
@@ -490,13 +540,66 @@ const App: React.FC = () => {
                         onDelete={(id) => financeService.deleteRegistryItem(activeRegistryTab, id).then(() => loadRegistries())}
                         // @ts-ignore
                         onEdit={(id, name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id, name, ...extra}).then(() => loadRegistries())}
-                        onImport={async () => {}}
+                        onImport={async (data) => {
+                            try {
+                                const newItems = [];
+                                const existingItems = registries[activeRegistryTab] || [];
+                                
+                                for (const item of data) {
+                                    let name = item;
+                                    let extra: any = {};
+                                    
+                                    // Suporte a CSV: "Nome,Categoria,Ticker,Moeda" ou "Nome,BancoId"
+                                    if (item.includes(',')) {
+                                        const parts = item.split(',');
+                                        name = parts[0].trim();
+                                        const val1 = parts[1]?.trim() || '';
+                                        const val2 = parts[2]?.trim() || '';
+                                        const val3 = parts[3]?.trim() || '';
+                                        
+                                        if (activeRegistryTab === 'participants') {
+                                            extra.category = val1;
+                                            if (val2) extra.ticker = val2.toUpperCase();
+                                            if (val3) extra.currency = val3.toUpperCase();
+                                        } else if (activeRegistryTab === 'wallets') {
+                                            extra.bankId = val1;
+                                        }
+                                    }
+
+                                    // Busca se já existe um item com o mesmo nome para atualizar em vez de duplicar
+                                    const existing = existingItems.find(x => x.name.toLowerCase() === name.toLowerCase());
+                                    const idToUse = existing ? existing.id : '';
+
+                                    // @ts-ignore
+                                    const newItem = await financeService.saveRegistryItem(activeRegistryTab, { id: idToUse, name, ...extra });
+                                    newItems.push(newItem);
+                                }
+                                await loadRegistries();
+                                showAlert('Importação Concluída', `${newItems.length} itens processados com sucesso.`);
+                            } catch (e: any) {
+                                showAlert('Erro na Importação', e);
+                            }
+                        }}
                         onDeduplicate={async (onProgress) => {
                             const res = await financeService.deduplicateRegistry(activeRegistryTab, onProgress);
                             await loadRegistries();
                             await loadTransactions();
                             return res;
                         }}
+                        onFindSimilar={() => financeService.findSimilarGroups(activeRegistryTab)}
+                        onIgnoreSimilar={(masterId, duplicateIds) => financeService.ignoreUnification(activeRegistryTab, masterId, duplicateIds)}
+                        onGetIgnored={() => financeService.getIgnoredUnifications(activeRegistryTab)}
+                        onRemoveIgnored={(pairId) => financeService.removeIgnoredUnification(activeRegistryTab, pairId)}
+                        onMerge={async (masterId, duplicateIds) => {
+                            await financeService.mergeItems(activeRegistryTab, masterId, duplicateIds);
+                            await loadRegistries();
+                            await loadTransactions();
+                        }}
+                        onAutoFillTickers={activeRegistryTab === 'participants' ? async () => {
+                            const count = await financeService.autoFillTickers();
+                            await loadRegistries();
+                            return count;
+                        } : undefined}
                         foreignItems={activeRegistryTab === 'wallets' ? registries.banks : undefined}
                         foreignLabel={activeRegistryTab === 'wallets' ? 'Selecionar Banco' : undefined}
                         foreignKey={activeRegistryTab === 'wallets' ? 'bankId' : undefined}
@@ -549,4 +652,52 @@ const App: React.FC = () => {
   );
 };
 
-export default App;
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+          <div className="bg-white p-8 rounded-2xl shadow-xl border border-red-100 max-w-md w-full text-center">
+            <XCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+            <h1 className="text-2xl font-bold text-slate-900 mb-2">Ops! Algo deu errado.</h1>
+            <p className="text-slate-600 mb-6">Ocorreu um erro inesperado na aplicação. Tente recarregar a página.</p>
+            <div className="bg-red-50 p-4 rounded-lg text-left mb-6 overflow-auto max-h-40">
+              <code className="text-xs text-red-700 whitespace-pre-wrap">
+                {this.state.error?.toString() || 'Erro desconhecido'}
+              </code>
+            </div>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"
+            >
+              Recarregar Aplicativo
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default function AppWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
