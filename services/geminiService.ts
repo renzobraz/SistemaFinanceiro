@@ -103,11 +103,12 @@ export const geminiService = {
       Exemplo: {"PETR4": 36.50, "AAPL": 185.40}`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.1-pro-preview",
         contents: prompt,
         tools: [{ googleSearch: {} }],
         config: {
-          responseMimeType: "application/json"
+          responseMimeType: "application/json",
+          temperature: 0.1
         }
       });
 
@@ -178,11 +179,12 @@ export const geminiService = {
       Retorne um array de objetos JSON com: ticker, action, reason (em português), riskLevel (LOW, MEDIUM, HIGH).`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.1-pro-preview",
         contents: prompt,
         tools: [{ googleSearch: {} }],
         config: {
-          responseMimeType: "application/json"
+          responseMimeType: "application/json",
+          temperature: 0.1
         }
       });
 
@@ -228,11 +230,12 @@ export const geminiService = {
       Exemplo: {"BRL": 1, "USD": 5.15, "EUR": 5.55, "GBP": 6.45}.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.1-pro-preview",
         contents: prompt,
         tools: [{ googleSearch: {} }],
         config: {
-          responseMimeType: "application/json"
+          responseMimeType: "application/json",
+          temperature: 0.1
         }
       });
 
