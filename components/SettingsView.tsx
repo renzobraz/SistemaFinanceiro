@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Database, Save, CheckCircle2, AlertCircle, Copy, Terminal, Unplug, Info, AlertTriangle, Loader2, Play, Search, CheckCircle } from 'lucide-react';
+import { Database, Save, CheckCircle2, AlertCircle, Copy, Terminal, Unplug, Info, AlertTriangle, Loader2, Play, Search, CheckCircle, RefreshCcw } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { ConfirmModal } from './ConfirmModal';
 import { DEFAULT_SUPABASE_CONFIG, financeService } from '../services/financeService';
@@ -19,6 +19,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig, onSave
   const [errorMessage, setErrorMessage] = useState('');
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [tableCheck, setTableCheck] = useState<{checked: boolean, exists: boolean, details: string}>({checked: false, exists: false, details: ''});
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSyncData = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const stats = await financeService.syncAuxiliaryRegistries();
+      alert(`Sincronização concluída!\n\nNovos Tipos: ${stats.types}\nNovos Setores: ${stats.sectors}\nNovos Tickers: ${stats.tickers}\n\nSeus cadastros antigos foram recuperados com sucesso.`);
+    } catch (error: any) {
+      alert("Erro ao sincronizar dados: " + error.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const [prefs, setPrefs] = useState<UserPreferences>(() => financeService.getUserPreferences());
   const [prefsSaved, setPrefsSaved] = useState(false);
@@ -52,8 +66,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig, onSave
           const client = createClient(url, key);
           const { error } = await client.from('transactions').select('id').limit(1);
           if (error) {
-              if (error.code === '42P01') {
-                  setTableCheck({checked: true, exists: false, details: 'Tabelas não encontradas. Por favor, execute o SQL de criação.'});
+              if (error.code === '42P01' || error.code === 'PGRST205') {
+                  setTableCheck({checked: true, exists: false, details: 'Tabelas não encontradas (Erro ' + error.code + '). Por favor, execute o SQL de migração ou completo abaixo.'});
               } else if (error.code === '42501') {
                   setTableCheck({checked: true, exists: false, details: 'Permissão negada (Erro 42501). Execute o SQL abaixo para corrigir.'});
               } else {
@@ -131,8 +145,21 @@ create table if not exists public.banks (
 );
 create table if not exists public.categories (id uuid default gen_random_uuid() primary key, name text not null);
 create table if not exists public.cost_centers (id uuid default gen_random_uuid() primary key, name text not null);
-create table if not exists public.participants (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.participants (
+  id uuid default gen_random_uuid() primary key, 
+  name text not null,
+  category text,
+  sector text,
+  ticker text,
+  currency text default 'BRL',
+  current_price numeric(15,2),
+  target_price numeric(15,2),
+  last_update timestamp with time zone
+);
 create table if not exists public.wallets (id uuid default gen_random_uuid() primary key, name text not null, bank_id uuid references public.banks(id));
+create table if not exists public.asset_types (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.asset_sectors (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.asset_tickers (id uuid default gen_random_uuid() primary key, name text not null, ticker text not null);
 
 -- 3. Tabela de Transações
 create table if not exists public.transactions (
@@ -158,6 +185,9 @@ grant all on public.categories to anon, authenticated, service_role;
 grant all on public.cost_centers to anon, authenticated, service_role;
 grant all on public.participants to anon, authenticated, service_role;
 grant all on public.wallets to anon, authenticated, service_role;
+grant all on public.asset_types to anon, authenticated, service_role;
+grant all on public.asset_sectors to anon, authenticated, service_role;
+grant all on public.asset_tickers to anon, authenticated, service_role;
 grant all on public.transactions to anon, authenticated, service_role;
 
 -- 5. Habilitar RLS e criar políticas de acesso (Resolve avisos de segurança)
@@ -166,6 +196,9 @@ alter table public.categories enable row level security;
 alter table public.cost_centers enable row level security;
 alter table public.participants enable row level security;
 alter table public.wallets enable row level security;
+alter table public.asset_types enable row level security;
+alter table public.asset_sectors enable row level security;
+alter table public.asset_tickers enable row level security;
 alter table public.transactions enable row level security;
 
 -- Criar política permitindo acesso total (já que o app não exige login)
@@ -174,11 +207,31 @@ create policy "Allow all operations" on public.categories for all using (true) w
 create policy "Allow all operations" on public.cost_centers for all using (true) with check (true);
 create policy "Allow all operations" on public.participants for all using (true) with check (true);
 create policy "Allow all operations" on public.wallets for all using (true) with check (true);
+create policy "Allow all operations" on public.asset_types for all using (true) with check (true);
+create policy "Allow all operations" on public.asset_sectors for all using (true) with check (true);
+create policy "Allow all operations" on public.asset_tickers for all using (true) with check (true);
 create policy "Allow all operations" on public.transactions for all using (true) with check (true);`;
 
   const sqlMigration = `-- EXECUTE ESTE SQL SE VOCÊ JÁ TEM AS TABELAS CRIADAS:
 alter table public.banks add column if not exists type text default 'CHECKING';
 alter table public.banks add column if not exists currency text default 'BRL';
+alter table public.participants add column if not exists sector text;
+
+create table if not exists public.asset_types (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.asset_sectors (id uuid default gen_random_uuid() primary key, name text not null);
+create table if not exists public.asset_tickers (id uuid default gen_random_uuid() primary key, name text not null, ticker text not null);
+
+grant all on public.asset_types to anon, authenticated, service_role;
+grant all on public.asset_sectors to anon, authenticated, service_role;
+grant all on public.asset_tickers to anon, authenticated, service_role;
+
+alter table public.asset_types enable row level security;
+alter table public.asset_sectors enable row level security;
+alter table public.asset_tickers enable row level security;
+
+create policy "Allow all operations" on public.asset_types for all using (true) with check (true);
+create policy "Allow all operations" on public.asset_sectors for all using (true) with check (true);
+create policy "Allow all operations" on public.asset_tickers for all using (true) with check (true);
 
 -- Recarregar o cache do PostgREST (opcional, o Supabase faz automático em alguns segundos)
 -- NOTA: Se o erro PGRST204 persistir, tente rodar os comandos acima novamente.`;
@@ -254,6 +307,47 @@ alter table public.banks add column if not exists currency text default 'BRL';
                     <option key={w.id} value={w.id}>{w.name}</option>
                   ))}
                 </select>
+            </div>
+          </div>
+
+          <div className="mt-10 pt-8 border-t border-slate-100">
+            <div className="flex items-center gap-3 mb-6">
+                <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                  <Play className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800">Relatório de Performance</h3>
+                  <p className="text-sm text-slate-500">Defina o banco e carteira padrão para abrir o relatório de performance mais rápido.</p>
+                </div>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Banco Padrão (Performance)</label>
+                  <select 
+                    value={prefs.defaultPerformanceBankId} 
+                    onChange={(e) => setPrefs({...prefs, defaultPerformanceBankId: e.target.value})}
+                    className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all bg-slate-50/50"
+                  >
+                    <option value="ALL">Todos os Bancos</option>
+                    {registries.banks.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+              </div>
+              <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Carteira Padrão (Performance)</label>
+                  <select 
+                    value={prefs.defaultPerformanceWalletId} 
+                    onChange={(e) => setPrefs({...prefs, defaultPerformanceWalletId: e.target.value})}
+                    className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all bg-slate-50/50"
+                  >
+                    <option value="ALL">Todas as Carteiras</option>
+                    {registries.wallets.map(w => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                  </select>
+              </div>
             </div>
           </div>
           
@@ -370,6 +464,27 @@ alter table public.banks add column if not exists currency text default 'BRL';
                       <Copy className="w-4 h-4" /> Copiar SQL Completo
                     </button>
                   </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:col-span-2">
+                  <div className="flex items-center gap-3 mb-4">
+                      <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600">
+                        <RefreshCcw className="w-5 h-5" />
+                      </div>
+                      <h3 className="font-bold text-slate-800">Recuperação de Dados Antigos</h3>
+                  </div>
+                  <p className="text-sm text-slate-500 mb-6">
+                    Se você já tinha participantes cadastrados com Tickers, Tipos ou Setores, use este botão para extrair esses dados e preencher automaticamente as novas tabelas de cadastros auxiliares. Isso evitará que você tenha que cadastrá-los novamente.
+                  </p>
+                  
+                  <button 
+                    onClick={handleSyncData} 
+                    disabled={isSyncing}
+                    className="w-full md:w-auto px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-100 disabled:opacity-50"
+                  >
+                    {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+                    Recuperar Cadastros dos Participantes
+                  </button>
               </div>
           </div>
       )}

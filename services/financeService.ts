@@ -6,7 +6,10 @@ import {
   CostCenter, 
   Participant, 
   Wallet,
-  BaseEntity
+  BaseEntity,
+  AssetType,
+  AssetSector,
+  AssetTicker
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -32,6 +35,9 @@ const INITIAL_DATA: {
   costCenters: CostCenter[];
   participants: Participant[];
   wallets: Wallet[];
+  assetTypes: AssetType[];
+  assetSectors: AssetSector[];
+  assetTickers: AssetTicker[];
 } = {
   transactions: [
     {
@@ -135,6 +141,21 @@ const INITIAL_DATA: {
   wallets: [
     { id: 'wall-1', name: 'Renzo Braz' }
   ],
+  assetTypes: [
+    { id: 'at-1', name: 'Ação' },
+    { id: 'at-2', name: 'FII' },
+    { id: 'at-3', name: 'ETF' },
+    { id: 'at-4', name: 'Cripto' },
+    { id: 'at-5', name: 'BDR' }
+  ],
+  assetSectors: [
+    { id: 'as-1', name: 'Financeiro' },
+    { id: 'as-2', name: 'Tecnologia' },
+    { id: 'as-3', name: 'Energia' },
+    { id: 'as-4', name: 'Saúde' },
+    { id: 'as-5', name: 'Consumo' }
+  ],
+  assetTickers: []
 };
 
 const KEYS = {
@@ -144,6 +165,9 @@ const KEYS = {
   COST_CENTERS: 'fincontrol_cost_centers',
   PARTICIPANTS: 'fincontrol_participants',
   WALLETS: 'fincontrol_wallets',
+  ASSET_TYPES: 'fincontrol_asset_types',
+  ASSET_SECTORS: 'fincontrol_asset_sectors',
+  ASSET_TICKERS: 'fincontrol_asset_tickers',
   PREFERENCES: 'fincontrol_preferences',
   IGNORED_UNIFICATIONS: 'fincontrol_ignored_unifications',
 };
@@ -285,7 +309,9 @@ export const financeService = {
       defaultDateRange: 'CURRENT_MONTH',
       defaultStatus: 'ALL',
       defaultBankId: '',
-      defaultWalletId: ''
+      defaultWalletId: '',
+      defaultPerformanceBankId: 'ALL',
+      defaultPerformanceWalletId: 'ALL'
     };
   },
 
@@ -611,7 +637,16 @@ export const financeService = {
 
   async getRegistry<T extends BaseEntity>(type: string, forceRefresh = false): Promise<T[]> {
     const supabase = getSupabase();
-    const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
+    const tableMap: any = { 
+      banks: 'banks', 
+      categories: 'categories', 
+      costCenters: 'cost_centers', 
+      participants: 'participants', 
+      wallets: 'wallets',
+      assetTypes: 'asset_types',
+      assetSectors: 'asset_sectors',
+      assetTickers: 'asset_tickers'
+    };
     
     if (supabase) {
       try {
@@ -668,11 +703,18 @@ export const financeService = {
             id: d.id, 
             name: d.name, 
             category: d.category,
+            sector: d.sector,
             ticker: d.ticker,
             currency: d.currency || 'BRL',
             currentPrice: d.current_price,
             targetPrice: d.target_price !== undefined ? d.target_price : virtualTargetPrices[d.id],
             lastUpdate: d.last_update
+          })) as any;
+        } else if (type === 'assetTickers') {
+          result = allData.map((d: any) => ({
+            id: d.id,
+            name: d.name,
+            ticker: d.ticker
           })) as any;
         } else {
           result = Array.from(new Map(allData.map(item => [item.id, item])).values()) as T[];
@@ -682,13 +724,29 @@ export const financeService = {
         cache.registries[type] = { data: result, timestamp: Date.now() };
 
         // Salva no localStorage para persistência entre sessões
-        const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+        const keyMap: any = { 
+          banks: KEYS.BANKS, 
+          categories: KEYS.CATEGORIES, 
+          costCenters: KEYS.COST_CENTERS, 
+          participants: KEYS.PARTICIPANTS, 
+          wallets: KEYS.WALLETS,
+          assetTypes: KEYS.ASSET_TYPES,
+          assetSectors: KEYS.ASSET_SECTORS,
+          assetTickers: KEYS.ASSET_TICKERS
+        };
         saveEntityLocal(keyMap[type], result);
 
         return result;
       } catch (e: any) {
-        console.error(`Supabase registry fetch failed for ${type}, falling back to local data`, e);
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+        const isMissingTable = e.code === 'PGRST205' || e.code === '42P01' || e.message?.includes('PGRST205') || e.message?.includes('42P01');
+        
+        if (isMissingTable) {
+          console.warn(`Tabela ${type} não encontrada no Supabase. Usando dados locais.`);
+        } else {
+          console.error(`Supabase registry fetch failed for ${type}, falling back to local data`, e);
+        }
+
+        if (e.message?.includes('fetch') || e.name === 'TypeError' || isMissingTable) {
           // Fall through to local fallback
         } else {
           throw e;
@@ -697,13 +755,31 @@ export const financeService = {
     }
 
     await delay(200);
-    const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+    const keyMap: any = { 
+      banks: KEYS.BANKS, 
+      categories: KEYS.CATEGORIES, 
+      costCenters: KEYS.COST_CENTERS, 
+      participants: KEYS.PARTICIPANTS, 
+      wallets: KEYS.WALLETS,
+      assetTypes: KEYS.ASSET_TYPES,
+      assetSectors: KEYS.ASSET_SECTORS,
+      assetTickers: KEYS.ASSET_TICKERS
+    };
     return getEntityLocal(keyMap[type], (INITIAL_DATA as any)[type]) as T[];
   },
 
   async saveRegistryItem<T extends BaseEntity>(type: string, item: T & { bankId?: string }): Promise<T> {
     const supabase = getSupabase();
-    const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
+    const tableMap: any = { 
+      banks: 'banks', 
+      categories: 'categories', 
+      costCenters: 'cost_centers', 
+      participants: 'participants', 
+      wallets: 'wallets',
+      assetTypes: 'asset_types',
+      assetSectors: 'asset_sectors',
+      assetTickers: 'asset_tickers'
+    };
     const itemToSave = {
         ...item,
         id: (item.id && item.id.trim() !== '') ? item.id : uuidv4()
@@ -724,11 +800,15 @@ export const financeService = {
         }
         if (type === 'participants') {
             payload.category = (item as any).category || null;
+            payload.sector = (item as any).sector || null;
             payload.ticker = (item as any).ticker || null;
             payload.currency = (item as any).currency || 'BRL';
             payload.current_price = (item as any).currentPrice || null;
             payload.target_price = (item as any).targetPrice || null;
             payload.last_update = (item as any).lastUpdate || null;
+        }
+        if (type === 'assetTickers') {
+            payload.ticker = (item as any).ticker || '';
         }
         
         let { data, error } = await supabase.from(tableMap[type]).upsert(payload).select().single();
@@ -752,21 +832,49 @@ export const financeService = {
 
         if (error) throw new Error(formatSupabaseError(error));
         
-        if (type === 'wallets') return { id: data.id, name: data.name, bankId: data.bank_id, currency: data.currency, type: data.type } as any;
-        if (type === 'participants') {
+        let result: T;
+        if (type === 'wallets') {
+          result = { id: data.id, name: data.name, bankId: data.bank_id, currency: data.currency, type: data.type } as any;
+        } else if (type === 'participants') {
             const virtualTargetPrices = JSON.parse(localStorage.getItem('fincontrol_virtual_target_prices') || '{}');
-            return { 
+            result = { 
                 id: data.id, 
                 name: data.name, 
                 category: data.category,
+                sector: data.sector,
                 ticker: data.ticker,
                 currency: data.currency,
                 currentPrice: data.current_price,
                 targetPrice: data.target_price !== undefined ? data.target_price : virtualTargetPrices[data.id],
                 lastUpdate: data.last_update
             } as any;
+        } else if (type === 'assetTickers') {
+            result = {
+                id: data.id,
+                name: data.name,
+                ticker: data.ticker
+            } as any;
+        } else {
+          result = data as T;
         }
-        return data as T;
+
+        // Sincroniza com localStorage para evitar que loadRegistries leia dados obsoletos
+        const keyMap: any = { 
+          banks: KEYS.BANKS, 
+          categories: KEYS.CATEGORIES, 
+          costCenters: KEYS.COST_CENTERS, 
+          participants: KEYS.PARTICIPANTS, 
+          wallets: KEYS.WALLETS,
+          assetTypes: KEYS.ASSET_TYPES,
+          assetSectors: KEYS.ASSET_SECTORS,
+          assetTickers: KEYS.ASSET_TICKERS
+        };
+        const list = getEntityLocal<T>(keyMap[type], (INITIAL_DATA as any)[type]);
+        const index = list.findIndex(i => i.id === result.id);
+        if (index >= 0) list[index] = result; else list.push(result);
+        saveEntityLocal(keyMap[type], list);
+
+        return result;
       } catch (e: any) {
         console.error(`Supabase registry save failed for ${type}, falling back to local data`, e);
         if (e.message?.includes('fetch') || e.name === 'TypeError') {
@@ -776,7 +884,16 @@ export const financeService = {
         }
       }
     }
-    const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+    const keyMap: any = { 
+      banks: KEYS.BANKS, 
+      categories: KEYS.CATEGORIES, 
+      costCenters: KEYS.COST_CENTERS, 
+      participants: KEYS.PARTICIPANTS, 
+      wallets: KEYS.WALLETS,
+      assetTypes: KEYS.ASSET_TYPES,
+      assetSectors: KEYS.ASSET_SECTORS,
+      assetTickers: KEYS.ASSET_TICKERS
+    };
     const list = getEntityLocal<T>(keyMap[type], (INITIAL_DATA as any)[type]);
     const index = list.findIndex(x => x.id === itemToSave.id);
     
@@ -795,15 +912,67 @@ export const financeService = {
 
   async deleteRegistryItem(type: string, id: string): Promise<void> {
     const supabase = getSupabase();
-    const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
+    const tableMap: any = { 
+      banks: 'banks', 
+      categories: 'categories', 
+      costCenters: 'cost_centers', 
+      participants: 'participants', 
+      wallets: 'wallets',
+      assetTypes: 'asset_types',
+      assetSectors: 'asset_sectors',
+      assetTickers: 'asset_tickers'
+    };
     
+    const fkMap: any = { 
+      banks: 'bank_id', 
+      categories: 'category_id', 
+      costCenters: 'cost_center_id', 
+      participants: 'participant_id', 
+      wallets: 'wallet_id' 
+    };
+
+    const localFkMap: any = { 
+      banks: 'bankId', 
+      categories: 'categoryId', 
+      costCenters: 'costCenterId', 
+      participants: 'participantId', 
+      wallets: 'walletId' 
+    };
+
     // Invalida cache do registro específico
     delete cache.registries[type];
 
     if (supabase) {
       try {
+        // Antes de excluir, desvincula dos lançamentos para evitar erro de chave estrangeira
+        const fkName = fkMap[type];
+        if (fkName) {
+          await supabase.from('transactions').update({ [fkName]: null }).eq(fkName, id);
+        }
+
+        // Se for banco, desvincula das carteiras
+        if (type === 'banks') {
+          await supabase.from('wallets').update({ bank_id: null }).eq('bank_id', id);
+        }
+
         const { error } = await supabase.from(tableMap[type]).delete().eq('id', id);
         if (error) throw new Error(formatSupabaseError(error));
+        
+        // Sincroniza com localStorage para evitar que loadRegistries leia dados obsoletos
+        const keyMap: any = { 
+          banks: KEYS.BANKS, 
+          categories: KEYS.CATEGORIES, 
+          costCenters: KEYS.COST_CENTERS, 
+          participants: KEYS.PARTICIPANTS, 
+          wallets: KEYS.WALLETS,
+          assetTypes: KEYS.ASSET_TYPES,
+          assetSectors: KEYS.ASSET_SECTORS,
+          assetTickers: KEYS.ASSET_TICKERS
+        };
+        let list = getEntityLocal<any>(keyMap[type], []);
+        list = list.filter((item: any) => item.id !== id);
+        saveEntityLocal(keyMap[type], list);
+
         return;
       } catch (e: any) {
         console.error(`Supabase registry delete failed for ${type}, falling back to local data`, e);
@@ -815,14 +984,34 @@ export const financeService = {
       }
     }
     
-    const localFkMap: any = { banks: 'bankId', categories: 'categoryId', costCenters: 'costCenterId', participants: 'participantId', wallets: 'walletId' };
     const localFkName = localFkMap[type];
-    
     if (localFkName) {
-        const transactions = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, []);
-        const isUsedInTransactions = transactions.some(t => (t as any)[localFkName] === id);
-        if (isUsedInTransactions) {
-            throw new Error("Não é possível excluir este registro pois ele está sendo usado em um ou mais lançamentos financeiros.");
+        let transactions = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, []);
+        let hasChanges = false;
+        transactions = transactions.map(t => {
+            if ((t as any)[localFkName] === id) {
+                hasChanges = true;
+                return { ...t, [localFkName]: '' };
+            }
+            return t;
+        });
+        if (hasChanges) {
+            saveEntityLocal(KEYS.TRANSACTIONS, transactions);
+        }
+
+        if (type === 'banks') {
+            let wallets = getEntityLocal<any>(KEYS.WALLETS, []);
+            let walletChanges = false;
+            wallets = wallets.map((w: any) => {
+                if (w.bankId === id) {
+                    walletChanges = true;
+                    return { ...w, bankId: '' };
+                }
+                return w;
+            });
+            if (walletChanges) {
+                saveEntityLocal(KEYS.WALLETS, wallets);
+            }
         }
     }
 
@@ -831,7 +1020,16 @@ export const financeService = {
         // We already check localFkMap above.
     }
 
-    const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+    const keyMap: any = { 
+      banks: KEYS.BANKS, 
+      categories: KEYS.CATEGORIES, 
+      costCenters: KEYS.COST_CENTERS, 
+      participants: KEYS.PARTICIPANTS, 
+      wallets: KEYS.WALLETS,
+      assetTypes: KEYS.ASSET_TYPES,
+      assetSectors: KEYS.ASSET_SECTORS,
+      assetTickers: KEYS.ASSET_TICKERS
+    };
     let list = getEntityLocal<BaseEntity>(keyMap[type], (INITIAL_DATA as any)[type]);
     list = list.filter(x => x.id !== id);
     saveEntityLocal(keyMap[type], list);
@@ -839,7 +1037,16 @@ export const financeService = {
 
   async deduplicateRegistry(type: string, onProgress?: (current: number, total: number) => void): Promise<{ merged: number, deleted: number }> {
     const supabase = getSupabase();
-    const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
+    const tableMap: any = { 
+      banks: 'banks', 
+      categories: 'categories', 
+      costCenters: 'cost_centers', 
+      participants: 'participants', 
+      wallets: 'wallets',
+      assetTypes: 'asset_types',
+      assetSectors: 'asset_sectors',
+      assetTickers: 'asset_tickers'
+    };
     const fkMap: any = { banks: 'bank_id', categories: 'category_id', costCenters: 'cost_center_id', participants: 'participant_id', wallets: 'wallet_id' };
     const localFkMap: any = { banks: 'bankId', categories: 'categoryId', costCenters: 'costCenterId', participants: 'participantId', wallets: 'walletId' };
     
@@ -1124,6 +1331,43 @@ export const financeService = {
     // Invalida cache
     delete cache.registries[type];
     cache.balances = {};
+  },
+
+  async syncAuxiliaryRegistries(): Promise<{ types: number, sectors: number, tickers: number }> {
+    const participants = (await this.getRegistry('participants')) as Participant[];
+    const stats = { types: 0, sectors: 0, tickers: 0 };
+    
+    // 1. Sync Asset Types
+    const uniqueTypes = Array.from(new Set(participants.map(p => p.category).filter(Boolean))) as string[];
+    const existingTypes = (await this.getRegistry('assetTypes')) as AssetType[];
+    for (const typeName of uniqueTypes) {
+      if (!existingTypes.find(t => t.name.toLowerCase() === typeName.toLowerCase())) {
+        await this.saveRegistryItem('assetTypes', { id: '', name: typeName });
+        stats.types++;
+      }
+    }
+
+    // 2. Sync Asset Sectors
+    const uniqueSectors = Array.from(new Set(participants.map(p => p.sector).filter(Boolean))) as string[];
+    const existingSectors = (await this.getRegistry('assetSectors')) as AssetSector[];
+    for (const sectorName of uniqueSectors) {
+      if (!existingSectors.find(s => s.name.toLowerCase() === sectorName.toLowerCase())) {
+        await this.saveRegistryItem('assetSectors', { id: '', name: sectorName });
+        stats.sectors++;
+      }
+    }
+
+    // 3. Sync Asset Tickers
+    const uniqueTickers = Array.from(new Set(participants.map(p => p.ticker).filter(Boolean))) as string[];
+    const existingTickers = (await this.getRegistry('assetTickers')) as AssetTicker[];
+    for (const tickerName of uniqueTickers) {
+      if (!existingTickers.find(t => t.ticker.toLowerCase() === tickerName.toLowerCase())) {
+        await this.saveRegistryItem('assetTickers', { id: '', name: tickerName, ticker: tickerName });
+        stats.tickers++;
+      }
+    }
+
+    return stats;
   },
 
   async autoFillTickers(): Promise<number> {

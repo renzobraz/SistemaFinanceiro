@@ -4,17 +4,20 @@ import { GoogleGenAI, Type } from "@google/genai";
 let aiInstance: any = null;
 
 function getAi() {
-  if (!aiInstance) {
+  try {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      // In production, we don't want to crash, but we need to inform the user.
-      // However, the SDK will throw if we pass an empty string.
-      // We'll return a proxy or handle it in the service methods.
+    if (!apiKey || apiKey === 'undefined' || apiKey === '') {
       console.warn("GEMINI_API_KEY is not defined. AI features will be disabled.");
+      return null;
     }
-    aiInstance = new GoogleGenAI({ apiKey: apiKey || 'MISSING_KEY' });
+    if (!aiInstance) {
+      aiInstance = new GoogleGenAI({ apiKey });
+    }
+    return aiInstance;
+  } catch (e) {
+    console.error("Error initializing Gemini SDK", e);
+    return null;
   }
-  return aiInstance;
 }
 
 export interface AssetPrice {
@@ -88,7 +91,9 @@ export const geminiService = {
 
     try {
       const ai = getAi();
+      if (!ai) throw new Error("Gemini API Key missing");
       const prompt = `Forneça o preço de fechamento mais recente (ou cotação atual) para os seguintes ativos: ${tickers.join(', ')}. 
+      Use o Google Finance como fonte principal para garantir a precisão dos valores de HOJE.
       Retorne APENAS um objeto JSON onde as chaves são os tickers e os valores são os preços numéricos. 
       Exemplo: {"PETR4": 36.50, "AAPL": 185.40}`;
 
@@ -96,6 +101,7 @@ export const geminiService = {
         model: "gemini-3-flash-preview",
         contents: prompt,
         config: {
+          tools: [{ googleSearch: {} }],
           responseMimeType: "application/json"
         }
       });
@@ -158,6 +164,7 @@ export const geminiService = {
 
     try {
       const ai = getAi();
+      if (!ai) throw new Error("Gemini API Key missing");
       const assetsSummary = assets.map(a => `${a.ticker}: Preço Médio ${a.averagePrice}, Preço Atual ${a.lastPrice || 'N/A'}, Qtd ${a.currentQuantity}`).join('\n');
       const prompt = `Analise os seguintes ativos da minha carteira e dê sugestões de COMPRA, VENDA ou MANUTENÇÃO (HOLD) com base no cenário atual do mercado:
       ${assetsSummary}
@@ -207,16 +214,18 @@ export const geminiService = {
 
     try {
       const ai = getAi();
+      if (!ai) throw new Error("Gemini API Key missing");
       const today = new Date().toLocaleDateString('pt-BR');
       const prompt = `Hoje é dia ${today}. Forneça a cotação ATUAL E REAL (tempo real) do Dólar (USD), Euro (EUR), Libra (GBP) em relação ao Real Brasileiro (BRL).
+      Use o Google Finance ou fontes de câmbio em tempo real para garantir que os valores são de HOJE.
       Retorne APENAS um objeto JSON com as taxas de câmbio onde 1 unidade da moeda estrangeira vale X Reais.
-      Exemplo: {"BRL": 1, "USD": 5.15, "EUR": 5.55, "GBP": 6.45}.
-      Use a ferramenta de busca para garantir que os valores são de HOJE.`;
+      Exemplo: {"BRL": 1, "USD": 5.15, "EUR": 5.55, "GBP": 6.45}.`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: prompt,
         config: {
+          tools: [{ googleSearch: {} }],
           responseMimeType: "application/json"
         }
       });

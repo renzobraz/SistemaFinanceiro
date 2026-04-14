@@ -456,9 +456,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${t.status === 'PAID' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{t.status === 'PAID' ? 'Pago' : 'Pendente'}</span>
                     </td>
                     <td className="p-3 text-right">
-                        <div className="flex items-center justify-end gap-1 transition-opacity">
-                            <button onClick={() => onEdit(t)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"><Edit2 className="w-4 h-4" /></button>
-                            <button onClick={() => setConfirmModal({isOpen: true, ids: [t.id], type: 'DELETE', message: 'Deseja excluir este lançamento definitivamente?'})} className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 className="w-4 h-4" /></button>
+                        <div className="flex items-center justify-end gap-1">
+                            <button onClick={(e) => { e.stopPropagation(); onEdit(t); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"><Edit2 className="w-4 h-4" /></button>
+                            <button onClick={(e) => { e.stopPropagation(); setConfirmModal({isOpen: true, ids: [t.id], type: 'DELETE', message: 'Deseja excluir este lançamento definitivamente?'}); }} className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 className="w-4 h-4" /></button>
                         </div>
                     </td>
                 </tr>

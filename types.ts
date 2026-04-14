@@ -13,8 +13,14 @@ export interface Bank extends BaseEntity {
 }
 export interface Category extends BaseEntity {}
 export interface CostCenter extends BaseEntity {}
+export interface AssetType extends BaseEntity {}
+export interface AssetSector extends BaseEntity {}
+export interface AssetTicker extends BaseEntity {
+  ticker: string;
+}
 export interface Participant extends BaseEntity {
   category?: string; // Ex: 'Ação', 'FII', 'ETF', 'Cripto'
+  sector?: string;   // Ex: 'Tecnologia', 'Financeiro', 'Energia'
   ticker?: string;   // Símbolo (ex: PETR4, AAPL)
   currency?: Currency; // Moeda do ativo
   currentPrice?: number; // Preço atual (mercado)
@@ -64,6 +70,8 @@ export interface UserPreferences {
   defaultStatus: 'ALL' | 'PENDING' | 'PAID';
   defaultBankId: string;
   defaultWalletId: string;
+  defaultPerformanceBankId?: string;
+  defaultPerformanceWalletId?: string;
 }
 
 export interface FinancialSummary {

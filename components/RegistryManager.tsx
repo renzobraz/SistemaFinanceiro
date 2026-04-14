@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { Plus, Trash2, Edit2, Save, X, Upload, Search, Tag, Loader2, Wand2, Sparkles, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Upload, Download, Search, Tag, Loader2, Wand2, Sparkles, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-react';
 import { BaseEntity, Currency, WalletType } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -21,6 +21,8 @@ interface RegistryManagerProps {
   foreignItems?: BaseEntity[];
   foreignLabel?: string;
   foreignKey?: string;
+  assetTypes?: BaseEntity[];
+  assetSectors?: BaseEntity[];
 }
 
 export const RegistryManager: React.FC<RegistryManagerProps> = ({ 
@@ -39,18 +41,20 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   onAutoFillTickers,
   foreignItems,
   foreignLabel,
-  foreignKey
+  foreignKey,
+  assetTypes,
+  assetSectors
 }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tempName, setTempName] = useState('');
   const [tempCategory, setTempCategory] = useState('');
+  const [tempSector, setTempSector] = useState('');
   const [tempCurrency, setTempCurrency] = useState<Currency>('BRL');
   const [tempWalletType, setTempWalletType] = useState<WalletType>('CHECKING');
   const [tempTicker, setTempTicker] = useState('');
   const [tempCurrentPrice, setTempCurrentPrice] = useState<number>(0);
   const [tempForeignKey, setTempForeignKey] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [dedupProgress, setDedupProgress] = useState<{current: number, total: number} | null>(null);
   const [similarGroups, setSimilarGroups] = useState<Array<{ master: any, duplicates: any[] }>>([]);
@@ -62,14 +66,27 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [isAutoFilling, setIsAutoFilling] = useState(false);
   const [nameFilter, setNameFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [sectorFilter, setSectorFilter] = useState('');
   const [tickerFilter, setTickerFilter] = useState('');
   const [currencyFilter, setCurrencyFilter] = useState('');
   const [sortField, setSortField] = useState<string>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Reset filters when changing registry type to prevent data "disappearing"
+  // due to filters from the previous registry type still being active.
+  React.useEffect(() => {
+    setNameFilter('');
+    setCategoryFilter('');
+    setSectorFilter('');
+    setTickerFilter('');
+    setCurrencyFilter('');
+    setIsAdding(false);
+    setEditingId(null);
+  }, [title]);
+
   const uniqueCategories = useMemo(() => Array.from(new Set(items.map(i => i.category).filter(Boolean))).sort(), [items]);
-  const uniqueTickers = useMemo(() => Array.from(new Set(items.map(i => i.ticker).filter(Boolean))).sort(), [items]);
+  const uniqueSectors = useMemo(() => Array.from(new Set(items.map(i => i.sector).filter(Boolean))).sort(), [items]);
   const uniqueCurrencies = useMemo(() => Array.from(new Set(items.map(i => i.currency).filter(Boolean))).sort(), [items]);
   
   const [confirmModal, setConfirmModal] = useState<{
@@ -81,15 +98,21 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   }>({ isOpen: false, type: 'DELETE', data: null, message: '', title: '' });
 
   const filteredItems = useMemo(() => {
-    const term = searchTerm.toLowerCase();
     const filtered = items.filter(item => {
-      const matchesSearch = !term || item.name.toLowerCase().includes(term);
       const matchesName = !nameFilter || item.name.toLowerCase().includes(nameFilter.toLowerCase());
-      const matchesCategory = !categoryFilter || (item.category || '').toLowerCase().includes(categoryFilter.toLowerCase());
-      const matchesTicker = !tickerFilter || (item.ticker || '').toLowerCase().includes(tickerFilter.toLowerCase());
-      const matchesCurrency = !currencyFilter || (item.currency || '').toLowerCase().includes(currencyFilter.toLowerCase());
       
-      return matchesSearch && matchesName && matchesCategory && matchesTicker && matchesCurrency;
+      const matchesCategory = !categoryFilter || 
+        (categoryFilter === 'EMPTY' ? !item.category : (item.category || '').toLowerCase().includes(categoryFilter.toLowerCase()));
+      
+      const matchesSector = !sectorFilter || 
+        (sectorFilter === 'EMPTY' ? !item.sector : (item.sector || '').toLowerCase().includes(sectorFilter.toLowerCase()));
+      
+      const matchesTicker = !tickerFilter || (item.ticker || '').toLowerCase().includes(tickerFilter.toLowerCase());
+      
+      const matchesCurrency = !currencyFilter || 
+        (currencyFilter === 'EMPTY' ? !item.currency : (item.currency || '').toLowerCase().includes(currencyFilter.toLowerCase()));
+      
+      return matchesName && matchesCategory && matchesSector && matchesTicker && matchesCurrency;
     });
 
     return filtered.sort((a, b) => {
@@ -100,7 +123,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
       if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [items, searchTerm, nameFilter, categoryFilter, tickerFilter, currencyFilter, sortField, sortDirection]);
+  }, [items, nameFilter, categoryFilter, sectorFilter, tickerFilter, currencyFilter, sortField, sortDirection]);
 
   const toggleSort = (field: string) => {
     if (sortField === field) {
@@ -119,6 +142,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const handleStartAdd = () => {
     setTempName('');
     setTempCategory('');
+    setTempSector('');
     setTempCurrency('BRL');
     setTempWalletType('CHECKING');
     setTempTicker('');
@@ -134,6 +158,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         const extra: any = foreignKey ? { [foreignKey]: tempForeignKey } : {};
         if (title.toLowerCase().includes('participante')) {
           extra.category = tempCategory;
+          extra.sector = tempSector;
           extra.ticker = tempTicker;
           extra.currency = tempCurrency;
           extra.currentPrice = tempCurrentPrice;
@@ -148,6 +173,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         await onAdd(tempName, extra);
         setTempName('');
         setTempCategory('');
+        setTempSector('');
         setTempCurrency('BRL');
         setTempTicker('');
         setTempCurrentPrice(0);
@@ -163,6 +189,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
     setEditingId(item.id);
     setTempName(item.name);
     setTempCategory(item.category || '');
+    setTempSector(item.sector || '');
     setTempCurrency(item.currency || 'BRL');
     setTempWalletType(item.type || 'CHECKING');
     setTempTicker(item.ticker || '');
@@ -181,6 +208,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         const extra: any = foreignKey ? { [foreignKey]: tempForeignKey } : {};
         if (title.toLowerCase().includes('participante')) {
           extra.category = tempCategory;
+          extra.sector = tempSector;
           extra.ticker = tempTicker;
           extra.currency = tempCurrency;
           extra.currentPrice = tempCurrentPrice;
@@ -196,6 +224,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         setEditingId(null);
         setTempName('');
         setTempCategory('');
+        setTempSector('');
         setTempCurrency('BRL');
         setTempTicker('');
         setTempCurrentPrice(0);
@@ -418,6 +447,50 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
 
   const getForeignName = (id: string) => foreignItems?.find(i => i.id === id)?.name || '';
 
+  const handleExportCSV = () => {
+    // Definir as colunas baseadas no tipo de registro
+    const isParticipant = title.toLowerCase().includes('participante');
+    
+    let headers = ['Nome'];
+    if (isParticipant) {
+      headers = ['Nome', 'Tipo', 'Setor', 'Ticker', 'Moeda', 'Preço Atual'];
+    } else if (title.toLowerCase().includes('carteira')) {
+      headers = ['Nome', 'Banco'];
+    } else if (title.toLowerCase().includes('banco')) {
+      headers = ['Nome', 'Moeda', 'Tipo'];
+    }
+
+    const csvRows = [headers.join(';')];
+
+    filteredItems.forEach(item => {
+      let row = [item.name];
+      if (isParticipant) {
+        row.push(item.category || '');
+        row.push(item.sector || '');
+        row.push(item.ticker || '');
+        row.push(item.currency || '');
+        row.push((item.currentPrice || 0).toString().replace('.', ','));
+      } else if (title.toLowerCase().includes('carteira')) {
+        row.push(getForeignName(item.bankId));
+      } else if (title.toLowerCase().includes('banco')) {
+        row.push(item.currency || '');
+        row.push(item.type === 'INVESTMENT' ? 'Investimento' : 'Corrente');
+      }
+      csvRows.push(row.join(';'));
+    });
+
+    const csvString = csvRows.join('\n');
+    const blob = new Blob(['\ufeff' + csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `export_${title.toLowerCase().replace(/\s+/g, '_')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <>
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col h-full overflow-hidden">
@@ -485,104 +558,133 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               <button onClick={handleImportClick} className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Importar TXT/CSV (Formato: Nome,Categoria)">
                 <Upload className="w-5 h-5" />
               </button>
+              <button onClick={handleExportCSV} className="p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Exportar para Excel (CSV)">
+                <Download className="w-5 h-5" />
+              </button>
               <button onClick={handleStartAdd} disabled={isAdding || isSaving} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm shadow-blue-100">
                 <Plus className="w-5 h-5" />
               </button>
             </div>
           </div>
-
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input 
-              type="text"
-              placeholder={`Pesquisar em ${title.toLowerCase()}...`}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-            />
-          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto flex flex-col">
           {title.toLowerCase().includes('participante') && (
-            <div className="grid grid-cols-[2fr,1fr,1fr,1fr,80px] gap-4 px-4 py-2 bg-slate-100 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider sticky top-0 z-10">
-              <div className="flex flex-col gap-1">
+            <div className="sticky top-0 z-20 bg-slate-50 border-b border-slate-200 shadow-sm">
+              {/* Cabeçalho de Títulos e Ordenação */}
+              <div className="grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px] gap-4 px-6 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                 <button 
                   onClick={() => toggleSort('name')}
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left"
+                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
                 >
-                  Nome {getSortIcon('name')}
+                  Participante {getSortIcon('name')}
                 </button>
-                <input 
-                  type="text" 
-                  value={nameFilter} 
-                  onChange={e => setNameFilter(e.target.value)}
-                  className="font-normal lowercase p-1 border border-slate-200 rounded bg-white outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="Filtrar..."
-                />
-              </div>
-              <div className="flex flex-col gap-1">
                 <button 
                   onClick={() => toggleSort('category')}
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left"
+                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
                 >
                   Tipo {getSortIcon('category')}
                 </button>
-                <select 
-                  value={categoryFilter} 
-                  onChange={e => setCategoryFilter(e.target.value)}
-                  className="font-normal lowercase p-1 border border-slate-200 rounded bg-white outline-none focus:ring-1 focus:ring-blue-500 text-[10px]"
+                <button 
+                  onClick={() => toggleSort('sector')}
+                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
                 >
-                  <option value="">Todos</option>
-                  {uniqueCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
+                  Setor {getSortIcon('sector')}
+                </button>
                 <button 
                   onClick={() => toggleSort('ticker')}
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left"
+                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
                 >
                   Ticker {getSortIcon('ticker')}
                 </button>
-                <select 
-                  value={tickerFilter} 
-                  onChange={e => setTickerFilter(e.target.value)}
-                  className="font-normal lowercase p-1 border border-slate-200 rounded bg-white outline-none focus:ring-1 focus:ring-blue-500 text-[10px]"
-                >
-                  <option value="">Todos</option>
-                  {uniqueTickers.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
                 <button 
                   onClick={() => toggleSort('currency')}
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left"
+                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
                 >
                   Moeda {getSortIcon('currency')}
                 </button>
+                <div className="text-center">Ações</div>
+              </div>
+
+              {/* Linha de Filtros */}
+              <div className="grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px] gap-4 px-6 pb-3">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                  <input 
+                    type="text" 
+                    value={nameFilter} 
+                    onChange={e => setNameFilter(e.target.value)}
+                    className="w-full font-normal pl-7 pr-2 py-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all"
+                    placeholder="Filtrar nome..."
+                  />
+                </div>
+                <select 
+                  value={categoryFilter} 
+                  onChange={e => setCategoryFilter(e.target.value)}
+                  className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
+                >
+                  <option value="">Todos</option>
+                  <option value="EMPTY">(Vazio)</option>
+                  {assetTypes?.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>) || uniqueCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                </select>
+                <select 
+                  value={sectorFilter} 
+                  onChange={e => setSectorFilter(e.target.value)}
+                  className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
+                >
+                  <option value="">Todos</option>
+                  <option value="EMPTY">(Vazio)</option>
+                  {assetSectors?.map(s => <option key={s.id} value={s.name}>{s.name}</option>) || uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                  <input 
+                    type="text" 
+                    value={tickerFilter} 
+                    onChange={e => setTickerFilter(e.target.value)}
+                    className="w-full font-normal pl-7 pr-2 py-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all"
+                    placeholder="Ticker..."
+                  />
+                </div>
                 <select 
                   value={currencyFilter} 
                   onChange={e => setCurrencyFilter(e.target.value)}
-                  className="font-normal lowercase p-1 border border-slate-200 rounded bg-white outline-none focus:ring-1 focus:ring-blue-500 text-[10px]"
+                  className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
                 >
                   <option value="">Todas</option>
+                  <option value="EMPTY">(Vazio)</option>
                   {uniqueCurrencies.map(curr => <option key={curr} value={curr}>{curr}</option>)}
                 </select>
+                <div className="flex items-center justify-center">
+                  {(nameFilter || categoryFilter || sectorFilter || tickerFilter || currencyFilter) && (
+                    <button 
+                      onClick={() => {
+                        setNameFilter('');
+                        setCategoryFilter('');
+                        setSectorFilter('');
+                        setTickerFilter('');
+                        setCurrencyFilter('');
+                      }}
+                      className="text-[9px] text-red-500 hover:text-red-700 font-bold underline underline-offset-2 uppercase"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="flex items-end pb-1">Ações</div>
             </div>
           )}
 
-          <div className="p-4 space-y-2">
+          <div className="flex-1 overflow-y-auto">
             {isAdding && (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg animate-fade-in shadow-sm">
+            <div className={`bg-blue-50/50 border-b border-blue-100 animate-fade-in ${title.toLowerCase().includes('participante') ? 'grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px] gap-4 items-center px-6 py-4' : 'flex flex-col sm:flex-row gap-2 p-4'}`}>
               <input
                 autoFocus
                 type="text"
                 disabled={isSaving}
                 value={tempName}
                 onChange={(e) => setTempName(e.target.value)}
-                className="flex-1 w-full bg-white border border-blue-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
+                className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                 placeholder="Nome do registro..."
               />
               {title.toLowerCase().includes('banco') && (
@@ -591,7 +693,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                     disabled={isSaving}
                     value={tempWalletType}
                     onChange={(e) => setTempWalletType(e.target.value as WalletType)}
-                    className="w-full sm:w-32 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
+                    className="w-full sm:w-32 bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                   >
                     <option value="CHECKING">Corrente</option>
                     <option value="INVESTMENT">Investimento</option>
@@ -600,7 +702,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       disabled={isSaving}
                       value={tempCurrency}
                       onChange={(e) => setTempCurrency(e.target.value as Currency)}
-                      className="w-full sm:w-24 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
+                      className="w-full sm:w-24 bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                     >
                       <option value="BRL">BRL</option>
                       <option value="USD">USD</option>
@@ -616,37 +718,37 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               )}
               {title.toLowerCase().includes('participante') && (
                 <>
-                    <input
-                      list="category-options"
+                    <select
                       disabled={isSaving}
                       value={tempCategory}
                       onChange={(e) => setTempCategory(e.target.value)}
-                      className="w-full sm:w-32 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
-                      placeholder="Tipo..."
-                    />
-                    <datalist id="category-options">
-                      <option value="Ação" />
-                      <option value="FII" />
-                      <option value="ETF" />
-                      <option value="Cripto" />
-                      <option value="BDR" />
-                      <option value="Renda Fixa" />
-                      <option value="Tesouro Direto" />
-                      <option value="Outros" />
-                    </datalist>
+                      className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                    >
+                      <option value="">Tipo...</option>
+                      {assetTypes?.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                    </select>
+                    <select
+                      disabled={isSaving}
+                      value={tempSector}
+                      onChange={(e) => setTempSector(e.target.value)}
+                      className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                    >
+                      <option value="">Setor...</option>
+                      {assetSectors?.map(s => <option key={s.id} value={s.name}>{s.name}</option>) || uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
                     <input
                       type="text"
                       disabled={isSaving}
                       value={tempTicker}
                       onChange={(e) => setTempTicker(e.target.value)}
-                      className="w-full sm:w-24 bg-white border border-blue-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 uppercase"
-                      placeholder="Ticker"
+                      className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 uppercase shadow-sm"
+                      placeholder="Ticker..."
                     />
                     <select
                       disabled={isSaving}
                       value={tempCurrency}
                       onChange={(e) => setTempCurrency(e.target.value as Currency)}
-                      className="w-full sm:w-20 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
+                      className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                     >
                       <option value="BRL">BRL</option>
                       <option value="USD">USD</option>
@@ -660,79 +762,88 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                     </select>
                 </>
               )}
-              {title.toLowerCase().includes('carteira') && (
-                null // Wallet is now just a portfolio/company name
-              )}
               {foreignItems && (
                 <select
                   disabled={isSaving}
                   value={tempForeignKey}
                   onChange={(e) => setTempForeignKey(e.target.value)}
-                  className="w-full sm:w-48 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
+                  className="w-full sm:w-48 bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                 >
                   <option value="">{foreignLabel || 'Selecione...'}</option>
                   {foreignItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
               )}
-              <div className="flex gap-1 w-full sm:w-auto justify-end">
-                <button onClick={handleSaveAdd} disabled={isSaving} className="bg-green-600 text-white p-2 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center">
+              <div className="flex gap-1 w-full justify-end">
+                <button onClick={handleSaveAdd} disabled={isSaving} className="bg-green-600 text-white p-2 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center shadow-sm">
                   {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 </button>
-                <button onClick={() => setIsAdding(false)} disabled={isSaving} className="bg-slate-200 text-slate-600 p-2 rounded-lg hover:bg-slate-300 transition-colors">
+                <button onClick={() => setIsAdding(false)} disabled={isSaving} className="bg-slate-200 text-slate-600 p-2 rounded-lg hover:bg-slate-300 transition-colors shadow-sm">
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
           )}
 
-          {filteredItems.map(item => (
-            <div key={item.id} className="group flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-100 transition-all">
-              {editingId === item.id ? (
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1 animate-fade-in">
-                  <input
-                    autoFocus
-                    type="text"
-                    disabled={isSaving}
-                    value={tempName}
-                    onChange={(e) => setTempName(e.target.value)}
-                    className="flex-1 w-full bg-white border border-blue-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
-                  />
-                  {title.toLowerCase().includes('participante') && (
-                    <>
-                      <input
-                        list="category-options"
-                        disabled={isSaving}
-                        value={tempCategory}
-                        onChange={(e) => setTempCategory(e.target.value)}
-                        className="w-full sm:w-32 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
-                        placeholder="Tipo..."
-                      />
-                      <input
-                        type="text"
-                        disabled={isSaving}
-                        value={tempTicker}
-                        onChange={(e) => setTempTicker(e.target.value)}
-                        className="w-full sm:w-24 bg-white border border-blue-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 uppercase"
-                        placeholder="Ticker"
-                      />
-                      <select
-                        disabled={isSaving}
-                        value={tempCurrency}
-                        onChange={(e) => setTempCurrency(e.target.value as Currency)}
-                        className="w-full sm:w-20 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
-                      >
-                        <option value="BRL">BRL</option>
-                        <option value="USD">USD</option>
-                        <option value="EUR">EUR</option>
-                        <option value="GBP">GBP</option>
-                        <option value="JPY">JPY</option>
-                        <option value="CHF">CHF</option>
-                        <option value="CAD">CAD</option>
-                        <option value="AUD">AUD</option>
-                        <option value="CNY">CNY</option>
-                      </select>
-                    </>
-                  )}
+          <div className="divide-y divide-slate-100">
+            {filteredItems.map(item => (
+              <div key={item.id} className={`group hover:bg-slate-50/50 transition-all ${title.toLowerCase().includes('participante') ? 'grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px] gap-4 items-center px-6 py-3' : 'flex items-center justify-between p-4'}`}>
+                {editingId === item.id ? (
+                  <>
+                    <input
+                      autoFocus
+                      type="text"
+                      disabled={isSaving}
+                      value={tempName}
+                      onChange={(e) => setTempName(e.target.value)}
+                      className="w-full bg-white border border-blue-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                      placeholder="Nome..."
+                    />
+                    {title.toLowerCase().includes('participante') && (
+                      <>
+                        <select
+                          disabled={isSaving}
+                          value={tempCategory}
+                          onChange={(e) => setTempCategory(e.target.value)}
+                          className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                        >
+                          <option value="">Tipo...</option>
+                          {assetTypes?.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                        </select>
+                        <select
+                          disabled={isSaving}
+                          value={tempSector}
+                          onChange={(e) => setTempSector(e.target.value)}
+                          className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                        >
+                          <option value="">Setor...</option>
+                          {assetSectors?.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                        </select>
+                        <input
+                          type="text"
+                          disabled={isSaving}
+                          value={tempTicker}
+                          onChange={(e) => setTempTicker(e.target.value)}
+                          className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 uppercase shadow-sm"
+                          placeholder="Ticker..."
+                        />
+                        <select
+                          disabled={isSaving}
+                          value={tempCurrency}
+                          onChange={(e) => setTempCurrency(e.target.value as Currency)}
+                          className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                        >
+                          <option value="BRL">BRL</option>
+                          <option value="USD">USD</option>
+                          <option value="EUR">EUR</option>
+                          <option value="GBP">GBP</option>
+                          <option value="JPY">JPY</option>
+                          <option value="CHF">CHF</option>
+                          <option value="CAD">CAD</option>
+                          <option value="AUD">AUD</option>
+                          <option value="CNY">CNY</option>
+                        </select>
+                      </>
+                    )}
                   {title.toLowerCase().includes('banco') && (
                     <>
                       <select
@@ -776,92 +887,118 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       {foreignItems.map(fItem => <option key={fItem.id} value={fItem.id}>{fItem.name}</option>)}
                     </select>
                   )}
-                  <div className="flex gap-1 w-full sm:w-auto justify-end">
-                    <button onClick={handleSaveEdit} disabled={isSaving} className="bg-green-600 text-white p-2 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center">
-                      {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    </button>
-                    <button onClick={() => setEditingId(null)} disabled={isSaving} className="bg-slate-200 text-slate-600 p-2 rounded-lg hover:bg-slate-300 transition-colors">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className={`flex items-center justify-between w-full ${title.toLowerCase().includes('participante') ? 'grid grid-cols-[2fr,1fr,1fr,1fr,80px] gap-4' : ''}`}>
-                  <div className="flex flex-col flex-1 min-w-0 pr-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-slate-700 font-semibold truncate" title={item.name}>{item.name}</span>
+                    <div className="flex gap-1 w-full justify-end">
+                      <button onClick={handleSaveEdit} disabled={isSaving} className="bg-green-600 text-white p-2 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center shadow-sm">
+                        {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      </button>
+                      <button onClick={() => setEditingId(null)} disabled={isSaving} className="bg-slate-200 text-slate-600 p-2 rounded-lg hover:bg-slate-300 transition-colors shadow-sm">
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
-                    {foreignKey && item[foreignKey] && (
-                      <span className="text-xs text-slate-400 flex items-center gap-1">
-                        <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-                        {getForeignName(item[foreignKey])}
-                      </span>
-                    )}
-                  </div>
-
-                  {title.toLowerCase().includes('participante') && (
-                    <>
-                      <div className="flex items-center">
-                        {item.category && (
-                          <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100 font-bold uppercase">
-                            {item.category}
-                          </span>
-                        )}
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-col min-w-0 pr-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-slate-700 font-bold truncate" title={item.name}>{item.name}</span>
                       </div>
-                      <div className="flex items-center">
+                      {foreignKey && item[foreignKey] && (
+                        <span className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                          <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
+                          {getForeignName(item[foreignKey])}
+                        </span>
+                      )}
+                    </div>
+
+                    {title.toLowerCase().includes('participante') && (
+                      <>
+                        <div className="flex items-center">
+                          {item.category && (
+                            <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded-lg border border-blue-100 font-bold uppercase tracking-wider">
+                              {item.category}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center">
+                          {item.sector && (
+                            <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded-lg border border-indigo-100 font-bold uppercase tracking-wider">
+                              {item.sector}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center">
+                          {item.ticker && (
+                            <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded-lg border border-slate-200 font-black uppercase tracking-widest">
+                              {item.ticker}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center">
+                          {item.currency && (
+                            <span className="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 rounded-lg border border-emerald-100 font-bold uppercase tracking-wider">
+                              {item.currency}
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {!title.toLowerCase().includes('participante') && (
+                      <div className="flex items-center gap-2">
                         {item.ticker && (
-                          <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 font-black uppercase">
+                          <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded-lg border border-slate-200 font-black uppercase tracking-widest">
                             {item.ticker}
                           </span>
                         )}
-                      </div>
-                      <div className="flex items-center">
+                        {item.category && (
+                          <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded-lg border border-blue-100 font-bold uppercase tracking-wider">
+                            {item.category}
+                          </span>
+                        )}
                         {item.currency && (
-                          <span className="text-[10px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded border border-emerald-100 font-bold uppercase">
+                          <span className="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 rounded-lg border border-emerald-100 font-bold uppercase tracking-wider">
                             {item.currency}
                           </span>
                         )}
                       </div>
-                    </>
-                  )}
+                    )}
 
-                  {!title.toLowerCase().includes('participante') && (
-                    <div className="flex items-center gap-2">
-                      {item.ticker && (
-                        <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 font-black uppercase">
-                          {item.ticker}
-                        </span>
-                      )}
-                      {item.category && (
-                        <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100 font-bold uppercase">
-                          {item.category}
-                        </span>
-                      )}
-                      {item.currency && (
-                        <span className="text-[10px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded border border-emerald-100 font-bold uppercase">
-                          {item.currency}
-                        </span>
-                      )}
+                    <div className="flex items-center gap-1 justify-end">
+                      <button onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }} className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Editar">
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); requestDelete(item.id); }} className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Excluir">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
-                  )}
-
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
-                    <button onClick={() => handleStartEdit(item)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => requestDelete(item.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
           
           {filteredItems.length === 0 && (
             <div className="py-12 flex flex-col items-center justify-center text-slate-400 italic text-sm">
               <Search className="w-8 h-8 mb-2 opacity-20" />
-              <p>{searchTerm ? 'Nenhum resultado para a busca.' : 'Lista vazia.'}</p>
+              {items.length === 0 ? (
+                <p>Nenhum registro cadastrado nesta categoria.</p>
+              ) : (
+                <div className="text-center">
+                  <p>Nenhum resultado para os filtros aplicados.</p>
+                  <button 
+                    onClick={() => {
+                      setNameFilter('');
+                      setCategoryFilter('');
+                      setSectorFilter('');
+                      setTickerFilter('');
+                      setCurrencyFilter('');
+                    }}
+                    className="mt-2 text-blue-600 font-bold hover:underline"
+                  >
+                    Limpar Filtros
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -934,18 +1071,18 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                                     )}
                                   </button>
                                   
-                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <div className="flex items-center gap-1">
                                     <button 
-                                      onClick={() => handleStartRenameInModal(idx, item)}
+                                      onClick={(e) => { e.stopPropagation(); handleStartRenameInModal(idx, item); }}
                                       title="Renomear"
-                                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                      className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                                     >
                                       <Edit2 className="w-4 h-4" />
                                     </button>
                                     <button 
-                                      onClick={() => handleRemoveFromGroup(idx, item.id)}
+                                      onClick={(e) => { e.stopPropagation(); handleRemoveFromGroup(idx, item.id); }}
                                       title="Remover deste grupo"
-                                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                      className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                     >
                                       <X className="w-4 h-4" />
                                     </button>
@@ -1035,7 +1172,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       </div>
                       <button 
                         onClick={() => handleRemoveIgnored(item.pairId)}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                         title="Remover dos ignorados"
                       >
                         <Trash2 className="w-5 h-5" />

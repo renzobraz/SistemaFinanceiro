@@ -11,7 +11,7 @@ import { ExpenseAnalysisReport } from './components/ExpenseAnalysisReport';
 import { AssetPerformanceReport } from './components/AssetPerformanceReport';
 import { HelpManual } from './components/HelpManual';
 import { financeService, DEFAULT_SUPABASE_CONFIG } from './services/financeService';
-import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus } from './types';
+import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus, AssetType, AssetSector, AssetTicker } from './types';
 import { 
   Plus, 
   Wallet as WalletIcon, 
@@ -28,7 +28,10 @@ import {
   Database,
   Layers,
   Loader2,
-  XCircle
+  XCircle,
+  PieChart,
+  LayoutGrid,
+  Hash
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 
@@ -51,16 +54,22 @@ const App: FC = () => {
     costCenters: CostCenter[];
     participants: Participant[];
     wallets: Wallet[];
+    assetTypes: AssetType[];
+    assetSectors: AssetSector[];
   }>({
     banks: [],
     categories: [],
     costCenters: [],
     participants: [],
-    wallets: []
+    wallets: [],
+    assetTypes: [],
+    assetSectors: []
   });
 
   const [selectedWalletId, setSelectedWalletId] = useState<string>(() => financeService.getUserPreferences().defaultWalletId);
   const [selectedBankId, setSelectedBankId] = useState<string>(() => financeService.getUserPreferences().defaultBankId);
+  const [performanceBankId, setPerformanceBankId] = useState<string>(() => financeService.getUserPreferences().defaultPerformanceBankId || 'ALL');
+  const [performanceWalletId, setPerformanceWalletId] = useState<string>(() => financeService.getUserPreferences().defaultPerformanceWalletId || 'ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PAID' | 'PENDING'>(() => financeService.getUserPreferences().defaultStatus); 
   
   const [startDate, setStartDate] = useState<string>(() => financeService.getDateRangeFromPreference(financeService.getUserPreferences().defaultDateRange).start);
@@ -78,6 +87,7 @@ const App: FC = () => {
 
   // Controle de concorrência para evitar Race Conditions nos filtros
   const lastRequestIdRef = useRef(0);
+  const lastRegistryRequestIdRef = useRef(0);
 
   const showAlert = (title: string, message: any) => {
     const msg = typeof message === 'string' ? message : (message?.message || message?.details || JSON.stringify(message));
@@ -86,31 +96,57 @@ const App: FC = () => {
 
   // Carrega apenas os cadastros (uma única vez ou quando conectar)
   const loadRegistries = useCallback(async (forceRefresh = false) => {
+    const requestId = ++lastRegistryRequestIdRef.current;
     try {
       // Tenta carregar do localStorage primeiro para exibição imediata
       if (!forceRefresh) {
-        const keyMap: any = { banks: 'fincontrol_banks', categories: 'fincontrol_categories', costCenters: 'fincontrol_cost_centers', participants: 'fincontrol_participants', wallets: 'fincontrol_wallets' };
+        const keyMap: any = { 
+          banks: 'fincontrol_banks', 
+          categories: 'fincontrol_categories', 
+          costCenters: 'fincontrol_cost_centers', 
+          participants: 'fincontrol_participants', 
+          wallets: 'fincontrol_wallets',
+          assetTypes: 'fincontrol_asset_types',
+          assetSectors: 'fincontrol_asset_sectors'
+        };
         const localData = {
           banks: JSON.parse(localStorage.getItem(keyMap.banks) || '[]'),
           categories: JSON.parse(localStorage.getItem(keyMap.categories) || '[]'),
           costCenters: JSON.parse(localStorage.getItem(keyMap.costCenters) || '[]'),
           participants: JSON.parse(localStorage.getItem(keyMap.participants) || '[]'),
           wallets: JSON.parse(localStorage.getItem(keyMap.wallets) || '[]'),
+          assetTypes: JSON.parse(localStorage.getItem(keyMap.assetTypes) || '[]'),
+          assetSectors: JSON.parse(localStorage.getItem(keyMap.assetSectors) || '[]'),
         };
         
         if (localData.banks.length > 0 || localData.categories.length > 0) {
-          setRegistries(localData);
+          if (requestId === lastRegistryRequestIdRef.current) {
+            setRegistries(localData as any);
+          }
         }
       }
 
-      const [bk, cat, cc, pt, wa] = await Promise.all([
+      const [bk, cat, cc, pt, wa, at, as] = await Promise.all([
         financeService.getRegistry<Bank>('banks', forceRefresh),
         financeService.getRegistry<Category>('categories', forceRefresh),
         financeService.getRegistry<CostCenter>('costCenters', forceRefresh),
         financeService.getRegistry<Participant>('participants', forceRefresh),
         financeService.getRegistry<Wallet>('wallets', forceRefresh),
+        financeService.getRegistry<AssetType>('assetTypes', forceRefresh),
+        financeService.getRegistry<AssetSector>('assetSectors', forceRefresh),
       ]);
-      setRegistries({ banks: bk, categories: cat, costCenters: cc, participants: pt, wallets: wa });
+
+      if (requestId === lastRegistryRequestIdRef.current) {
+        setRegistries({ 
+          banks: bk, 
+          categories: cat, 
+          costCenters: cc, 
+          participants: pt, 
+          wallets: wa,
+          assetTypes: at,
+          assetSectors: as
+        });
+      }
     } catch (error: any) {
       console.error("Failed to load registries", error);
     }
@@ -127,10 +163,14 @@ const App: FC = () => {
 
       // 1. Busca transações filtradas
       const trPromise = financeService.getTransactions({
-        startDate: isInvestmentsTab ? '' : startDate,
-        endDate: isInvestmentsTab ? '' : endDate,
-        bankId: isInvestmentsTab ? '' : selectedBankId,
-        walletId: isInvestmentsTab ? '' : selectedWalletId,
+        startDate: isInvestmentsTab ? undefined : startDate,
+        endDate: isInvestmentsTab ? undefined : endDate,
+        bankId: isInvestmentsTab 
+          ? (performanceBankId === 'ALL' ? undefined : performanceBankId) 
+          : (selectedBankId === 'ALL' ? undefined : selectedBankId),
+        walletId: isInvestmentsTab 
+          ? (performanceWalletId === 'ALL' ? undefined : performanceWalletId) 
+          : (selectedWalletId === 'ALL' ? undefined : selectedWalletId),
         status: isInvestmentsTab ? 'PAID' : statusFilter
       });
 
@@ -221,7 +261,13 @@ const App: FC = () => {
     if (!loading) {
         loadTransactions();
     }
-  }, [startDate, endDate, selectedBankId, selectedWalletId, statusFilter, loadTransactions]);
+  }, [startDate, endDate, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter, loadTransactions]);
+
+  useEffect(() => {
+    if (activeTab === 'registries') {
+      loadRegistries();
+    }
+  }, [activeTab, loadRegistries]);
 
   useEffect(() => {
     if (activeTab === 'payables') {
@@ -293,6 +339,8 @@ const App: FC = () => {
     { id: 'categories', label: 'Categorias', icon: Tags },
     { id: 'costCenters', label: 'Centros de Custo', icon: Briefcase },
     { id: 'participants', label: 'Participantes', icon: Users },
+    { id: 'assetTypes', label: 'Tipos de Ativos', icon: PieChart },
+    { id: 'assetSectors', label: 'Setores', icon: LayoutGrid },
   ];
 
   if (loading) {
@@ -323,6 +371,7 @@ const App: FC = () => {
                   {activeTab === 'dashboard' && 'Dashboard'}
                   {activeTab === 'cashflow' && 'Fluxo de Caixa'}
                   {activeTab === 'expenses-analysis' && 'Análise de Gastos'}
+                  {activeTab === 'investments' && 'Investimentos'}
                   {activeTab === 'payables' && 'Contas a Pagar & Receber'}
                   {activeTab === 'bank-transactions' && 'Movimentação Bancária'}
                   {activeTab === 'registries' && 'Cadastros'}
@@ -471,6 +520,10 @@ const App: FC = () => {
                     wallets: registries.wallets
                   }} 
                   onUpdateRegistry={loadRegistries}
+                  selectedBankId={performanceBankId}
+                  setSelectedBankId={setPerformanceBankId}
+                  selectedWalletId={performanceWalletId}
+                  setSelectedWalletId={setPerformanceWalletId}
                 />
               </div>
             </div>
@@ -603,6 +656,8 @@ const App: FC = () => {
                         foreignItems={activeRegistryTab === 'wallets' ? registries.banks : undefined}
                         foreignLabel={activeRegistryTab === 'wallets' ? 'Selecionar Banco' : undefined}
                         foreignKey={activeRegistryTab === 'wallets' ? 'bankId' : undefined}
+                        assetTypes={registries.assetTypes}
+                        assetSectors={registries.assetSectors}
                     />
                   </div>
                 </div>
@@ -616,6 +671,8 @@ const App: FC = () => {
                  onSavePrefs={(prefs) => {
                    setSelectedWalletId(prefs.defaultWalletId);
                    setSelectedBankId(prefs.defaultBankId);
+                   setPerformanceBankId(prefs.defaultPerformanceBankId || 'ALL');
+                   setPerformanceWalletId(prefs.defaultPerformanceWalletId || 'ALL');
                    setStatusFilter(prefs.defaultStatus);
                    const range = financeService.getDateRangeFromPreference(prefs.defaultDateRange);
                    setStartDate(range.start);

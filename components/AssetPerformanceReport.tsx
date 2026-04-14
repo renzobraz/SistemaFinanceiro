@@ -18,8 +18,14 @@ import {
   Target,
   Check,
   Edit2,
-  Clock
+  Clock,
+  FileDown,
+  FileSpreadsheet,
+  Wallet as WalletIcon
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 import { geminiService, InvestmentSuggestion } from '../services/geminiService';
 import { financeService } from '../services/financeService';
 import { 
@@ -42,8 +48,15 @@ interface AssetPerformanceReportProps {
     categories: Category[];
     participants: Participant[];
     wallets: Wallet[];
+    assetTypes?: any[];
+    assetSectors?: any[];
+    assetTickers?: any[];
   };
   onUpdateRegistry?: (forceRefresh?: boolean) => Promise<void>;
+  selectedBankId: string;
+  setSelectedBankId: (id: string) => void;
+  selectedWalletId: string;
+  setSelectedWalletId: (id: string) => void;
 }
 
 interface AssetPerformance {
@@ -51,6 +64,7 @@ interface AssetPerformance {
   name: string;
   ticker: string;
   category: string;
+  sector: string;
   currency: Currency;
   totalInvested: number; // In asset currency
   totalReceived: number; // In asset currency
@@ -70,18 +84,26 @@ interface AssetPerformance {
 export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({ 
   transactions, 
   registries,
-  onUpdateRegistry
+  onUpdateRegistry,
+  selectedBankId,
+  setSelectedBankId,
+  selectedWalletId,
+  setSelectedWalletId
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedBankId, setSelectedBankId] = useState<string>('ALL');
-  const [selectedWalletId, setSelectedWalletId] = useState<string>('ALL');
   const [prices, setPrices] = useState<Record<string, number>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, InvestmentSuggestion>>({});
   const [loadingPrices, setLoadingPrices] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [detailAsset, setDetailAsset] = useState<AssetPerformance | null>(null);
-  const [baseCurrency, setBaseCurrency] = useState<Currency>('BRL');
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
+  const [selectedTab, setSelectedTab] = useState('TUDO');
+  
+  const baseCurrency = useMemo(() => {
+    if (selectedBankId === 'ALL') return 'BRL';
+    const bank = registries.banks.find(b => b.id === selectedBankId);
+    return bank?.currency || 'BRL';
+  }, [selectedBankId, registries.banks]);
   
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
   const [tempTargetPrice, setTempTargetPrice] = useState<string>('');
@@ -108,10 +130,10 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       
       const participant = registries.participants.find(p => p.id === t.participantId);
       const bank = registries.banks.find(b => b.id === t.bankId);
-      const isInvestmentBank = bank?.type === 'INVESTMENT';
       const hasParticipantType = !!participant?.category;
       
-      const isInvestment = hasParticipantType && isInvestmentBank;
+      // Se tiver tipo de participante (ex: Ação, FII), é considerado investimento independente do tipo de banco
+      const isInvestment = hasParticipantType;
 
       if (isInvestment) {
         bankIds.add(t.bankId);
@@ -122,6 +144,19 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       .filter(b => bankIds.has(b.id))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [transactions, registries.participants, registries.categories, registries.banks]);
+
+  // Identifica participantes que possuem transações mas não possuem Tipo (Categoria)
+  const participantsMissingType = useMemo(() => {
+    const missing = new Set<string>();
+    transactions.forEach(t => {
+      if (t.status !== 'PAID' || t.linkedId) return;
+      const participant = registries.participants.find(p => p.id === t.participantId);
+      if (participant && !participant.category) {
+        missing.add(participant.name);
+      }
+    });
+    return Array.from(missing).sort();
+  }, [transactions, registries.participants]);
 
   const performanceData = useMemo(() => {
     const assetMap = new Map<string, AssetPerformance>();
@@ -134,15 +169,12 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       const participant = registries.participants.find(p => p.id === t.participantId);
       const hasParticipantType = !!participant?.category;
       
-      const bank = registries.banks.find(b => b.id === t.bankId);
-      const isInvestmentBank = bank?.type === 'INVESTMENT';
-      
       const matchesBank = selectedBankId === 'ALL' || t.bankId === selectedBankId;
       const matchesWallet = selectedWalletId === 'ALL' || t.walletId === selectedWalletId;
       
-      // Lógica de Ouro: É investimento se tiver Tipo E for banco de investimento
+      // Lógica de Ouro: É investimento se o Participante tiver um Tipo (Ação, FII, etc)
       // IGNORAMOS transferências (linkedId) para evitar que o aporte de capital seja contado como venda/lucro
-      const isInvestment = hasParticipantType && isInvestmentBank && !t.linkedId;
+      const isInvestment = hasParticipantType && !t.linkedId;
       
       return isConfirmed && isInvestment && matchesBank && matchesWallet;
     });
@@ -159,6 +191,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           name,
           ticker,
           category: participant?.category || 'Outros',
+          sector: participant?.sector || 'Não Segmentado',
           currency,
           totalInvested: 0,
           totalInvestedBRL: 0,
@@ -174,6 +207,9 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
 
       const asset = assetMap.get(t.participantId)!;
       asset.transactions.push(t);
+
+      const participant = registries.participants.find(p => p.id === t.participantId);
+      const hasParticipantType = !!participant?.category;
 
       const bank = registries.banks.find(b => b.id === t.bankId);
       const transactionCurrency = bank?.currency || 'BRL';
@@ -200,38 +236,64 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
         }
       }
 
-      if (t.type === 'DEBIT') {
-        const category = registries.categories.find(c => c.id === t.categoryId);
-        const isDividendTax = category?.name.toLowerCase().includes('imposto') && 
-                             (category?.name.toLowerCase().includes('provento') || category?.name.toLowerCase().includes('divid'));
+      const category = registries.categories.find(c => c.id === t.categoryId);
+      const categoryName = category?.name.toLowerCase() || '';
+      const description = t.description.toLowerCase();
+      
+      // Identifica se é algo relacionado a proventos (dividendos, JCP, rendimentos ou impostos sobre eles)
+      const isProvento = 
+        categoryName.includes('provento') || 
+        categoryName.includes('divid') || 
+        categoryName.includes('jcp') || 
+        categoryName.includes('rendimento') ||
+        description.includes('divid') || 
+        description.includes('jcp') || 
+        description.includes('rendimento') || 
+        description.includes('aluguel') ||
+        description.includes('yield');
 
-        if (isDividendTax) {
-          // Imposto sobre dividendo reduz o recebimento líquido
-          asset.totalReceived += valueInAsset;
+      // Identifica se é um imposto ou taxa (geral ou sobre provento)
+      const isTaxOrFee = 
+        categoryName.includes('imposto') || 
+        categoryName.includes('taxa') || 
+        categoryName.includes('tarifa') ||
+        categoryName.includes('tax') || 
+        categoryName.includes('fee') ||
+        description.includes('tax') || 
+        description.includes('fee') || 
+        description.includes('iof') || 
+        description.includes('irrf') ||
+        description.includes('imposto') ||
+        description.includes('wht') ||
+        description.includes('withholding');
+
+      // CRITICAL: Se for um DÉBITO sem quantidade, tratamos como taxa/imposto APENAS se não for um investimento identificado
+      const isDebitWithoutQty = t.type === 'DEBIT' && (!t.quantity || t.quantity <= 0);
+
+      if (isProvento || isTaxOrFee || (isDebitWithoutQty && !hasParticipantType)) {
+        if (t.type === 'DEBIT') {
+          // Imposto ou taxa -> subtrai do recebido líquido (proventos)
+          asset.totalReceived -= valueInAsset;
         } else {
-          // Compra normal
-          asset.totalInvested += valueInAsset;
-          asset.totalInvestedBRL += valueInBRL;
-          if (t.quantity) {
-            asset.currentQuantity += t.quantity;
-          }
+          // Recebimento de provento
+          asset.totalReceived += valueInAsset;
+        }
+        // Nunca afeta o Total Investido ou Quantidade (Preço Médio)
+        return; 
+      }
+
+      if (t.type === 'DEBIT') {
+        // Compra normal
+        asset.totalInvested += valueInAsset;
+        asset.totalInvestedBRL += valueInBRL;
+        if (t.quantity) {
+          asset.currentQuantity += t.quantity;
         }
       } else {
-        // Venda ou Rendimento
-        const category = registries.categories.find(c => c.id === t.categoryId);
-        const isDividend = (category?.name.toLowerCase() === 'proventos') ||
-                          t.description.toLowerCase().includes('divid') || 
-                          t.description.toLowerCase().includes('jcp') || 
-                          t.description.toLowerCase().includes('rendimento') ||
-                          t.description.toLowerCase().includes('aluguel');
-        
-        if (isDividend) {
-          asset.totalReceived += valueInAsset;
-        } else {
-          asset.totalSold += valueInAsset;
-          if (t.quantity) {
-            asset.currentQuantity -= t.quantity;
-          }
+        // Venda normal
+        asset.totalSold += valueInAsset;
+        if (t.quantity) {
+          asset.currentQuantity -= t.quantity;
         }
       }
     });
@@ -252,7 +314,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
         if (marketPrice) {
           asset.lastPrice = marketPrice;
           asset.marketValue = asset.currentQuantity * asset.lastPrice;
-          asset.profit = (asset.marketValue + asset.totalSold + asset.totalReceived) - asset.totalInvested;
+          // Excluímos totalReceived (proventos) do cálculo de lucro para focar em ganho de capital (venda/mercado)
+          asset.profit = (asset.marketValue + asset.totalSold) - asset.totalInvested;
           asset.variation = asset.averagePrice > 0 ? (asset.lastPrice / asset.averagePrice - 1) * 100 : 0;
         }
 
@@ -294,7 +357,19 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     
     setLoadingSuggestions(true);
     try {
-      const suggestions = await geminiService.getInvestmentSuggestions(performanceData);
+      // Prepara os dados para a IA: ticker, preço médio, preço atual, lucro/prejuízo e moeda
+      const assetsForAi = performanceData.map(a => ({
+        ticker: a.ticker,
+        name: a.name,
+        averagePrice: a.averagePrice,
+        lastPrice: a.lastPrice || 0,
+        currentQuantity: a.currentQuantity,
+        currency: a.currency,
+        variation: a.variation || 0,
+        profit: a.profit || 0
+      }));
+
+      const suggestions = await geminiService.getInvestmentSuggestions(assetsForAi);
       const suggestionMap: Record<string, InvestmentSuggestion> = {};
       suggestions.forEach(s => {
         suggestionMap[s.ticker] = s;
@@ -334,6 +409,73 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     }
   };
 
+  const exportToExcel = () => {
+    const data = filteredData.map(asset => {
+      const assetRate = exchangeRates[asset.currency] || 1;
+      const baseRate = exchangeRates[baseCurrency] || 1;
+      const lastPriceDisplay = (asset.lastPrice || 0) * assetRate / baseRate;
+      const avgPriceDisplay = (asset.averagePrice * assetRate) / baseRate;
+      const totalInvestedDisplay = (asset.totalInvested * assetRate) / baseRate;
+      const marketValueDisplay = asset.lastPrice ? (asset.currentQuantity * lastPriceDisplay) : 0;
+      const profitDisplay = asset.lastPrice ? (marketValueDisplay - totalInvestedDisplay) : 0;
+
+      return {
+        'Ticker': asset.ticker,
+        'Nome': asset.name,
+        'Categoria': asset.category,
+        'Quantidade': asset.currentQuantity,
+        [`P. Médio (${baseCurrency})`]: avgPriceDisplay,
+        [`Cotação Atual (${baseCurrency})`]: lastPriceDisplay,
+        [`Total Compra (${baseCurrency})`]: totalInvestedDisplay,
+        [`Total Atual (${baseCurrency})`]: marketValueDisplay,
+        [`Resultado (${baseCurrency})`]: profitDisplay,
+        'Variação (%)': asset.variation || 0
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Performance");
+    XLSX.writeFile(wb, `Performance_Ativos_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const exportToPDF = () => {
+    const doc = new jsPDF('l', 'mm', 'a4');
+    doc.text("Relatório de Performance de Ativos", 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Data: ${new Date().toLocaleString()}`, 14, 22);
+    doc.text(`Moeda Base: ${baseCurrency}`, 14, 27);
+
+    const tableData = filteredData.map(asset => {
+      const assetRate = exchangeRates[asset.currency] || 1;
+      const baseRate = exchangeRates[baseCurrency] || 1;
+      const lastPriceDisplay = (asset.lastPrice || 0) * assetRate / baseRate;
+      const avgPriceDisplay = (asset.averagePrice * assetRate) / baseRate;
+      const totalInvestedDisplay = (asset.totalInvested * assetRate) / baseRate;
+      const marketValueDisplay = asset.lastPrice ? (asset.currentQuantity * lastPriceDisplay) : 0;
+      const profitDisplay = asset.lastPrice ? (marketValueDisplay - totalInvestedDisplay) : 0;
+
+      return [
+        asset.ticker,
+        asset.currentQuantity.toFixed(4),
+        formatValue(avgPriceDisplay, 2),
+        formatValue(lastPriceDisplay, 2),
+        formatValue(totalInvestedDisplay, 2),
+        formatValue(marketValueDisplay, 2),
+        formatValue(profitDisplay, 2),
+        `${(asset.variation || 0).toFixed(2)}%`
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 35,
+      head: [['Ticker', 'Qtd', 'P. Médio', 'Cotação', 'Total Compra', 'Total Atual', 'Resultado', 'Var %']],
+      body: tableData,
+    });
+
+    doc.save(`Performance_Ativos_${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
   useEffect(() => {
     // Busca taxas de câmbio iniciais
     const initRates = async () => {
@@ -349,8 +491,15 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   }, []);
 
   useEffect(() => {
-    if (performanceData.length > 0 && Object.keys(prices).length === 0) {
+    if (performanceData.length > 0) {
       fetchPrices();
+      
+      // Auto-refresh a cada 15 minutos
+      const interval = setInterval(() => {
+        fetchPrices();
+      }, 15 * 60 * 1000);
+      
+      return () => clearInterval(interval);
     }
   }, [performanceData.length]);
 
@@ -359,11 +508,9 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   };
 
   const formatValue = (val: number, decimals: number = 2) => {
-    // Se o valor for muito pequeno mas não zero, mostra mais decimais para não parecer 0,00
-    const finalDecimals = (val > 0 && val < 0.01 && decimals === 2) ? 4 : decimals;
     return new Intl.NumberFormat('pt-BR', { 
-      minimumFractionDigits: finalDecimals, 
-      maximumFractionDigits: finalDecimals 
+      minimumFractionDigits: decimals, 
+      maximumFractionDigits: decimals 
     }).format(val);
   };
 
@@ -401,10 +548,30 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   };
 
   // Totais convertidos para a moeda base
-  const filteredData = performanceData.filter(a => 
-    a.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    a.ticker.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredData = performanceData.filter(a => {
+    const matchesSearch = a.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                         a.ticker.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    if (selectedTab === 'TUDO') return matchesSearch;
+    
+    const cat = a.category.toUpperCase();
+    if (selectedTab === 'AÇÕES') return matchesSearch && (cat.includes('AÇÃO') || cat.includes('ACAO') || cat.includes('STOCK'));
+    if (selectedTab === 'FIIS') return matchesSearch && (cat.includes('FII') || cat.includes('IMOBILIARIO'));
+    if (selectedTab === 'RENDA FIXA') return matchesSearch && (cat.includes('FIXA') || cat.includes('CDB') || cat.includes('TESOURO') || cat.includes('LCI') || cat.includes('LCA'));
+    if (selectedTab === 'OUTROS') return matchesSearch && !['AÇÃO', 'ACAO', 'STOCK', 'FII', 'IMOBILIARIO', 'FIXA', 'CDB', 'TESOURO', 'LCI', 'LCA'].some(k => cat.includes(k));
+    
+    return matchesSearch;
+  });
+
+  const groupedData = useMemo(() => {
+    const groups: Record<string, AssetPerformance[]> = {};
+    filteredData.forEach(asset => {
+      const cat = asset.category || 'Outros';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(asset);
+    });
+    return groups;
+  }, [filteredData]);
 
   const totals = useMemo(() => {
     return filteredData.reduce((acc, curr) => {
@@ -418,6 +585,25 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     }, { invested: 0, received: 0, market: 0, profit: 0 });
   }, [filteredData, exchangeRates]);
 
+  const cashBalance = useMemo(() => {
+    const matchesBank = (t: Transaction) => selectedBankId === 'ALL' || t.bankId === selectedBankId;
+    const matchesWallet = (t: Transaction) => selectedWalletId === 'ALL' || t.walletId === selectedWalletId;
+    
+    // Calcula o saldo de caixa (todas as transações PAID do banco/carteira selecionado)
+    const balanceBRL = transactions
+      .filter(t => t.status === 'PAID' && matchesBank(t) && matchesWallet(t))
+      .reduce((acc, t) => {
+        const bank = registries.banks.find(b => b.id === t.bankId);
+        const transactionCurrency = bank?.currency || 'BRL';
+        const rateToBRL = (transactionCurrency === 'BRL') ? 1 : (t.exchangeRate || exchangeRates[transactionCurrency] || 1);
+        const valueInBRL = t.value * rateToBRL;
+        
+        return acc + (t.type === 'CREDIT' ? valueInBRL : -valueInBRL);
+      }, 0);
+      
+    return balanceBRL;
+  }, [transactions, selectedBankId, selectedWalletId, registries.banks, exchangeRates]);
+
   const safeBaseRate = useMemo(() => exchangeRates[baseCurrency] || 1, [exchangeRates, baseCurrency]);
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
@@ -428,6 +614,16 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       const rate = exchangeRates[a.currency] || 1;
       const val = (a.marketValue || a.totalInvested) * rate;
       map.set(a.category, (map.get(a.category) || 0) + val);
+    });
+    return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
+  }, [filteredData, exchangeRates]);
+
+  const sectorData = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredData.forEach(a => {
+      const rate = exchangeRates[a.currency] || 1;
+      const val = (a.marketValue || a.totalInvested) * rate;
+      map.set(a.sector, (map.get(a.sector) || 0) + val);
     });
     return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
   }, [filteredData, exchangeRates]);
@@ -454,6 +650,19 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       .sort((a, b) => b.value - a.value);
   }, [filteredData, exchangeRates, registries.banks]);
 
+  const tickerData = useMemo(() => {
+    return filteredData
+      .map(a => {
+        const rate = exchangeRates[a.currency] || 1;
+        return {
+          name: a.ticker,
+          value: (a.marketValue || a.totalInvested) * rate
+        };
+      })
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10); // Top 10 assets
+  }, [filteredData, exchangeRates]);
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Filtros e Moeda Base */}
@@ -472,10 +681,6 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                   <span className="text-amber-500 font-bold ml-1">(Cache)</span>
                 )}
               </span>
-              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 border border-blue-100 rounded-full">
-                <span className="text-[9px] font-black text-blue-600 uppercase">Dólar:</span>
-                <span className="text-[10px] font-mono font-bold text-blue-700">R$ {exchangeRates['USD']?.toFixed(2)}</span>
-              </div>
             </div>
           )}
         </div>
@@ -512,34 +717,23 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-slate-400 uppercase">Moeda Base:</span>
-            <select
-              value={baseCurrency}
-              onChange={(e) => setBaseCurrency(e.target.value as Currency)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none"
+            <button
+              onClick={exportToExcel}
+              className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-all shadow-sm active:scale-95"
+              title="Exportar para Excel"
             >
-              <option value="BRL">BRL (R$)</option>
-              <option value="USD">USD ($)</option>
-              <option value="EUR">EUR (€)</option>
-            </select>
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Excel</span>
+            </button>
+            <button
+              onClick={exportToPDF}
+              className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-all shadow-sm active:scale-95"
+              title="Exportar para PDF"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">PDF</span>
+            </button>
           </div>
-
-          <button
-            onClick={fetchPrices}
-            disabled={loadingPrices}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm ${
-              loadingPrices 
-                ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
-                : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'
-            }`}
-          >
-            {loadingPrices ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="w-3.5 h-3.5" />
-            )}
-            {loadingPrices ? 'Atualizando...' : 'Atualizar Cotações'}
-          </button>
         </div>
       </div>
 
@@ -551,16 +745,34 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             <h4 className="text-sm font-bold text-amber-800">Nenhum Investimento Identificado</h4>
             <p className="text-xs text-amber-700 leading-relaxed">
               Para que um ativo apareça neste relatório, ele deve atender aos seguintes critérios:
-              <br />1. O <strong>Banco/Conta</strong> deve ser do tipo <strong>Investimento</strong> (ajuste no cadastro de Bancos).
-              <br />2. O <strong>Participante</strong> deve ter um <strong>Tipo</strong> preenchido (ex: Ação, Renda Fixa, CDB).
-              <br />Verifique seus cadastros e lançamentos para garantir que os campos estejam corretos.
+              <br />1. O <strong>Participante</strong> deve ter um <strong>Tipo</strong> preenchido no cadastro (ex: Ação, Renda Fixa, CDB).
+              <br />2. O lançamento deve estar com status <strong>Pago</strong>.
+              <br />3. Não deve ser uma transferência (lançamentos vinculados).
+              <br />Verifique seus cadastros de Participantes para garantir que o campo "Tipo" esteja preenchido.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Alerta se houver participantes sem tipo (mesmo que outros apareçam) */}
+      {performanceData.length > 0 && participantsMissingType.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl flex items-start gap-3 shadow-sm">
+          <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h4 className="text-sm font-bold text-blue-800">Participantes sem Tipo Identificado</h4>
+            <p className="text-xs text-blue-700 leading-relaxed">
+              Os seguintes participantes possuem lançamentos mas não aparecem no relatório porque não possuem um <strong>Tipo</strong> definido no cadastro:
+              <br />
+              <span className="font-semibold">{participantsMissingType.join(', ')}</span>
+              <br />
+              Vá em <strong>Cadastros &gt; Participantes</strong> e preencha o campo "Tipo" para incluí-los.
             </p>
           </div>
         </div>
       )}
 
       {/* Cards de Resumo */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-blue-50 rounded-lg">
@@ -571,6 +783,45 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           <div className="text-2xl font-bold text-slate-800">
             {formatCurrency(totals.invested / safeBaseRate, baseCurrency)}
           </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm group relative">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-amber-50 rounded-lg">
+              <WalletIcon className="w-5 h-5 text-amber-600" />
+            </div>
+            <span className="text-sm font-medium text-slate-500">Saldo em Conta</span>
+          </div>
+          <div className="text-2xl font-bold text-amber-600">
+            {formatCurrency(cashBalance / safeBaseRate, baseCurrency)}
+          </div>
+          
+          {/* Tooltip com detalhamento por banco se estiver em "Todos os Bancos" */}
+          {selectedBankId === 'ALL' && (
+            <div className="absolute top-full left-0 mt-2 w-64 p-4 bg-slate-800 text-white text-[10px] rounded-xl opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none shadow-xl border border-white/10">
+              <div className="font-bold mb-2 border-b border-white/10 pb-1 uppercase tracking-wider">Saldo por Instituição</div>
+              <div className="space-y-1.5">
+                {registries.banks.map(bank => {
+                  const balance = transactions
+                    .filter(t => t.status === 'PAID' && t.bankId === bank.id && (selectedWalletId === 'ALL' || t.walletId === selectedWalletId))
+                    .reduce((acc, t) => {
+                      const rateToBRL = (bank.currency === 'BRL') ? 1 : (t.exchangeRate || exchangeRates[bank.currency] || 1);
+                      const valueInBRL = t.value * rateToBRL;
+                      return acc + (t.type === 'CREDIT' ? valueInBRL : -valueInBRL);
+                    }, 0);
+                  
+                  if (Math.abs(balance) < 0.01) return null;
+
+                  return (
+                    <div key={bank.id} className="flex justify-between items-center">
+                      <span className="text-slate-300 truncate mr-2">{bank.name}</span>
+                      <span className="font-mono font-bold">{formatCurrency(balance / safeBaseRate, baseCurrency)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -602,30 +853,66 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             <div className="p-2 bg-slate-50 rounded-lg">
               {totals.profit >= 0 ? <TrendingUp className="w-5 h-5 text-emerald-600" /> : <TrendingDown className="w-5 h-5 text-red-600" />}
             </div>
-            <span className="text-sm font-medium text-slate-500">Lucro/Prejuízo Total</span>
+            <span className="text-sm font-medium text-slate-500">Lucro Total</span>
           </div>
           <div className={`text-2xl font-bold ${totals.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
             {formatCurrency(totals.profit / safeBaseRate, baseCurrency)}
           </div>
         </div>
+
+        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-6 rounded-2xl border border-blue-500 shadow-lg relative overflow-hidden group cursor-pointer active:scale-95 transition-all"
+             onClick={getAiSuggestions}>
+          <div className="absolute -right-4 -top-4 opacity-10 group-hover:scale-110 transition-transform">
+            <Brain className="w-24 h-24 text-white" />
+          </div>
+          <div className="relative z-10">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
+                <Brain className={`w-5 h-5 text-white ${loadingSuggestions ? 'animate-pulse' : ''}`} />
+              </div>
+              <span className="text-sm font-medium text-blue-50">Insights da IA</span>
+            </div>
+            <div className="text-lg font-bold text-white flex items-center gap-2">
+              {loadingSuggestions ? 'Analisando...' : 'Gerar Sugestões'}
+              {!loadingSuggestions && <ArrowUpRight className="w-4 h-4" />}
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Gráfico de Alocação */}
+      {/* Navegação por Abas */}
+      <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl w-fit">
+        {['TUDO', 'AÇÕES', 'FIIS', 'RENDA FIXA', 'OUTROS'].map(tab => (
+          <button
+            key={tab}
+            onClick={() => setSelectedTab(tab)}
+            className={`px-4 py-2 text-[10px] font-black rounded-lg transition-all ${
+              selectedTab === tab 
+                ? 'bg-white text-blue-600 shadow-sm' 
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Gráfico de Alocação por Tipo */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <h3 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2 uppercase tracking-wider">
             <PieChartIcon className="w-4 h-4 text-blue-600" />
             Por Tipo
           </h3>
-          <div className="h-[200px]">
+          <div className="h-[150px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={allocationData}
                   cx="50%"
                   cy="50%"
-                  innerRadius={40}
-                  outerRadius={60}
+                  innerRadius={35}
+                  outerRadius={55}
                   paddingAngle={5}
                   dataKey="value"
                 >
@@ -640,11 +927,99 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
               </PieChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-4 space-y-1">
+          <div className="mt-4 space-y-1 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
             {allocationData.map((entry, index) => (
               <div key={entry.name} className="flex items-center justify-between text-[10px]">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                  <span className="text-slate-600">{entry.name}</span>
+                </div>
+                <span className="font-bold text-slate-800">
+                  {((entry.value / (totals.market || totals.invested)) * 100).toFixed(1)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Gráfico de Alocação por Setor */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2 uppercase tracking-wider">
+            <PieChartIcon className="w-4 h-4 text-indigo-600" />
+            Por Setor
+          </h3>
+          <div className="h-[150px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={sectorData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={35}
+                  outerRadius={55}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {sectorData.map((entry, index) => (
+                    <Cell key={`cell-sector-${index}`} fill={COLORS[(index + 3) % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  formatter={(value: number) => formatCurrency(value / safeBaseRate, baseCurrency)}
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-4 space-y-1 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
+            {sectorData.map((entry, index) => (
+              <div key={entry.name} className="flex items-center justify-between text-[10px]">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[(index + 3) % COLORS.length] }}></div>
+                  <span className="text-slate-600">{entry.name}</span>
+                </div>
+                <span className="font-bold text-slate-800">
+                  {((entry.value / (totals.market || totals.invested)) * 100).toFixed(1)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Gráfico de Alocação por Ativo (Ticker) */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2 uppercase tracking-wider">
+            <PieChartIcon className="w-4 h-4 text-emerald-600" />
+            Por Ativo
+          </h3>
+          <div className="h-[150px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={tickerData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={35}
+                  outerRadius={55}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {tickerData.map((entry, index) => (
+                    <Cell key={`cell-ticker-${index}`} fill={COLORS[(index + 5) % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  formatter={(value: number) => formatCurrency(value / safeBaseRate, baseCurrency)}
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-4 space-y-1 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
+            {tickerData.map((entry, index) => (
+              <div key={entry.name} className="flex items-center justify-between text-[10px]">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[(index + 5) % COLORS.length] }}></div>
                   <span className="text-slate-600">{entry.name}</span>
                 </div>
                 <span className="font-bold text-slate-800">
@@ -661,20 +1036,20 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             <DollarSign className="w-4 h-4 text-emerald-600" />
             Por Instituição
           </h3>
-          <div className="h-[200px]">
+          <div className="h-[150px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={institutionData}
                   cx="50%"
                   cy="50%"
-                  innerRadius={40}
-                  outerRadius={60}
+                  innerRadius={35}
+                  outerRadius={55}
                   paddingAngle={5}
                   dataKey="value"
                 >
                   {institutionData.map((entry, index) => (
-                    <Cell key={`cell-inst-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                    <Cell key={`cell-inst-${index}`} fill={COLORS[(index + 6) % COLORS.length]} />
                   ))}
                 </Pie>
                 <Tooltip 
@@ -684,11 +1059,11 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
               </PieChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-4 space-y-1">
+          <div className="mt-4 space-y-1 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
             {institutionData.map((entry, index) => (
               <div key={entry.name} className="flex items-center justify-between text-[10px]">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[(index + 2) % COLORS.length] }}></div>
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[(index + 6) % COLORS.length] }}></div>
                   <span className="text-slate-600">{entry.name}</span>
                 </div>
                 <span className="font-bold text-slate-800">
@@ -698,7 +1073,6 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             ))}
           </div>
         </div>
-
       </div>
 
       {/* Tabela de Ativos */}
@@ -719,23 +1093,6 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                   className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                 />
               </div>
-              <button 
-                onClick={getAiSuggestions}
-                disabled={loadingSuggestions || performanceData.length === 0}
-                className="p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors disabled:opacity-50 flex items-center gap-2"
-                title="Obter Sugestões de IA"
-              >
-                <Brain className={`w-5 h-5 ${loadingSuggestions ? 'animate-pulse' : ''}`} />
-                <span className="text-xs font-bold hidden sm:inline">Sugestões IA</span>
-              </button>
-              <button 
-                onClick={fetchPrices}
-                disabled={loadingPrices}
-                className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-50"
-                title="Atualizar Cotações"
-              >
-                <RefreshCw className={`w-5 h-5 ${loadingPrices ? 'animate-spin' : ''}`} />
-              </button>
             </div>
           </div>
 
@@ -779,133 +1136,161 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {filteredData.map((asset) => {
-                  const suggestion = getSuggestion(asset);
-                  const baseRate = exchangeRates[baseCurrency] || 1;
-                  const assetRate = exchangeRates[asset.currency] || 1;
-                  
-                  // Conversão para a Moeda Base selecionada (Dólar do dia)
-                  const avgPriceDisplay = (asset.averagePrice * assetRate) / baseRate;
-                  const lastPriceDisplay = (asset.lastPrice || 0) * assetRate / baseRate;
-                  const targetPriceDisplay = (asset.targetPrice || 0) * assetRate / baseRate;
-                  const totalInvestedDisplay = (asset.totalInvested * assetRate) / baseRate;
-                  const marketValueDisplay = asset.lastPrice ? (asset.currentQuantity * lastPriceDisplay) : 0;
-                  const profitDisplay = asset.lastPrice ? (marketValueDisplay - totalInvestedDisplay) : 0;
-                  const totalReceivedDisplay = (asset.totalReceived * assetRate) / baseRate;
-
-                  return (
-                    <tr 
-                      key={asset.participantId} 
-                      className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
-                      onClick={() => setDetailAsset(asset)}
-                    >
-                      <td className="p-4 sticky left-0 bg-white group-hover:bg-slate-50/50 z-10">
-                        <div className="flex flex-col">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-bold text-slate-800">{asset.ticker}</span>
-                          </div>
-                          <span className="text-[10px] text-slate-400 truncate max-w-[150px]">{asset.name.split('-')[1]?.trim() || asset.name}</span>
-                        </div>
-                      </td>
-                      <td className="p-4 text-sm text-slate-600 text-right font-mono">{formatValue(asset.currentQuantity, 8)}</td>
+                {Object.entries(groupedData).map(([category, assets]) => (
+                  <React.Fragment key={category}>
+                    {selectedTab === 'TUDO' && (
+                      <tr className="bg-slate-50/80">
+                        <td colSpan={10} className="px-4 py-2 text-[10px] font-black text-slate-500 uppercase tracking-widest border-y border-slate-100">
+                          {category}
+                        </td>
+                      </tr>
+                    )}
+                    {assets.map((asset) => {
+                      const suggestion = getSuggestion(asset);
+                      const baseRate = exchangeRates[baseCurrency] || 1;
+                      const assetRate = exchangeRates[asset.currency] || 1;
                       
-                      <td className="p-4 text-sm text-blue-600 text-right font-mono border-l border-slate-100">{formatValue(avgPriceDisplay, 4)}</td>
-                      
-                      <td className="p-4 text-right border-l border-slate-100">
-                        {asset.lastPrice ? (
-                          <div className="flex flex-col items-end">
-                            <span className="text-sm font-bold text-slate-800 font-mono">{formatValue(lastPriceDisplay, 4)}</span>
-                            <span className={`text-[10px] font-bold flex items-center gap-0.5 ${asset.variation! >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                              {asset.variation! >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                              {Math.abs(asset.variation!).toFixed(2)}%
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-300 italic">N/A</span>
-                        )}
-                      </td>
+                      // Conversão para a Moeda Base selecionada (Dólar do dia)
+                      const avgPriceDisplay = (asset.averagePrice * assetRate) / baseRate;
+                      const lastPriceDisplay = (asset.lastPrice || 0) * assetRate / baseRate;
+                      const targetPriceDisplay = (asset.targetPrice || 0) * assetRate / baseRate;
+                      const totalInvestedDisplay = (asset.totalInvested * assetRate) / baseRate;
+                      const marketValueDisplay = asset.lastPrice ? (asset.currentQuantity * lastPriceDisplay) : 0;
+                      const profitDisplay = asset.lastPrice ? (marketValueDisplay - totalInvestedDisplay) : 0;
+                      const totalReceivedDisplay = (asset.totalReceived * assetRate) / baseRate;
 
-                      <td className="p-4 text-right border-l border-slate-100" onClick={(e) => e.stopPropagation()}>
-                        {editingTargetId === asset.participantId ? (
-                          <div className="flex items-center justify-end gap-1">
-                            <input 
-                              autoFocus
-                              type="text"
-                              value={tempTargetPrice}
-                              onChange={(e) => setTempTargetPrice(e.target.value)}
-                              onBlur={() => {
-                                // Small delay to allow clicking the check button
-                                setTimeout(() => setEditingTargetId(null), 200);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveTargetPrice(asset);
-                                if (e.key === 'Escape') setEditingTargetId(null);
-                              }}
-                              className="w-20 px-2 py-1 bg-white border border-amber-300 rounded text-xs font-mono text-right outline-none focus:ring-2 focus:ring-amber-500"
-                            />
-                            <button 
-                              onMouseDown={(e) => e.preventDefault()} // Prevent blur before click
-                              onClick={() => handleSaveTargetPrice(asset)}
-                              disabled={isSavingTarget}
-                              className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
-                            >
-                              {isSavingTarget ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                            </button>
-                          </div>
-                        ) : (
-                          <div 
-                            className="flex flex-col items-end group/target cursor-pointer"
-                            onClick={() => {
-                              setEditingTargetId(asset.participantId);
-                              setTempTargetPrice(asset.targetPrice ? asset.targetPrice.toString() : '');
-                            }}
-                          >
-                            <div className="flex items-center gap-1">
-                              <span className={`text-sm font-bold font-mono ${asset.targetPrice ? 'text-amber-600' : 'text-slate-300 italic'}`}>
-                                {asset.targetPrice ? formatValue(targetPriceDisplay, 4) : 'Definir'}
-                              </span>
-                              <Edit2 className="w-2.5 h-2.5 text-slate-300 opacity-0 group-hover/target:opacity-100 transition-opacity" />
+                      return (
+                        <tr 
+                          key={asset.participantId} 
+                          className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
+                          onClick={() => setDetailAsset(asset)}
+                        >
+                          <td className="p-4 sticky left-0 bg-white group-hover:bg-slate-50/50 z-10">
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-bold text-slate-800">{asset.ticker}</span>
+                              </div>
+                              <span className="text-[10px] text-slate-400 truncate max-w-[150px]">{asset.name.split('-')[1]?.trim() || asset.name}</span>
                             </div>
-                            {asset.targetPrice && asset.lastPrice && (
-                              <span className={`text-[9px] font-black px-1 rounded ${
-                                Math.abs(asset.lastPrice - asset.targetPrice) / asset.targetPrice < 0.05 
-                                  ? 'bg-amber-500 text-white animate-pulse' 
-                                  : 'text-slate-400'
-                              }`}>
-                                {Math.abs(1 - asset.lastPrice / asset.targetPrice) < 0.05 ? 'ALVO PRÓXIMO' : `${(Math.abs(1 - asset.lastPrice / asset.targetPrice) * 100).toFixed(0)}% p/ Alvo`}
-                              </span>
+                          </td>
+                          <td className="p-4 text-sm text-slate-600 text-right font-mono">{formatValue(asset.currentQuantity, 8)}</td>
+                          
+                          <td className="p-4 text-sm text-blue-600 text-right font-mono border-l border-slate-100">{formatValue(avgPriceDisplay, 2)}</td>
+                          
+                          <td className="p-4 text-right border-l border-slate-100">
+                            {asset.lastPrice ? (
+                              <div className="flex flex-col items-end">
+                                <span className="text-sm font-bold text-slate-800 font-mono">{formatValue(lastPriceDisplay, 2)}</span>
+                                <span className={`text-[10px] font-bold flex items-center gap-0.5 ${asset.variation! >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                  {asset.variation! >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                                  {Math.abs(asset.variation!).toFixed(2)}%
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-slate-300 italic">N/A</span>
                             )}
-                          </div>
-                        )}
-                      </td>
+                          </td>
 
-                      <td className="p-4 text-sm text-blue-600 text-right font-mono border-l border-slate-100">{formatValue(totalInvestedDisplay, 2)}</td>
-                      <td className="p-4 text-sm text-emerald-600 text-right font-mono">
-                        {asset.lastPrice ? formatValue(marketValueDisplay, 2) : '---'}
-                      </td>
-                      
-                      <td className="p-4 text-right border-l border-slate-100">
-                        <div className="flex flex-col items-end">
-                          <span className={`text-sm font-bold font-mono ${profitDisplay >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {asset.lastPrice ? formatValue(profitDisplay, 2) : '---'}
-                          </span>
-                          <span className="text-[10px] text-slate-400">
-                            Prov. Líq: {formatValue(totalReceivedDisplay, 2)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="p-4 text-center">
-                        {suggestion && (
-                          <div className="flex flex-col items-center gap-1">
-                            <span className={`text-[9px] font-black px-2 py-1 rounded-full uppercase tracking-tighter ${suggestion.color}`}>
-                              {suggestion.text}
-                            </span>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                          <td className="p-4 text-right border-l border-slate-100" onClick={(e) => e.stopPropagation()}>
+                            {editingTargetId === asset.participantId ? (
+                              <div className="flex items-center justify-end gap-1">
+                                <input 
+                                  autoFocus
+                                  type="text"
+                                  value={tempTargetPrice}
+                                  onChange={(e) => setTempTargetPrice(e.target.value)}
+                                  onBlur={() => {
+                                    // Small delay to allow clicking the check button
+                                    setTimeout(() => setEditingTargetId(null), 200);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveTargetPrice(asset);
+                                    if (e.key === 'Escape') setEditingTargetId(null);
+                                  }}
+                                  className="w-20 px-2 py-1 bg-white border border-amber-300 rounded text-xs font-mono text-right outline-none focus:ring-2 focus:ring-amber-500"
+                                />
+                                <button 
+                                  onMouseDown={(e) => e.preventDefault()} // Prevent blur before click
+                                  onClick={() => handleSaveTargetPrice(asset)}
+                                  disabled={isSavingTarget}
+                                  className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
+                                >
+                                  {isSavingTarget ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                                </button>
+                              </div>
+                            ) : (
+                              <div 
+                                className="flex flex-col items-end group/target cursor-pointer"
+                                onClick={() => {
+                                  setEditingTargetId(asset.participantId);
+                                  setTempTargetPrice(asset.targetPrice ? asset.targetPrice.toString() : '');
+                                }}
+                              >
+                                <div className="flex items-center gap-1">
+                                  <span className={`text-sm font-bold font-mono ${asset.targetPrice ? 'text-amber-600' : 'text-slate-300 italic'}`}>
+                                    {asset.targetPrice ? formatValue(targetPriceDisplay, 2) : 'Definir'}
+                                  </span>
+                                  <Edit2 className="w-2.5 h-2.5 text-slate-300 transition-opacity" />
+                                </div>
+                                {asset.targetPrice && asset.lastPrice && (
+                                  <span className={`text-[9px] font-black px-1 rounded ${
+                                    Math.abs(asset.lastPrice - asset.targetPrice) / asset.targetPrice < 0.05 
+                                      ? 'bg-amber-500 text-white animate-pulse' 
+                                      : 'text-slate-400'
+                                  }`}>
+                                    {Math.abs(1 - asset.lastPrice / asset.targetPrice) < 0.05 ? 'ALVO PRÓXIMO' : `${(Math.abs(1 - asset.lastPrice / asset.targetPrice) * 100).toFixed(0)}% p/ Alvo`}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="p-4 text-sm text-blue-600 text-right font-mono border-l border-slate-100">{formatValue(totalInvestedDisplay, 2)}</td>
+                          <td className="p-4 text-sm text-emerald-600 text-right font-mono">
+                            {asset.lastPrice ? formatValue(marketValueDisplay, 2) : '---'}
+                          </td>
+                          
+                          <td className="p-4 text-right border-l border-slate-100">
+                            <div className="flex flex-col items-end">
+                              <span className={`text-sm font-bold font-mono ${profitDisplay >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {asset.lastPrice ? formatValue(profitDisplay, 2) : '---'}
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                Prov. Líq: {formatValue(totalReceivedDisplay, 2)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-4 text-center">
+                            {suggestion && (
+                              <div className="flex flex-col items-center gap-1 group/sug relative">
+                                <span className={`text-[9px] font-black px-2 py-1 rounded-full uppercase tracking-tighter ${suggestion.color}`}>
+                                  {suggestion.text}
+                                </span>
+                                {suggestion.reason && (
+                                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-2 bg-slate-800 text-white text-[10px] rounded-lg opacity-0 group-hover/sug:opacity-100 transition-opacity z-50 pointer-events-none shadow-xl">
+                                    <div className="font-bold mb-1 flex items-center gap-1">
+                                      <Brain className="w-3 h-3" /> Insight da IA
+                                    </div>
+                                    {suggestion.reason}
+                                    {suggestion.risk && (
+                                      <div className="mt-1 pt-1 border-t border-white/10 flex justify-between">
+                                        <span>Risco:</span>
+                                        <span className={
+                                          suggestion.risk === 'HIGH' ? 'text-red-400' :
+                                          suggestion.risk === 'MEDIUM' ? 'text-amber-400' : 'text-emerald-400'
+                                        }>{suggestion.risk}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
                 {filteredData.length === 0 && (
                   <tr>
                     <td colSpan={10} className="p-12 text-center text-slate-400 italic text-sm">
@@ -962,12 +1347,44 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {detailAsset.transactions
+                    .filter(t => {
+                      const category = registries.categories.find(c => c.id === t.categoryId);
+                      const categoryName = category?.name.toLowerCase() || '';
+                      const description = t.description.toLowerCase();
+                      
+                      const isProvento = 
+                        categoryName.includes('provento') || 
+                        categoryName.includes('divid') || 
+                        categoryName.includes('jcp') || 
+                        categoryName.includes('rendimento') ||
+                        description.includes('divid') || 
+                        description.includes('jcp') || 
+                        description.includes('rendimento') ||
+                        description.includes('aluguel') ||
+                        description.includes('yield');
+                      
+                      const isTaxOrFee = 
+                        categoryName.includes('imposto') || 
+                        categoryName.includes('taxa') || 
+                        categoryName.includes('tarifa') ||
+                        categoryName.includes('tax') || 
+                        categoryName.includes('fee') ||
+                        description.includes('tax') || 
+                        description.includes('fee') || 
+                        description.includes('iof') || 
+                        description.includes('irrf') ||
+                        description.includes('imposto') ||
+                        description.includes('wht') ||
+                        description.includes('withholding');
+                      
+                      const isDebitWithoutQty = t.type === 'DEBIT' && (!t.quantity || t.quantity <= 0);
+                      
+                      // Filtra para remover proventos e impostos/taxas do detalhamento
+                      return !isProvento && !isTaxOrFee && !isDebitWithoutQty;
+                    })
                     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                     .map((t) => {
                       const bank = registries.banks.find(b => b.id === t.bankId);
-                      const isDividend = t.description.toLowerCase().includes('divid') || 
-                                        t.description.toLowerCase().includes('jcp') || 
-                                        t.description.toLowerCase().includes('rendimento');
                       
                       return (
                         <tr key={t.id} className="hover:bg-slate-50 transition-colors">
@@ -976,10 +1393,9 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                           </td>
                           <td className="py-4">
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                              isDividend ? 'bg-purple-50 text-purple-600' :
                               t.type === 'DEBIT' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
                             }`}>
-                              {isDividend ? 'Provento' : t.type === 'DEBIT' ? 'Compra' : 'Venda'}
+                              {t.type === 'DEBIT' ? 'Compra' : 'Venda'}
                             </span>
                           </td>
                           <td className="py-4 text-sm text-slate-600">
@@ -1006,10 +1422,6 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                 <div className="flex flex-col">
                   <span className="text-[10px] font-bold text-slate-400 uppercase">Total Investido</span>
                   <span className="text-sm font-bold text-slate-800">{formatCurrency(detailAsset.totalInvested, detailAsset.currency)}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Total Recebido</span>
-                  <span className="text-sm font-bold text-emerald-600">{formatCurrency(detailAsset.totalReceived, detailAsset.currency)}</span>
                 </div>
               </div>
               <button 
