@@ -93,23 +93,25 @@ export const geminiService = {
 
     try {
       const ai = getAi();
-      if (!ai) throw new Error("Gemini API Key missing");
+      if (!ai) {
+        console.error("ERRO: GEMINI_API_KEY não encontrada. Verifique as variáveis de ambiente no Vercel.");
+        throw new Error("Gemini API Key missing");
+      }
       const prompt = `Forneça o preço de fechamento mais recente (ou cotação atual) para os seguintes ativos: ${tickers.join(', ')}. 
       Use o Google Finance como fonte principal para garantir a precisão dos valores de HOJE.
       Retorne APENAS um objeto JSON onde as chaves são os tickers e os valores são os preços numéricos. 
       Exemplo: {"PETR4": 36.50, "AAPL": 185.40}`;
 
-      const model = ai.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        generationConfig: { responseMimeType: "application/json" }
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        tools: [{ googleSearch: {} }],
+        config: {
+          responseMimeType: "application/json"
+        }
       });
 
-      const response = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        tools: [{ googleSearchRetrieval: {} } as any]
-      });
-
-      const text = response.response.text();
+      const text = response.text;
       if (text) {
         try {
           const cleanedText = text.replace(/```json|```/g, '').trim();
@@ -156,7 +158,8 @@ export const geminiService = {
 
     const result: Record<string, number> = {};
     tickers.forEach(t => {
-      result[t] = mockPrices[t] || (10 + Math.random() * 90);
+      // Se falhar, retorna 0 ou o preço do mock se existir, mas sem random para não confundir
+      result[t] = mockPrices[t] || 0;
     });
 
     return { prices: result, timestamp: Date.now() };
@@ -174,17 +177,16 @@ export const geminiService = {
       
       Retorne um array de objetos JSON com: ticker, action, reason (em português), riskLevel (LOW, MEDIUM, HIGH).`;
 
-      const model = ai.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        generationConfig: { responseMimeType: "application/json" }
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        tools: [{ googleSearch: {} }],
+        config: {
+          responseMimeType: "application/json"
+        }
       });
 
-      const response = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        tools: [{ googleSearchRetrieval: {} } as any]
-      });
-
-      const text = response.response.text();
+      const text = response.text;
       if (text) {
         try {
           const cleanedText = text.replace(/```json|```/g, '').trim();
@@ -225,17 +227,16 @@ export const geminiService = {
       Retorne APENAS um objeto JSON com as taxas de câmbio onde 1 unidade da moeda estrangeira vale X Reais.
       Exemplo: {"BRL": 1, "USD": 5.15, "EUR": 5.55, "GBP": 6.45}.`;
 
-      const model = ai.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        generationConfig: { responseMimeType: "application/json" }
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        tools: [{ googleSearch: {} }],
+        config: {
+          responseMimeType: "application/json"
+        }
       });
 
-      const response = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        tools: [{ googleSearchRetrieval: {} } as any]
-      });
-
-      const text = response.response.text();
+      const text = response.text;
       if (text) {
         try {
           const cleanedText = text.replace(/```json|```/g, '').trim();
