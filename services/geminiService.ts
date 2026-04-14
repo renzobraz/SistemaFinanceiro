@@ -5,9 +5,11 @@ let aiInstance: any = null;
 
 function getAi() {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    // Tenta primeiro o padrão do Vite (Vercel) e depois o padrão do Node
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    
     if (!apiKey || apiKey === 'undefined' || apiKey === '') {
-      console.warn("GEMINI_API_KEY is not defined. AI features will be disabled.");
+      console.warn("GEMINI_API_KEY ou VITE_GEMINI_API_KEY não definida. Recursos de IA desativados.");
       return null;
     }
     if (!aiInstance) {

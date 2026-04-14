@@ -21,7 +21,11 @@ import {
   Clock,
   FileDown,
   FileSpreadsheet,
-  Wallet as WalletIcon
+  Wallet as WalletIcon,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
+  Filter
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -98,6 +102,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   const [detailAsset, setDetailAsset] = useState<AssetPerformance | null>(null);
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
   const [selectedTab, setSelectedTab] = useState('TUDO');
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [sectorFilter, setSectorFilter] = useState<string>('ALL');
   
   const baseCurrency = useMemo(() => {
     if (selectedBankId === 'ALL') return 'BRL';
@@ -326,7 +332,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     return result.sort((a, b) => (b.marketValue || b.totalInvested) - (a.marketValue || a.totalInvested));
   }, [transactions, registries.participants, registries.categories, registries.wallets, prices, exchangeRates, selectedBankId, selectedWalletId]);
 
-  const fetchPrices = async () => {
+  const fetchPrices = async (force: boolean = false) => {
     const tickers = performanceData
       .filter(a => a.currentQuantity > 0)
       .map(a => a.ticker)
@@ -334,14 +340,15 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
 
     if (tickers.length === 0) return;
 
+    setLoadingPrices(true);
     try {
       // Usar geminiService (que agora está mockado para dados locais)
-      const { prices: newPrices, timestamp: priceTime } = await geminiService.fetchAssetPrices(tickers, true);
+      const { prices: newPrices, timestamp: priceTime } = await geminiService.fetchAssetPrices(tickers, force);
       setPrices(prev => ({ ...prev, ...newPrices }));
       setLastUpdate(priceTime);
 
       // Atualizar taxas de câmbio
-      const { rates, timestamp: rateTime } = await geminiService.getExchangeRates(true);
+      const { rates, timestamp: rateTime } = await geminiService.getExchangeRates(force);
       setExchangeRates(prev => ({ ...prev, ...rates }));
       if (!lastUpdate || rateTime > lastUpdate) setLastUpdate(rateTime);
 
@@ -547,21 +554,46 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     return { text: 'MANTER', color: 'text-slate-500 bg-slate-50' };
   };
 
+  const sectors = useMemo(() => {
+    const s = new Set<string>();
+    performanceData.forEach(a => s.add(a.sector));
+    return Array.from(s).sort();
+  }, [performanceData]);
+
   // Totais convertidos para a moeda base
-  const filteredData = performanceData.filter(a => {
-    const matchesSearch = a.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         a.ticker.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    if (selectedTab === 'TUDO') return matchesSearch;
-    
-    const cat = a.category.toUpperCase();
-    if (selectedTab === 'AÇÕES') return matchesSearch && (cat.includes('AÇÃO') || cat.includes('ACAO') || cat.includes('STOCK'));
-    if (selectedTab === 'FIIS') return matchesSearch && (cat.includes('FII') || cat.includes('IMOBILIARIO'));
-    if (selectedTab === 'RENDA FIXA') return matchesSearch && (cat.includes('FIXA') || cat.includes('CDB') || cat.includes('TESOURO') || cat.includes('LCI') || cat.includes('LCA'));
-    if (selectedTab === 'OUTROS') return matchesSearch && !['AÇÃO', 'ACAO', 'STOCK', 'FII', 'IMOBILIARIO', 'FIXA', 'CDB', 'TESOURO', 'LCI', 'LCA'].some(k => cat.includes(k));
-    
-    return matchesSearch;
-  });
+  const filteredData = useMemo(() => {
+    let data = performanceData.filter(a => {
+      const matchesSearch = a.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                           a.ticker.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesSector = sectorFilter === 'ALL' || a.sector === sectorFilter;
+      
+      if (!matchesSearch || !matchesSector) return false;
+      
+      if (selectedTab === 'TUDO') return true;
+      
+      const cat = a.category.toUpperCase();
+      if (selectedTab === 'AÇÕES') return (cat.includes('AÇÃO') || cat.includes('ACAO') || cat.includes('STOCK'));
+      if (selectedTab === 'FIIS') return (cat.includes('FII') || cat.includes('IMOBILIARIO'));
+      if (selectedTab === 'RENDA FIXA') return (cat.includes('FIXA') || cat.includes('CDB') || cat.includes('TESOURO') || cat.includes('LCI') || cat.includes('LCA'));
+      if (selectedTab === 'OUTROS') return !['AÇÃO', 'ACAO', 'STOCK', 'FII', 'IMOBILIARIO', 'FIXA', 'CDB', 'TESOURO', 'LCI', 'LCA'].some(k => cat.includes(k));
+      
+      return true;
+    });
+
+    if (sortConfig) {
+      data = [...data].sort((a, b) => {
+        let aValue: any = a[sortConfig.key as keyof AssetPerformance];
+        let bValue: any = b[sortConfig.key as keyof AssetPerformance];
+
+        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return data;
+  }, [performanceData, searchTerm, selectedTab, sortConfig, sectorFilter]);
 
   const groupedData = useMemo(() => {
     const groups: Record<string, AssetPerformance[]> = {};
@@ -681,6 +713,14 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                   <span className="text-amber-500 font-bold ml-1">(Cache)</span>
                 )}
               </span>
+              <button 
+                onClick={() => fetchPrices(true)}
+                disabled={loadingPrices}
+                className={`p-1.5 rounded-lg transition-all ${loadingPrices ? 'bg-slate-100 text-slate-400' : 'bg-blue-50 text-blue-600 hover:bg-blue-100 active:scale-95'}`}
+                title="Atualizar Cotações Agora"
+              >
+                <RefreshCw className={`w-3 h-3 ${loadingPrices ? 'animate-spin' : ''}`} />
+              </button>
             </div>
           )}
         </div>
@@ -1082,7 +1122,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
               <Activity className="w-5 h-5 text-blue-600" />
               Performance por Ativo
             </h3>
-            <div className="flex gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
               <div className="relative flex-1 sm:w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input 
@@ -1093,16 +1133,31 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                   className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                 />
               </div>
+
+              <div className="relative">
+                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <select
+                  value={sectorFilter}
+                  onChange={(e) => setSectorFilter(e.target.value)}
+                  className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer"
+                >
+                  <option value="ALL">Todos os Setores</option>
+                  {sectors.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
           <div className="overflow-x-auto flex-1">
-            <table className="w-full text-left border-collapse min-w-[1000px]">
+            <table className="w-full text-left border-collapse min-w-[1100px]">
               <thead>
                 {/* Linha de Totais Acima do Cabeçalho */}
                 {filteredData.length > 0 && (
                   <tr className="bg-blue-50/30 border-b border-blue-100">
-                    <td className="p-4 text-[10px] font-black text-blue-800 uppercase tracking-wider">TOTAIS ({baseCurrency})</td>
+                    <td className="p-4 text-[10px] font-black text-blue-800 uppercase tracking-wider uppercase tracking-wider sticky left-0 bg-blue-50/30 z-10">TOTAIS ({baseCurrency})</td>
+                    <td className="p-4"></td>
                     <td className="p-4"></td>
                     <td className="p-4 border-l border-slate-100"></td>
                     <td className="p-4 border-l border-slate-100"></td>
@@ -1124,14 +1179,87 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                   </tr>
                 )}
                 <tr className="bg-slate-50/50">
-                  <th className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider sticky left-0 bg-slate-50/50 z-10">Ativo</th>
-                  <th className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right">Qtd</th>
-                  <th className="p-4 text-[10px] font-bold text-blue-500 uppercase tracking-wider text-right border-l border-slate-200">P. Médio Compra ({baseCurrency})</th>
-                  <th className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right border-l border-slate-200">Cotação Atual ({baseCurrency})</th>
-                  <th className="p-4 text-[10px] font-bold text-amber-600 uppercase tracking-wider text-right border-l border-slate-200">Preço Alvo ({baseCurrency})</th>
-                  <th className="p-4 text-[10px] font-bold text-blue-600 uppercase tracking-wider text-right border-l border-slate-200">Total Compra ({baseCurrency})</th>
-                  <th className="p-4 text-[10px] font-bold text-emerald-600 uppercase tracking-wider text-right">Total Atual ({baseCurrency})</th>
-                  <th className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right border-l border-slate-200">Resultado ({baseCurrency})</th>
+                  <th 
+                    className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider sticky left-0 bg-slate-50/50 z-10 cursor-pointer hover:bg-slate-100 transition-colors"
+                    onClick={() => setSortConfig(prev => ({ key: 'ticker', direction: prev?.key === 'ticker' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    <div className="flex items-center gap-1">
+                      Ativo
+                      {sortConfig?.key === 'ticker' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors"
+                    onClick={() => setSortConfig(prev => ({ key: 'sector', direction: prev?.key === 'sector' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    <div className="flex items-center gap-1">
+                      Setor
+                      {sortConfig?.key === 'sector' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right cursor-pointer hover:bg-slate-100 transition-colors"
+                    onClick={() => setSortConfig(prev => ({ key: 'currentQuantity', direction: prev?.key === 'currentQuantity' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      Qtd
+                      {sortConfig?.key === 'currentQuantity' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 text-[10px] font-bold text-blue-500 uppercase tracking-wider text-right border-l border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
+                    onClick={() => setSortConfig(prev => ({ key: 'averagePrice', direction: prev?.key === 'averagePrice' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      P. Médio Compra
+                      {sortConfig?.key === 'averagePrice' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right border-l border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
+                    onClick={() => setSortConfig(prev => ({ key: 'lastPrice', direction: prev?.key === 'lastPrice' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      Cotação Atual
+                      {sortConfig?.key === 'lastPrice' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 text-[10px] font-bold text-amber-600 uppercase tracking-wider text-right border-l border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
+                    onClick={() => setSortConfig(prev => ({ key: 'targetPrice', direction: prev?.key === 'targetPrice' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      Preço Alvo
+                      {sortConfig?.key === 'targetPrice' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 text-[10px] font-bold text-blue-600 uppercase tracking-wider text-right border-l border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
+                    onClick={() => setSortConfig(prev => ({ key: 'totalInvested', direction: prev?.key === 'totalInvested' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      Total Compra
+                      {sortConfig?.key === 'totalInvested' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 text-[10px] font-bold text-emerald-600 uppercase tracking-wider text-right cursor-pointer hover:bg-slate-100 transition-colors"
+                    onClick={() => setSortConfig(prev => ({ key: 'marketValue', direction: prev?.key === 'marketValue' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      Total Atual
+                      {sortConfig?.key === 'marketValue' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right border-l border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
+                    onClick={() => setSortConfig(prev => ({ key: 'profit', direction: prev?.key === 'profit' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      Resultado
+                      {sortConfig?.key === 'profit' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  </th>
                   <th className="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Sugestão</th>
                 </tr>
               </thead>
@@ -1172,6 +1300,11 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                               </div>
                               <span className="text-[10px] text-slate-400 truncate max-w-[150px]">{asset.name.split('-')[1]?.trim() || asset.name}</span>
                             </div>
+                          </td>
+                          <td className="p-4">
+                            <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full uppercase">
+                              {asset.sector}
+                            </span>
                           </td>
                           <td className="p-4 text-sm text-slate-600 text-right font-mono">{formatValue(asset.currentQuantity, 8)}</td>
                           
