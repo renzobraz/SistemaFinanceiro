@@ -99,16 +99,17 @@ export const geminiService = {
       Retorne APENAS um objeto JSON onde as chaves são os tickers e os valores são os preços numéricos. 
       Exemplo: {"PETR4": 36.50, "AAPL": 185.40}`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json"
-        }
+      const model = ai.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        generationConfig: { responseMimeType: "application/json" }
       });
 
-      const text = response.text;
+      const response = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        tools: [{ googleSearchRetrieval: {} } as any]
+      });
+
+      const text = response.response.text();
       if (text) {
         try {
           const cleanedText = text.replace(/```json|```/g, '').trim();
@@ -173,16 +174,17 @@ export const geminiService = {
       
       Retorne um array de objetos JSON com: ticker, action, reason (em português), riskLevel (LOW, MEDIUM, HIGH).`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json"
-        }
+      const model = ai.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        generationConfig: { responseMimeType: "application/json" }
       });
 
-      const text = response.text;
+      const response = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        tools: [{ googleSearchRetrieval: {} } as any]
+      });
+
+      const text = response.response.text();
       if (text) {
         try {
           const cleanedText = text.replace(/```json|```/g, '').trim();
@@ -223,16 +225,17 @@ export const geminiService = {
       Retorne APENAS um objeto JSON com as taxas de câmbio onde 1 unidade da moeda estrangeira vale X Reais.
       Exemplo: {"BRL": 1, "USD": 5.15, "EUR": 5.55, "GBP": 6.45}.`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json"
-        }
+      const model = ai.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        generationConfig: { responseMimeType: "application/json" }
       });
 
-      const text = response.text;
+      const response = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        tools: [{ googleSearchRetrieval: {} } as any]
+      });
+
+      const text = response.response.text();
       if (text) {
         try {
           const cleanedText = text.replace(/```json|```/g, '').trim();
