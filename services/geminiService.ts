@@ -79,12 +79,12 @@ function setCachedData(key: string, data: any) {
 }
 
 export const geminiService = {
-  async fetchAssetPrices(tickers: string[], force: boolean = false): Promise<{prices: Record<string, number>, timestamp: number}> {
+  async fetchAssetPrices(tickers: string[], force: boolean = false): Promise<{prices: Record<string, { current: number; target: number | null }>, timestamp: number}> {
     if (tickers.length === 0) return { prices: {}, timestamp: Date.now() };
     
     // Tenta cache primeiro
     if (!force) {
-      const cached = getCachedDataFull<Record<string, number>>(CACHE_KEYS.ASSET_PRICES, CACHE_EXPIRY.ASSET_PRICES);
+      const cached = getCachedDataFull<Record<string, { current: number; target: number | null }>>(CACHE_KEYS.ASSET_PRICES, CACHE_EXPIRY.ASSET_PRICES);
       if (cached) {
         const allPresent = tickers.every(t => cached.data[t] !== undefined);
         if (allPresent) return { prices: cached.data, timestamp: cached.timestamp };

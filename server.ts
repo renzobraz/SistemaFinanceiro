@@ -2,11 +2,13 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
-import yahooFinance from "yahoo-finance2";
+import YahooFinance from "yahoo-finance2";
 import { createServer as createViteServer } from "vite";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const yahooFinance = new (YahooFinance as any)();
 
 async function startServer() {
   const app = express();
@@ -32,15 +34,33 @@ async function startServer() {
     });
 
     try {
-      const results: Record<string, number> = {};
+      const results: Record<string, { current: number; target: number | null }> = {};
       
-      // Busca em lote (batch)
+      // Busca em lote para os preços atuais (mais rápido)
       const quotes = await yahooFinance.quote(tickerList) as any[];
+      
+      // Busca detalhes individuais para o preço alvo (Yahoo não permite batch para targetPrice em quote simples)
+      // Limitamos a concorrência para não sermos bloqueados
+      const detailPromises = tickerList.map(async (symbol) => {
+        try {
+          // quoteSummary traz dados de analistas (financialData)
+          const summary = await yahooFinance.quoteSummary(symbol, { modules: ["financialData"] });
+          return { symbol, target: summary?.financialData?.targetMeanPrice || null };
+        } catch (e) {
+          return { symbol, target: null };
+        }
+      });
+
+      const details = await Promise.all(detailPromises);
+      const targetMap = Object.fromEntries(details.map(d => [d.symbol, d.target]));
       
       // Mapeia de volta para o ticker original (sem .SA)
       quotes.forEach((quote: any) => {
         const originalTicker = quote.symbol.replace(".SA", "");
-        results[originalTicker] = quote.regularMarketPrice || quote.postMarketPrice || 0;
+        results[originalTicker] = {
+          current: quote.regularMarketPrice || quote.postMarketPrice || 0,
+          target: targetMap[quote.symbol] || null
+        };
       });
 
       res.json(results);

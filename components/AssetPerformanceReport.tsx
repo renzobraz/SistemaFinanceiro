@@ -95,7 +95,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   setSelectedWalletId
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [prices, setPrices] = useState<Record<string, number>>({});
+  const [prices, setPrices] = useState<Record<string, { current: number; target: number | null }>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, InvestmentSuggestion>>({});
   const [loadingPrices, setLoadingPrices] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
@@ -135,11 +135,10 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       if (t.status !== 'PAID') return;
       
       const participant = registries.participants.find(p => p.id === t.participantId);
-      const bank = registries.banks.find(b => b.id === t.bankId);
-      const hasParticipantType = !!participant?.category;
+      const isInvestmentParticipant = !!(participant?.category || participant?.sector || participant?.ticker);
       
-      // Se tiver tipo de participante (ex: Ação, FII), é considerado investimento independente do tipo de banco
-      const isInvestment = hasParticipantType;
+      // Se tiver qualquer um dos 3 campos preenchidos, é considerado investimento
+      const isInvestment = isInvestmentParticipant;
 
       if (isInvestment) {
         bankIds.add(t.bankId);
@@ -151,19 +150,6 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [transactions, registries.participants, registries.categories, registries.banks]);
 
-  // Identifica participantes que possuem transações mas não possuem Tipo (Categoria)
-  const participantsMissingType = useMemo(() => {
-    const missing = new Set<string>();
-    transactions.forEach(t => {
-      if (t.status !== 'PAID' || t.linkedId) return;
-      const participant = registries.participants.find(p => p.id === t.participantId);
-      if (participant && !participant.category) {
-        missing.add(participant.name);
-      }
-    });
-    return Array.from(missing).sort();
-  }, [transactions, registries.participants]);
-
   const performanceData = useMemo(() => {
     const assetMap = new Map<string, AssetPerformance>();
 
@@ -171,16 +157,15 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     const relevantTransactions = transactions.filter(t => {
       const isConfirmed = t.status === 'PAID';
       
-      // Busca o participante para ver se ele tem um Tipo (indicativo de investimento)
+      // Busca o participante para ver se ele tem algum dado de investimento
       const participant = registries.participants.find(p => p.id === t.participantId);
-      const hasParticipantType = !!participant?.category;
+      const isInvestmentParticipant = !!(participant?.category || participant?.sector || participant?.ticker);
       
       const matchesBank = selectedBankId === 'ALL' || t.bankId === selectedBankId;
       const matchesWallet = selectedWalletId === 'ALL' || t.walletId === selectedWalletId;
       
-      // Lógica de Ouro: É investimento se o Participante tiver um Tipo (Ação, FII, etc)
-      // IGNORAMOS transferências (linkedId) para evitar que o aporte de capital seja contado como venda/lucro
-      const isInvestment = hasParticipantType && !t.linkedId;
+      // Lógica: É investimento se o Participante tiver Tipo, Setor OU Ticker
+      const isInvestment = isInvestmentParticipant && !t.linkedId;
       
       return isConfirmed && isInvestment && matchesBank && matchesWallet;
     });
@@ -215,7 +200,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       asset.transactions.push(t);
 
       const participant = registries.participants.find(p => p.id === t.participantId);
-      const hasParticipantType = !!participant?.category;
+      const isInvestmentParticipant = !!(participant?.category || participant?.sector || participant?.ticker);
 
       const bank = registries.banks.find(b => b.id === t.bankId);
       const transactionCurrency = bank?.currency || 'BRL';
@@ -276,7 +261,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       // CRITICAL: Se for um DÉBITO sem quantidade, tratamos como taxa/imposto APENAS se não for um investimento identificado
       const isDebitWithoutQty = t.type === 'DEBIT' && (!t.quantity || t.quantity <= 0);
 
-      if (isProvento || isTaxOrFee || (isDebitWithoutQty && !hasParticipantType)) {
+      if (isProvento || isTaxOrFee || (isDebitWithoutQty && !isInvestmentParticipant)) {
         if (t.type === 'DEBIT') {
           // Imposto ou taxa -> subtrai do recebido líquido (proventos)
           asset.totalReceived -= valueInAsset;
@@ -316,13 +301,25 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
         asset.averagePriceBRL = totalBoughtQty > 0 ? asset.totalInvestedBRL / totalBoughtQty : 0;
         
         // Adiciona dados de mercado se disponíveis
-        const marketPrice = prices[asset.ticker] || registries.participants.find(p => p.id === asset.participantId)?.currentPrice;
-        if (marketPrice) {
-          asset.lastPrice = marketPrice;
+        const marketData = prices[asset.ticker];
+        const manualTarget = registries.participants.find(p => p.id === asset.participantId)?.targetPrice;
+        
+        if (marketData) {
+          asset.lastPrice = marketData.current;
+          asset.targetPrice = manualTarget || marketData.target || undefined;
           asset.marketValue = asset.currentQuantity * asset.lastPrice;
           // Excluímos totalReceived (proventos) do cálculo de lucro para focar em ganho de capital (venda/mercado)
           asset.profit = (asset.marketValue + asset.totalSold) - asset.totalInvested;
           asset.variation = asset.averagePrice > 0 ? (asset.lastPrice / asset.averagePrice - 1) * 100 : 0;
+        } else {
+          const manualPrice = registries.participants.find(p => p.id === asset.participantId)?.currentPrice;
+          if (manualPrice) {
+            asset.lastPrice = manualPrice;
+            asset.targetPrice = manualTarget;
+            asset.marketValue = asset.currentQuantity * asset.lastPrice;
+            asset.profit = (asset.marketValue + asset.totalSold) - asset.totalInvested;
+            asset.variation = asset.averagePrice > 0 ? (asset.lastPrice / asset.averagePrice - 1) * 100 : 0;
+          }
         }
 
         result.push(asset);
@@ -792,23 +789,6 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
               <br />2. O lançamento deve estar com status <strong>Pago</strong>.
               <br />3. Não deve ser uma transferência (lançamentos vinculados).
               <br />Verifique seus cadastros de Participantes para garantir que o campo "Tipo" esteja preenchido.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Alerta se houver participantes sem tipo (mesmo que outros apareçam) */}
-      {performanceData.length > 0 && participantsMissingType.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl flex items-start gap-3 shadow-sm">
-          <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <h4 className="text-sm font-bold text-blue-800">Participantes sem Tipo Identificado</h4>
-            <p className="text-xs text-blue-700 leading-relaxed">
-              Os seguintes participantes possuem lançamentos mas não aparecem no relatório porque não possuem um <strong>Tipo</strong> definido no cadastro:
-              <br />
-              <span className="font-semibold">{participantsMissingType.join(', ')}</span>
-              <br />
-              Vá em <strong>Cadastros &gt; Participantes</strong> e preencha o campo "Tipo" para incluí-los.
             </p>
           </div>
         </div>
@@ -1366,6 +1346,9 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                                   <span className={`text-sm font-bold font-mono ${asset.targetPrice ? 'text-amber-600' : 'text-slate-300 italic'}`}>
                                     {asset.targetPrice ? formatValue(targetPriceDisplay, 2) : 'Definir'}
                                   </span>
+                                  {prices[asset.ticker]?.target && !registries.participants.find(p => p.id === asset.participantId)?.targetPrice && (
+                                    <span className="text-[8px] bg-blue-100 text-blue-600 px-1 rounded font-black">MERCADO</span>
+                                  )}
                                   <Edit2 className="w-2.5 h-2.5 text-slate-300 transition-opacity" />
                                 </div>
                                 {asset.targetPrice && asset.lastPrice && (
