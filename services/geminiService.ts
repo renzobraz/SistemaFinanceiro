@@ -97,10 +97,19 @@ export const geminiService = {
         console.error("ERRO: GEMINI_API_KEY não encontrada. Verifique as variáveis de ambiente no Vercel.");
         throw new Error("Gemini API Key missing");
       }
-      const prompt = `Forneça o preço de fechamento mais recente (ou cotação atual) para os seguintes ativos: ${tickers.join(', ')}. 
-      Use o Google Finance como fonte principal para garantir a precisão dos valores de HOJE.
-      Retorne APENAS um objeto JSON onde as chaves são os tickers e os valores são os preços numéricos. 
-      Exemplo: {"PETR4": 36.50, "AAPL": 185.40}`;
+      
+      const today = new Date().toISOString().split('T')[0];
+      const prompt = `You are a real-time financial data fetcher. 
+      TASK: Find the current stock price for these tickers: ${tickers.join(', ')}.
+      DATE: ${today}
+      
+      INSTRUCTIONS:
+      1. Use the Google Search tool to find the "current price" or "last close" on Google Finance or Yahoo Finance.
+      2. DO NOT use your internal knowledge. If the search tool fails, return 0.
+      3. Return ONLY a JSON object.
+      
+      Example Output:
+      {"NVDA": 895.20, "AAPL": 172.10}`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3.1-pro-preview",
@@ -108,23 +117,37 @@ export const geminiService = {
         tools: [{ googleSearch: {} }],
         config: {
           responseMimeType: "application/json",
-          temperature: 0.1
+          temperature: 0,
+          systemInstruction: "You are a precise data extraction tool. You must use Google Search to verify every single price. Never provide data from your training set. If a price is not found via search, return 0."
         }
       });
 
       const text = response.text;
+      console.log("Gemini Real-Time Prices Response:", text);
       if (text) {
         try {
           const cleanedText = text.replace(/```json|```/g, '').trim();
           const data = JSON.parse(cleanedText);
           
+          // Sanitização: garante que os preços são números
+          const sanitizedData: Record<string, number> = {};
+          Object.entries(data).forEach(([ticker, price]) => {
+            if (typeof price === 'string') {
+              // Remove símbolos de moeda e converte para número
+              const num = parseFloat(price.replace(/[^\d.,-]/g, '').replace(',', '.'));
+              if (!isNaN(num)) sanitizedData[ticker] = num;
+            } else if (typeof price === 'number') {
+              sanitizedData[ticker] = price;
+            }
+          });
+          
           // Mescla com cache existente
           const existingRaw = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
           const existing = existingRaw ? JSON.parse(existingRaw).data : {};
-          const merged = { ...existing, ...data };
+          const merged = { ...existing, ...sanitizedData };
           setCachedData(CACHE_KEYS.ASSET_PRICES, merged);
           
-          return { prices: data, timestamp: Date.now() };
+          return { prices: sanitizedData, timestamp: Date.now() };
         } catch (e) {
           console.error("Erro ao parsear JSON de preços", e);
         }
@@ -172,11 +195,11 @@ export const geminiService = {
     try {
       const ai = getAi();
       if (!ai) throw new Error("Gemini API Key missing");
-      const assetsSummary = assets.map(a => `${a.ticker}: Preço Médio ${a.averagePrice}, Preço Atual ${a.lastPrice || 'N/A'}, Qtd ${a.currentQuantity}`).join('\n');
-      const prompt = `Analise os seguintes ativos da minha carteira e dê sugestões de COMPRA, VENDA ou MANUTENÇÃO (HOLD) com base no cenário atual do mercado:
+      const assetsSummary = assets.map(a => `${a.ticker}: Avg Price ${a.averagePrice}, Current Price ${a.lastPrice || 'N/A'}, Qty ${a.currentQuantity}`).join('\n');
+      const prompt = `Analyze the following assets in my portfolio and provide BUY, SELL, or HOLD suggestions based on the current market scenario:
       ${assetsSummary}
       
-      Retorne um array de objetos JSON com: ticker, action, reason (em português), riskLevel (LOW, MEDIUM, HIGH).`;
+      Return a JSON array of objects with: ticker, action, reason (in Portuguese), riskLevel (LOW, MEDIUM, HIGH).`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3.1-pro-preview",
@@ -184,7 +207,8 @@ export const geminiService = {
         tools: [{ googleSearch: {} }],
         config: {
           responseMimeType: "application/json",
-          temperature: 0.1
+          temperature: 0,
+          systemInstruction: "You are an expert financial analyst. Use the Google Search tool to check current market trends before giving advice. Always respond with 'reason' in Portuguese."
         }
       });
 
@@ -224,10 +248,10 @@ export const geminiService = {
       const ai = getAi();
       if (!ai) throw new Error("Gemini API Key missing");
       const today = new Date().toLocaleDateString('pt-BR');
-      const prompt = `Hoje é dia ${today}. Forneça a cotação ATUAL E REAL (tempo real) do Dólar (USD), Euro (EUR), Libra (GBP) em relação ao Real Brasileiro (BRL).
-      Use o Google Finance ou fontes de câmbio em tempo real para garantir que os valores são de HOJE.
-      Retorne APENAS um objeto JSON com as taxas de câmbio onde 1 unidade da moeda estrangeira vale X Reais.
-      Exemplo: {"BRL": 1, "USD": 5.15, "EUR": 5.55, "GBP": 6.45}.`;
+      const prompt = `Today is ${today}. Provide the CURRENT AND REAL-TIME exchange rates for US Dollar (USD), Euro (EUR), and British Pound (GBP) relative to the Brazilian Real (BRL).
+      Use Google Finance or real-time currency sources.
+      Return ONLY a JSON object with the exchange rates where 1 unit of foreign currency equals X Reais.
+      Example: {"BRL": 1, "USD": 5.15, "EUR": 5.55, "GBP": 6.45}.`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3.1-pro-preview",
@@ -235,7 +259,8 @@ export const geminiService = {
         tools: [{ googleSearch: {} }],
         config: {
           responseMimeType: "application/json",
-          temperature: 0.1
+          temperature: 0,
+          systemInstruction: "You are a precise currency exchange assistant. Always use the Google Search tool to find the most recent exchange rates. Do not use your internal training data."
         }
       });
 
@@ -244,8 +269,20 @@ export const geminiService = {
         try {
           const cleanedText = text.replace(/```json|```/g, '').trim();
           const data = JSON.parse(cleanedText);
-          setCachedData(CACHE_KEYS.EXCHANGE_RATES, data);
-          return { rates: data, timestamp: Date.now() };
+          
+          // Sanitização: garante que as taxas são números
+          const sanitizedRates: Record<string, number> = {};
+          Object.entries(data).forEach(([currency, rate]) => {
+            if (typeof rate === 'string') {
+              const num = parseFloat(rate.replace(/[^\d.,-]/g, '').replace(',', '.'));
+              if (!isNaN(num)) sanitizedRates[currency] = num;
+            } else if (typeof rate === 'number') {
+              sanitizedRates[currency] = rate;
+            }
+          });
+
+          setCachedData(CACHE_KEYS.EXCHANGE_RATES, sanitizedRates);
+          return { rates: sanitizedRates, timestamp: Date.now() };
         } catch (e) {
           console.error("Erro ao parsear taxas de câmbio", e);
         }

@@ -407,6 +407,19 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     return `${yy}-${mm}-${dd}`;
   };
 
+  const formatCurrencyInput = (val: number) => {
+    return new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(val);
+  };
+
+  const handleCurrencyInputChange = (e: React.ChangeEvent<HTMLInputElement>, callback: (val: number) => void) => {
+    const digits = e.target.value.replace(/\D/g, "");
+    const numericValue = digits ? parseFloat(digits) / 100 : 0;
+    callback(numericValue);
+  };
+
   const handleSubmit = async (e: React.FormEvent, withDiscount = false) => {
     e.preventDefault();
     if (isSaving) return;
@@ -651,17 +664,12 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 Valor (R$)
               </label>
               <input
-                type="number"
-                step="0.01"
+                type="text"
+                inputMode="numeric"
                 required
                 disabled={isSaving}
-                value={formData.value}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    value: parseFloat(e.target.value) || 0,
-                  })
-                }
+                value={formatCurrencyInput(formData.value)}
+                onChange={(e) => handleCurrencyInputChange(e, (v) => setFormData({ ...formData, value: v }))}
                 className={inputClass}
               />
             </div>
@@ -730,11 +738,11 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                   <RotateCcw className="w-3 h-3" /> Desconto (R$)
                 </label>
                 <input
-                  type="number"
-                  step="0.01"
+                  type="text"
+                  inputMode="numeric"
                   disabled={isSaving}
-                  value={discountValue || ""}
-                  onChange={(e) => setDiscountValue(parseFloat(e.target.value) || 0)}
+                  value={formatCurrencyInput(discountValue)}
+                  onChange={(e) => handleCurrencyInputChange(e, setDiscountValue)}
                   className="w-full px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-emerald-800 placeholder:text-emerald-300"
                   placeholder="Valor parcial..."
                 />

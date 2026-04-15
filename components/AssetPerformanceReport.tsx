@@ -342,13 +342,16 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
 
     setLoadingPrices(true);
     try {
+      console.log("Iniciando busca de preços para:", tickers);
       // Usar geminiService (que agora está mockado para dados locais)
       const { prices: newPrices, timestamp: priceTime } = await geminiService.fetchAssetPrices(tickers, force);
+      console.log("Novos preços recebidos:", newPrices);
       setPrices(prev => ({ ...prev, ...newPrices }));
       setLastUpdate(priceTime);
 
       // Atualizar taxas de câmbio
       const { rates, timestamp: rateTime } = await geminiService.getExchangeRates(force);
+      console.log("Novas taxas de câmbio:", rates);
       setExchangeRates(prev => ({ ...prev, ...rates }));
       if (!lastUpdate || rateTime > lastUpdate) setLastUpdate(rateTime);
 
