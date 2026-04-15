@@ -683,14 +683,15 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   }, [filteredData, exchangeRates, registries.banks]);
 
   const tickerData = useMemo(() => {
-    return filteredData
-      .map(a => {
-        const rate = exchangeRates[a.currency] || 1;
-        return {
-          name: a.ticker,
-          value: (a.marketValue || a.totalInvested) * rate
-        };
-      })
+    const map = new Map<string, number>();
+    filteredData.forEach(a => {
+      const rate = exchangeRates[a.currency] || 1;
+      const val = (a.marketValue || a.totalInvested) * rate;
+      const ticker = a.ticker || 'N/A';
+      map.set(ticker, (map.get(ticker) || 0) + val);
+    });
+    return Array.from(map.entries())
+      .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10); // Top 10 assets
   }, [filteredData, exchangeRates]);
