@@ -5,11 +5,11 @@ let aiInstance: any = null;
 
 function getAi() {
   try {
-    // Tenta primeiro o padrão do Vite (Vercel) e depois o padrão do Node
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    // Segue estritamente a recomendação da Skill para React (Vite)
+    const apiKey = process.env.GEMINI_API_KEY;
     
     if (!apiKey || apiKey === 'undefined' || apiKey === '') {
-      console.warn("GEMINI_API_KEY ou VITE_GEMINI_API_KEY não definida. Recursos de IA desativados.");
+      console.warn("GEMINI_API_KEY não definida. Recursos de IA desativados.");
       return null;
     }
     if (!aiInstance) {
@@ -92,74 +92,23 @@ export const geminiService = {
     }
 
     try {
-      const ai = getAi();
-      if (!ai) {
-        console.error("ERRO: GEMINI_API_KEY não encontrada. Verifique as variáveis de ambiente no Vercel.");
-        throw new Error("Gemini API Key missing");
-      }
+      // BUSCA REAL: Chama o nosso novo backend que consulta o Yahoo Finance
+      const response = await fetch(`/api/prices?tickers=${tickers.join(",")}`);
+      if (!response.ok) throw new Error("Falha ao buscar preços reais");
       
-      const today = new Date().toISOString().split('T')[0];
-      const prompt = `You are a real-time financial data fetcher. 
-      TASK: Find the current stock price for these tickers: ${tickers.join(', ')}.
-      DATE: ${today}
+      const sanitizedData = await response.json();
       
-      INSTRUCTIONS:
-      1. Use the Google Search tool to find the "current price" or "last close" on Google Finance or Yahoo Finance.
-      2. DO NOT use your internal knowledge. If the search tool fails, return 0.
-      3. Return ONLY a JSON object.
+      // Mescla com cache existente
+      const existingRaw = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
+      const existing = existingRaw ? JSON.parse(existingRaw).data : {};
+      const merged = { ...existing, ...sanitizedData };
+      setCachedData(CACHE_KEYS.ASSET_PRICES, merged);
       
-      Example Output:
-      {"NVDA": 895.20, "AAPL": 172.10}`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: prompt,
-        tools: [{ googleSearch: {} }],
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0,
-          systemInstruction: "You are a precise data extraction tool. You must use Google Search to verify every single price. Never provide data from your training set. If a price is not found via search, return 0."
-        }
-      });
-
-      const text = response.text;
-      console.log("Gemini Real-Time Prices Response:", text);
-      if (text) {
-        try {
-          const cleanedText = text.replace(/```json|```/g, '').trim();
-          const data = JSON.parse(cleanedText);
-          
-          // Sanitização: garante que os preços são números
-          const sanitizedData: Record<string, number> = {};
-          Object.entries(data).forEach(([ticker, price]) => {
-            if (typeof price === 'string') {
-              // Remove símbolos de moeda e converte para número
-              const num = parseFloat(price.replace(/[^\d.,-]/g, '').replace(',', '.'));
-              if (!isNaN(num)) sanitizedData[ticker] = num;
-            } else if (typeof price === 'number') {
-              sanitizedData[ticker] = price;
-            }
-          });
-          
-          // Mescla com cache existente
-          const existingRaw = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
-          const existing = existingRaw ? JSON.parse(existingRaw).data : {};
-          const merged = { ...existing, ...sanitizedData };
-          setCachedData(CACHE_KEYS.ASSET_PRICES, merged);
-          
-          return { prices: sanitizedData, timestamp: Date.now() };
-        } catch (e) {
-          console.error("Erro ao parsear JSON de preços", e);
-        }
-      }
-    } catch (error: any) {
-      if (error.status === 429 || error.message?.includes('429')) {
-        console.warn("Limite de cota Gemini atingido para preços. Usando cache/fallback.");
-      } else {
-        console.error("Erro ao buscar preços via Gemini", error);
-      }
+      return { prices: sanitizedData, timestamp: Date.now() };
+    } catch (error) {
+      console.error("Erro ao buscar preços reais via Backend:", error);
       
-      // Se for erro de quota, tenta retornar o que tem no cache mesmo expirado
+      // Se falhar o real, tenta o cache mesmo expirado
       const stale = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
       if (stale) {
         try { 
@@ -169,132 +118,85 @@ export const geminiService = {
       }
     }
 
-    // Fallback para mock se falhar
-    const mockPrices: Record<string, number> = {
-      'PETR4': 36.50,
-      'VALE3': 68.20,
-      'ITUB4': 32.15,
-      'AAPL': 185.40,
-      'TSLA': 175.20,
-      'BTC': 345000.00,
-      'ETH': 18500.00
-    };
-
-    const result: Record<string, number> = {};
-    tickers.forEach(t => {
-      // Se falhar, retorna 0 ou o preço do mock se existir, mas sem random para não confundir
-      result[t] = mockPrices[t] || 0;
-    });
-
-    return { prices: result, timestamp: Date.now() };
+    return { prices: {}, timestamp: Date.now() };
   },
 
   async getInvestmentSuggestions(assets: any[]): Promise<InvestmentSuggestion[]> {
     if (assets.length === 0) return [];
 
-    try {
-      const ai = getAi();
-      if (!ai) throw new Error("Gemini API Key missing");
-      const assetsSummary = assets.map(a => `${a.ticker}: Avg Price ${a.averagePrice}, Current Price ${a.lastPrice || 'N/A'}, Qty ${a.currentQuantity}`).join('\n');
-      const prompt = `Analyze the following assets in my portfolio and provide BUY, SELL, or HOLD suggestions based on the current market scenario:
-      ${assetsSummary}
-      
-      Return a JSON array of objects with: ticker, action, reason (in Portuguese), riskLevel (LOW, MEDIUM, HIGH).`;
+    const ai = getAi();
+    // Se não tiver IA, apenas retorna HOLD sem inventar
+    if (!ai) return assets.map(a => ({
+      ticker: a.ticker,
+      action: 'HOLD',
+      reason: "IA não configurada para sugestões.",
+      riskLevel: 'MEDIUM'
+    }));
 
+    const assetsSummary = assets.map(a => `${a.ticker}: Avg Price ${a.averagePrice}, Current Price ${a.lastPrice || 'N/A'}, Qty ${a.currentQuantity}`).join('\n');
+    const prompt = `Analyze the following assets in my portfolio and provide BUY, SELL, or HOLD suggestions based on the current market scenario:
+    ${assetsSummary}
+    
+    Return a JSON array of objects with: ticker, action, reason (in Portuguese), riskLevel (LOW, MEDIUM, HIGH).`;
+
+    try {
+      // Para sugestões, o Gemini ainda é ótimo, mas agora usamos sem a ferramenta de busca 
+      // para evitar o erro 403, já que os preços já são reais vindos do Yahoo
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: prompt,
-        tools: [{ googleSearch: {} }],
         config: {
           responseMimeType: "application/json",
-          temperature: 0,
-          systemInstruction: "You are an expert financial analyst. Use the Google Search tool to check current market trends before giving advice. Always respond with 'reason' in Portuguese."
+          temperature: 0.1,
+          systemInstruction: "You are an expert financial analyst. Analyze the provided prices and quantities. Always respond with 'reason' in Portuguese."
         }
       });
 
       const text = response.text;
       if (text) {
-        try {
-          const cleanedText = text.replace(/```json|```/g, '').trim();
-          return JSON.parse(cleanedText);
-        } catch (e) {
-          console.error("Erro ao parsear sugestões", e);
-        }
+        const cleanedText = text.replace(/```json|```/g, '').trim();
+        return JSON.parse(cleanedText);
       }
-    } catch (error: any) {
-      if (error.status === 429 || error.message?.includes('429')) {
-        console.warn("Limite de cota Gemini atingido para sugestões.");
-      } else {
-        console.error("Erro ao buscar sugestões via Gemini", error);
-      }
+    } catch (error) {
+      console.error("Erro ao buscar sugestões via Gemini:", error);
     }
 
     return assets.map(a => ({
       ticker: a.ticker,
       action: 'HOLD',
-      reason: "Análise indisponível no momento. Verifique sua conexão.",
+      reason: "Análise indisponível no momento.",
       riskLevel: 'MEDIUM'
     }));
   },
 
   async getExchangeRates(force: boolean = false): Promise<{rates: Record<string, number>, timestamp: number}> {
-    // Tenta cache primeiro
     if (!force) {
       const cached = getCachedDataFull<Record<string, number>>(CACHE_KEYS.EXCHANGE_RATES, CACHE_EXPIRY.EXCHANGE_RATES);
       if (cached) return { rates: cached.data, timestamp: cached.timestamp };
     }
 
     try {
-      const ai = getAi();
-      if (!ai) throw new Error("Gemini API Key missing");
-      const today = new Date().toLocaleDateString('pt-BR');
-      const prompt = `Today is ${today}. Provide the CURRENT AND REAL-TIME exchange rates for US Dollar (USD), Euro (EUR), and British Pound (GBP) relative to the Brazilian Real (BRL).
-      Use Google Finance or real-time currency sources.
-      Return ONLY a JSON object with the exchange rates where 1 unit of foreign currency equals X Reais.
-      Example: {"BRL": 1, "USD": 5.15, "EUR": 5.55, "GBP": 6.45}.`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: prompt,
-        tools: [{ googleSearch: {} }],
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0,
-          systemInstruction: "You are a precise currency exchange assistant. Always use the Google Search tool to find the most recent exchange rates. Do not use your internal training data."
-        }
-      });
-
-      const text = response.text;
-      if (text) {
-        try {
-          const cleanedText = text.replace(/```json|```/g, '').trim();
-          const data = JSON.parse(cleanedText);
-          
-          // Sanitização: garante que as taxas são números
-          const sanitizedRates: Record<string, number> = {};
-          Object.entries(data).forEach(([currency, rate]) => {
-            if (typeof rate === 'string') {
-              const num = parseFloat(rate.replace(/[^\d.,-]/g, '').replace(',', '.'));
-              if (!isNaN(num)) sanitizedRates[currency] = num;
-            } else if (typeof rate === 'number') {
-              sanitizedRates[currency] = rate;
-            }
-          });
-
-          setCachedData(CACHE_KEYS.EXCHANGE_RATES, sanitizedRates);
-          return { rates: sanitizedRates, timestamp: Date.now() };
-        } catch (e) {
-          console.error("Erro ao parsear taxas de câmbio", e);
-        }
-      }
-    } catch (error: any) {
-      if (error.status === 429 || error.message?.includes('429')) {
-        console.warn("Limite de cota Gemini atingido para câmbio. Usando cache/fallback.");
-      } else {
-        console.error("Erro ao buscar taxas via Gemini", error);
-      }
+      // BUSCA REAL: Usa uma API pública de câmbio (ExchangeRate-API) que é gratuita e precisa
+      const response = await fetch("https://api.exchangerate-api.com/v4/latest/BRL");
+      if (!response.ok) throw new Error("Falha ao buscar taxas de câmbio");
       
-      // Se for erro de quota, tenta retornar o que tem no cache mesmo expirado
+      const data = await response.json();
+      const rates = data.rates;
+      
+      // A API retorna quanto 1 Real vale em outras moedas (ex: USD: 0.19)
+      // Precisamos inverter para saber quanto 1 Moeda Estrangeira vale em Reais
+      const sanitizedRates: Record<string, number> = {
+        BRL: 1,
+        USD: Number((1 / rates.USD).toFixed(4)),
+        EUR: Number((1 / rates.EUR).toFixed(4)),
+        GBP: Number((1 / rates.GBP).toFixed(4))
+      };
+
+      setCachedData(CACHE_KEYS.EXCHANGE_RATES, sanitizedRates);
+      return { rates: sanitizedRates, timestamp: Date.now() };
+    } catch (error) {
+      console.error("Erro ao buscar taxas de câmbio reais:", error);
+      
       const stale = localStorage.getItem(CACHE_KEYS.EXCHANGE_RATES);
       if (stale) {
         try { 
