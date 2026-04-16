@@ -166,10 +166,10 @@ const App: FC = () => {
         startDate: isInvestmentsTab ? undefined : startDate,
         endDate: isInvestmentsTab ? undefined : endDate,
         bankId: isInvestmentsTab 
-          ? (performanceBankId === 'ALL' ? undefined : performanceBankId) 
+          ? undefined 
           : (selectedBankId === 'ALL' ? undefined : selectedBankId),
         walletId: isInvestmentsTab 
-          ? (performanceWalletId === 'ALL' ? undefined : performanceWalletId) 
+          ? undefined 
           : (selectedWalletId === 'ALL' ? undefined : selectedWalletId),
         status: isInvestmentsTab ? 'PAID' : statusFilter
       });
@@ -261,7 +261,7 @@ const App: FC = () => {
     if (!loading) {
         loadTransactions();
     }
-  }, [startDate, endDate, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter, loadTransactions]);
+  }, [startDate, endDate, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter, activeTab, loadTransactions]);
 
   useEffect(() => {
     if (activeTab === 'registries') {

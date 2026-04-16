@@ -2,13 +2,11 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
-import YahooFinance from "yahoo-finance2";
+import yahooFinance from "yahoo-finance2";
 import { createServer as createViteServer } from "vite";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-const yahooFinance = new (YahooFinance as any)();
 
 async function startServer() {
   const app = express();
@@ -44,7 +42,7 @@ async function startServer() {
       const detailPromises = tickerList.map(async (symbol) => {
         try {
           // quoteSummary traz dados de analistas (financialData)
-          const summary = await yahooFinance.quoteSummary(symbol, { modules: ["financialData"] });
+          const summary = await yahooFinance.quoteSummary(symbol, { modules: ["financialData"] }) as any;
           return { symbol, target: summary?.financialData?.targetMeanPrice || null };
         } catch (e) {
           return { symbol, target: null };

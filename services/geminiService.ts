@@ -93,7 +93,7 @@ export const geminiService = {
 
     try {
       // BUSCA REAL: Chama o nosso novo backend que consulta o Yahoo Finance
-      const response = await fetch(`/api/prices?tickers=${tickers.join(",")}`);
+      const response = await fetch(`/api/prices?tickers=${encodeURIComponent(tickers.join(","))}`);
       if (!response.ok) throw new Error("Falha ao buscar preços reais");
       
       const sanitizedData = await response.json();

@@ -1,7 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import YahooFinance from "yahoo-finance2";
-
-const yahooFinance = new (YahooFinance as any)();
+import yahooFinance from "yahoo-finance2";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Habilita CORS
@@ -40,7 +38,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Busca detalhes individuais para o preço alvo
     const detailPromises = tickerList.map(async (symbol) => {
       try {
-        const summary = await yahooFinance.quoteSummary(symbol, { modules: ["financialData"] });
+        const summary = await yahooFinance.quoteSummary(symbol, { modules: ["financialData"] }) as any;
         return { symbol, target: summary?.financialData?.targetMeanPrice || null };
       } catch (e) {
         return { symbol, target: null };
