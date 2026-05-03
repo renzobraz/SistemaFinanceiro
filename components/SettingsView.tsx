@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Database, Save, CheckCircle2, AlertCircle, Copy, Terminal, Unplug, Info, AlertTriangle, Loader2, Play, Search, CheckCircle, RefreshCcw } from 'lucide-react';
+import { Database, Save, CheckCircle2, AlertCircle, Copy, Terminal, Unplug, Info, AlertTriangle, Loader2, Play, Search, CheckCircle, RefreshCcw, Settings } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { ConfirmModal } from './ConfirmModal';
 import { DEFAULT_SUPABASE_CONFIG, financeService } from '../services/financeService';
@@ -10,9 +10,10 @@ interface SettingsViewProps {
   onSaveConfig: (url: string, key: string) => void;
   onSavePrefs: (prefs: UserPreferences) => void;
   registries: { banks: Bank[], wallets: Wallet[] };
+  hideHeaders?: boolean;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig, onSavePrefs, registries }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig, onSavePrefs, registries, hideHeaders = false }) => {
   const [url, setUrl] = useState('');
   const [key, setKey] = useState('');
   const [status, setStatus] = useState<'IDLE' | 'TESTING' | 'SUCCESS' | 'ERROR'>('IDLE');
@@ -237,22 +238,36 @@ create policy "Allow all operations" on public.asset_tickers for all using (true
 -- NOTA: Se o erro PGRST204 persistir, tente rodar os comandos acima novamente.`;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-10">
+    <div className={`space-y-8 pb-10 ${hideHeaders ? '' : 'max-w-4xl mx-auto pt-4'}`}>
       
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
-          <div className="flex items-center gap-3">
-              <div className="p-2 bg-indigo-600 rounded-lg text-white">
-                <CheckCircle2 className="w-5 h-5" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-slate-800 tracking-tight">Filtros Padrão de Inicialização</h2>
-                <p className="text-sm text-slate-500">Defina como o sistema deve carregar os lançamentos ao ser aberto.</p>
-              </div>
+      {!hideHeaders && (
+        <div className="flex items-center gap-4 mb-10">
+          <div className="p-4 bg-slate-900 rounded-[20px] text-white shadow-xl shadow-slate-200">
+            <Settings className="w-8 h-8" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight">Configurações Gerais</h1>
+            <p className="text-slate-500 font-medium">Personalize e gerencie sua infraestrutura financeira.</p>
           </div>
         </div>
+      )}
 
-        <div className="p-8">
+      {/* Somente mostra os filtros se não estiver oculto ou se for a aba específica */}
+      {!hideHeaders ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
+            <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-600 rounded-lg text-white">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800 tracking-tight">Filtros Padrão de Inicialização</h2>
+                  <p className="text-sm text-slate-500">Defina como o sistema deve carregar os lançamentos ao ser aberto.</p>
+                </div>
+            </div>
+          </div>
+
+          <div className="p-8">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
                 <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Período Padrão</label>
@@ -364,6 +379,7 @@ create policy "Allow all operations" on public.asset_tickers for all using (true
           </div>
         </div>
       </div>
+      ) : null}
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">

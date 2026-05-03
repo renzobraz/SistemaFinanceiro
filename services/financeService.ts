@@ -9,7 +9,10 @@ import {
   BaseEntity,
   AssetType,
   AssetSector,
-  AssetTicker
+  AssetTicker,
+  UserPermission,
+  SmtpSettings,
+  UserPreferences
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -169,6 +172,7 @@ const KEYS = {
   ASSET_SECTORS: 'fincontrol_asset_sectors',
   ASSET_TICKERS: 'fincontrol_asset_tickers',
   PREFERENCES: 'fincontrol_preferences',
+  USER_SETTINGS: 'fincontrol_user_settings',
   IGNORED_UNIFICATIONS: 'fincontrol_ignored_unifications',
 };
 
@@ -247,6 +251,7 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   costCenterId: db.cost_center_id || '',
   walletId: db.wallet_id || '',
   linkedId: db.linked_id || undefined,
+  createdAt: db.created_at || undefined,
   exchangeRate: db.exchange_rate ? Number(db.exchange_rate) : undefined,
   spread: db.spread ? Number(db.spread) : undefined,
   iof: db.iof ? Number(db.iof) : undefined,
@@ -281,6 +286,10 @@ const mapTransactionToDb = (t: Transaction) => {
   if (t.originalValue && t.originalValue > 0) payload.original_value = t.originalValue;
   if (t.originalCurrency) payload.original_currency = t.originalCurrency;
 
+  // Garantir que o user_id seja enviado se disponível
+  const storedUserId = localStorage.getItem('supabase_user_id');
+  if (storedUserId) payload.user_id = storedUserId;
+
   if (t.id && t.id.trim() !== '') {
     payload.id = t.id;
   }
@@ -293,6 +302,7 @@ export interface TransactionFilters {
     bankId?: string;
     walletId?: string;
     status?: 'PAID' | 'PENDING' | 'ALL';
+    docNumber?: string;
 }
 
 export const financeService = {
@@ -317,6 +327,91 @@ export const financeService = {
 
   saveUserPreferences(prefs: any): void {
     localStorage.setItem(KEYS.PREFERENCES, JSON.stringify(prefs));
+  },
+
+  async getUserSettings(): Promise<UserPreferences> {
+    const defaultPrefs: UserPreferences = {
+      defaultDateRange: 'CURRENT_MONTH',
+      defaultStatus: 'ALL',
+      defaultBankId: '',
+      defaultWalletId: '',
+      defaultPerformanceBankId: 'ALL',
+      defaultPerformanceWalletId: 'ALL',
+      defaultTab: 'dashboard'
+    };
+
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const { data, error } = await supabase
+            .from('user_settings')
+            .select('*')
+            .eq('user_id', session.user.id)
+            .maybeSingle();
+
+          if (error) throw error;
+          if (data) {
+            return {
+              defaultDateRange: (data.default_period as any) || defaultPrefs.defaultDateRange,
+              defaultStatus: (data.default_status as any) || defaultPrefs.defaultStatus,
+              defaultBankId: data.default_bank_id || '',
+              defaultWalletId: data.default_wallet_id || '',
+              defaultPerformanceBankId: data.default_performance_bank_id || 'ALL',
+              defaultPerformanceWalletId: data.default_performance_wallet_id || 'ALL',
+              defaultTab: data.default_tab || 'dashboard'
+            };
+          }
+        }
+      } catch (e) {
+        console.warn("Falha ao buscar configurações no banco, usando local", e);
+      }
+    }
+
+    const saved = localStorage.getItem(KEYS.PREFERENCES);
+    if (saved) {
+      try {
+        return { ...defaultPrefs, ...JSON.parse(saved) };
+      } catch {
+        return defaultPrefs;
+      }
+    }
+    return defaultPrefs;
+  },
+
+  async saveUserSettings(prefs: UserPreferences): Promise<void> {
+    // Salva no localStorage (fallback)
+    localStorage.setItem(KEYS.PREFERENCES, JSON.stringify(prefs));
+
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const payload = {
+            user_id: session.user.id,
+            default_period: prefs.defaultDateRange,
+            default_status: prefs.defaultStatus,
+            default_bank_id: prefs.defaultBankId || null,
+            default_wallet_id: prefs.defaultWalletId || null,
+            default_performance_bank_id: prefs.defaultPerformanceBankId,
+            default_performance_wallet_id: prefs.defaultPerformanceWalletId,
+            default_tab: prefs.defaultTab || 'dashboard',
+            updated_at: new Date().toISOString()
+          };
+
+          const { error } = await supabase
+            .from('user_settings')
+            .upsert(payload, { onConflict: 'user_id' });
+
+          if (error) throw error;
+        }
+      } catch (e) {
+        console.error("Falha ao salvar configurações no banco", e);
+        throw e;
+      }
+    }
   },
 
   getSupabase(): any {
@@ -387,11 +482,183 @@ export const financeService = {
     }
   },
 
-  async getTransactions(filters?: TransactionFilters): Promise<Transaction[]> {
+  async login(email: string, password?: string): Promise<any> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+    
+    if (password) {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      localStorage.setItem('supabase_user_id', data.user?.id || '');
+      return data;
+    } else {
+      // Login via link mágico ou similar se preferir, mas aqui usaremos senha por padrão
+      throw new Error("Senha é obrigatória");
+    }
+  },
+
+  async signUp(email: string, password?: string): Promise<any> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+    
+    if (password) {
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) throw error;
+      return data;
+    } else {
+      throw new Error("Senha é obrigatória");
+    }
+  },
+
+  async signOut(): Promise<void> {
     const supabase = getSupabase();
     if (supabase) {
+      await supabase.auth.signOut();
+      localStorage.removeItem('supabase_user_id');
+      // Limpa caches
+      cache.registries = {};
+      cache.balances = {};
+    }
+  },
+
+  async inviteUser(email: string, role: 'viewer' | 'editor' | 'admin' = 'viewer'): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+    
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) throw new Error("Usuário não autenticado");
+
+    const { error } = await supabase.from('user_permissions').insert({
+      owner_id: session.user.id,
+      invited_email: email.toLowerCase().trim(),
+      role: role,
+      status: 'pending'
+    });
+
+    if (error) throw error;
+
+    // Enviar e-mail via servidor backend
+    try {
+      await fetch('/api/send-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.toLowerCase().trim(),
+          invitedBy: session.user.email,
+          ownerId: session.user.id,
+          role: role
+        })
+      });
+    } catch (e) {
+      console.warn("Convite registrado no banco, mas houve falha ao disparar o e-mail automático:", e);
+    }
+  },
+
+  async getMyInvitations(): Promise<UserPermission[]> {
+    const supabase = getSupabase();
+    if (!supabase) return [];
+    
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return [];
+
+    const { data, error } = await supabase
+      .from('user_permissions')
+      .select('*')
+      .eq('owner_id', session.user.id);
+
+    if (error) throw error;
+    return data || [];
+  },
+
+  async getInvitationsSentToMe(): Promise<UserPermission[]> {
+    const supabase = getSupabase();
+    if (!supabase) return [];
+    
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user?.email) return [];
+
+    const { data, error } = await supabase
+      .from('user_permissions')
+      .select('*')
+      .eq('invited_email', session.user.email.toLowerCase());
+
+    if (error) throw error;
+    return data || [];
+  },
+
+  async acceptInvitation(invitationId: string): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const { error } = await supabase
+      .from('user_permissions')
+      .update({ status: 'active' })
+      .eq('id', invitationId);
+
+    if (error) throw error;
+  },
+
+  async deletePermission(id: string): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const { error } = await supabase
+      .from('user_permissions')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+  },
+
+  async getSmtpSettings(): Promise<SmtpSettings | null> {
+    const supabase = getSupabase();
+    if (!supabase) return null;
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return null;
+
+    const { data, error } = await supabase
+      .from('smtp_settings')
+      .select('*')
+      .eq('user_id', session.user.id)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async saveSmtpSettings(settings: Omit<SmtpSettings, 'id' | 'user_id'>): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) throw new Error("Usuário não autenticado");
+
+    const payload = {
+      ...settings,
+      user_id: session.user.id,
+      updated_at: new Date().toISOString()
+    };
+
+    const { error } = await supabase
+      .from('smtp_settings')
+      .upsert(payload, { onConflict: 'user_id' });
+
+    if (error) throw error;
+  },
+
+  async getTransactions(filters?: TransactionFilters): Promise<Transaction[]> {
+    const supabase = getSupabase();
+
+    if (supabase) {
       try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id;
         let query = supabase.from('transactions').select('*');
+        
+        // Comentado para permitir que o RLS do Supabase decida o que o usuário pode ver 
+        // (Isso habilita o acesso a dados compartilhados por outros usuários)
+        // if (userId) query = query.eq('user_id', userId);
 
         // Aplicar filtros no servidor
         if (filters?.startDate && filters.startDate.trim() !== '') query = query.gte('date', filters.startDate);
@@ -399,6 +666,7 @@ export const financeService = {
         if (filters?.bankId && filters.bankId.trim() !== '') query = query.eq('bank_id', filters.bankId);
         if (filters?.walletId && filters.walletId.trim() !== '') query = query.eq('wallet_id', filters.walletId);
         if (filters?.status && filters.status !== 'ALL') query = query.eq('status', filters.status);
+        if (filters?.docNumber && filters.docNumber.trim() !== '') query = query.eq('doc_number', filters.docNumber);
 
         let allData: any[] = [];
         let from = 0;
@@ -409,7 +677,7 @@ export const financeService = {
           // Range é aplicado sobre a query já filtrada
           const { data, error } = await query
             .order('date', { ascending: false })
-            .order('id')
+            .order('created_at', { ascending: false })
             .range(from, to);
 
           if (error) throw new Error(formatSupabaseError(error));
@@ -429,7 +697,9 @@ export const financeService = {
         const uniqueData = Array.from(new Map(allData.map(item => [item.id, item])).values());
         return uniqueData.map(mapTransactionFromDb);
       } catch (e: any) {
-        console.error("Supabase fetch failed, falling back to local data", e);
+        // Silencia o erro para aviso, pois o fallback local é o comportamento padrão sem configuração
+        console.warn("Dica: Supabase não conectado (usando dados locais). Isso é normal se você ainda não configurou as chaves do banco de dados.");
+        
         if (e.message?.includes('fetch') || e.name === 'TypeError') {
           // Fall through to local fallback
         } else {
@@ -450,7 +720,16 @@ export const financeService = {
         if (filters.status && filters.status !== 'ALL') localData = localData.filter(t => t.status === filters.status);
     }
 
-    localData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    localData.sort((a, b) => {
+        const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+        if (dateDiff !== 0) return dateDiff;
+        
+        // Secondary sort: Newest creation first
+        if (a.createdAt && b.createdAt) {
+            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }
+        return (b.id || '').localeCompare(a.id || '');
+    });
 
     return localData;
   },
@@ -500,8 +779,10 @@ export const financeService = {
             }
         }
       } catch (e: any) {
-        console.error("Supabase balance fetch failed, falling back to local data", e);
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+        console.error("Supabase balance fetch failed", e);
+        
+        const isFetchError = e.message?.includes('fetch') || e.name === 'TypeError';
+        if (isFetchError) {
           // Fallback logic below
           const local = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
           rows = local.filter(t => 
@@ -562,6 +843,7 @@ export const financeService = {
         return mapTransactionFromDb(data);
       } catch (e: any) {
         console.error("Supabase save failed, falling back to local data", e);
+        
         if (e.message?.includes('fetch') || e.name === 'TypeError') {
           // Fall through to local fallback
         } else {
@@ -595,6 +877,7 @@ export const financeService = {
         return (data || []).map(mapTransactionFromDb);
       } catch (e: any) {
         console.error("Supabase bulk save failed, falling back to local data", e);
+        
         if (e.message?.includes('fetch') || e.name === 'TypeError') {
           // Fall through to local fallback
         } else {
@@ -622,6 +905,7 @@ export const financeService = {
         return;
       } catch (e: any) {
         console.error("Supabase delete failed, falling back to local data", e);
+        
         if (e.message?.includes('fetch') || e.name === 'TypeError') {
           // Fall through to local fallback
         } else {
@@ -633,6 +917,38 @@ export const financeService = {
     let list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
     list = list.filter(t => !ids.includes(t.id));
     saveEntityLocal(KEYS.TRANSACTIONS, list);
+  },
+
+  async updateTransactionsStatus(ids: string[], status: 'PAID' | 'PENDING'): Promise<void> {
+    const supabase = getSupabase();
+    
+    // Invalida cache de saldos
+    cache.balances = {};
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('transactions')
+          .update({ status })
+          .in('id', ids);
+        
+        if (error) throw new Error(formatSupabaseError(error));
+        return;
+      } catch (e: any) {
+        console.error("Supabase update status failed, falling back to local data", e);
+        
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    await delay(300);
+    const list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
+    const updatedList = list.map(t => ids.includes(t.id) ? { ...t, status } : t);
+    saveEntityLocal(KEYS.TRANSACTIONS, updatedList);
   },
 
   async getRegistry<T extends BaseEntity>(type: string, forceRefresh = false): Promise<T[]> {
@@ -661,10 +977,19 @@ export const financeService = {
         let to = 999;
         let finished = false;
 
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id;
+
         while (!finished) {
-          const { data, error } = await supabase
+          let query = supabase
             .from(tableMap[type])
-            .select('*')
+            .select('*');
+          
+          // if (userId) {
+          //   query = query.eq('user_id', userId);
+          // }
+
+          const { data, error } = await query
             .order('name')
             .order('id')
             .range(from, to);
@@ -724,6 +1049,9 @@ export const financeService = {
         cache.registries[type] = { data: result, timestamp: Date.now() };
 
         // Salva no localStorage para persistência entre sessões
+        // NOTA: Só salvamos se o resultado não for vazio OU se o banco estiver realmente vazio.
+        // Se o Supabase retornar vazio, mas temos dados locais, talvez devêssemos manter os locais?
+        // Por enquanto, confiamos no Supabase como fonte da verdade se conectado.
         const keyMap: any = { 
           banks: KEYS.BANKS, 
           categories: KEYS.CATEGORIES, 
@@ -780,6 +1108,15 @@ export const financeService = {
       assetSectors: 'asset_sectors',
       assetTickers: 'asset_tickers'
     };
+    
+    // Obter antigo nome para sincronização em cascata se for edição de tipo ou setor
+    let oldName = '';
+    if (item.id && (type === 'assetTypes' || type === 'assetSectors')) {
+      const currentList = await this.getRegistry(type);
+      const existingItem = currentList.find(i => i.id === item.id);
+      if (existingItem) oldName = existingItem.name;
+    }
+
     const itemToSave = {
         ...item,
         id: (item.id && item.id.trim() !== '') ? item.id : uuidv4()
@@ -811,8 +1148,22 @@ export const financeService = {
             payload.ticker = (item as any).ticker || '';
         }
         
+        const storedUserId = localStorage.getItem('supabase_user_id');
+        if (storedUserId) payload.user_id = storedUserId;
+
         let { data, error } = await supabase.from(tableMap[type]).upsert(payload).select().single();
         
+        // Sincronização em cascata (Supabase)
+        if (!error && oldName && oldName !== itemToSave.name) {
+          if (type === 'assetTypes') {
+            await supabase.from('participants').update({ category: itemToSave.name }).eq('category', oldName);
+          } else if (type === 'assetSectors') {
+            await supabase.from('participants').update({ sector: itemToSave.name }).eq('sector', oldName);
+          }
+          // Invalida cache de participantes para refletir as mudanças
+          delete cache.registries['participants'];
+        }
+
         // Fallback para quando a coluna target_price não existe no Supabase (Erro PGRST204)
         if (error && error.code === 'PGRST204' && type === 'participants') {
             console.warn("Coluna 'target_price' não encontrada no Supabase. Salvando localmente como fallback.");
@@ -877,6 +1228,7 @@ export const financeService = {
         return result;
       } catch (e: any) {
         console.error(`Supabase registry save failed for ${type}, falling back to local data`, e);
+
         if (e.message?.includes('fetch') || e.name === 'TypeError') {
           // Fall through to local fallback
         } else {
@@ -884,6 +1236,8 @@ export const financeService = {
         }
       }
     }
+
+    // FALLBACK LOCAL
     const keyMap: any = { 
       banks: KEYS.BANKS, 
       categories: KEYS.CATEGORIES, 
@@ -897,6 +1251,24 @@ export const financeService = {
     const list = getEntityLocal<T>(keyMap[type], (INITIAL_DATA as any)[type]);
     const index = list.findIndex(x => x.id === itemToSave.id);
     
+    // Sincronização em cascata (Local)
+    if (oldName && oldName !== itemToSave.name) {
+      let partList = getEntityLocal<Participant>(KEYS.PARTICIPANTS, INITIAL_DATA.participants);
+      let changed = false;
+      partList = partList.map(p => {
+        if (type === 'assetTypes' && p.category === oldName) {
+          changed = true;
+          return { ...p, category: itemToSave.name };
+        }
+        if (type === 'assetSectors' && p.sector === oldName) {
+          changed = true;
+          return { ...p, sector: itemToSave.name };
+        }
+        return p;
+      });
+      if (changed) saveEntityLocal(KEYS.PARTICIPANTS, partList);
+    }
+
     const finalItem = { ...itemToSave };
     if (type === 'banks' && !(finalItem as any).currency) {
         (finalItem as any).currency = 'BRL';
@@ -944,15 +1316,36 @@ export const financeService = {
 
     if (supabase) {
       try {
-        // Antes de excluir, desvincula dos lançamentos para evitar erro de chave estrangeira
+        // Bloqueio de exclusão com vínculo (Supabase)
         const fkName = fkMap[type];
         if (fkName) {
-          await supabase.from('transactions').update({ [fkName]: null }).eq(fkName, id);
+          const { count, error: checkError } = await supabase.from('transactions').select('*', { count: 'exact', head: true }).eq(fkName, id);
+          if (checkError) throw checkError;
+          if (count && count > 0) {
+            throw new Error(`Não é possível excluir este registro pois ele possui ${count} lançamentos vinculados.`);
+          }
         }
 
-        // Se for banco, desvincula das carteiras
         if (type === 'banks') {
-          await supabase.from('wallets').update({ bank_id: null }).eq('bank_id', id);
+          const { count, error: checkError } = await supabase.from('wallets').select('*', { count: 'exact', head: true }).eq('bank_id', id);
+          if (checkError) throw checkError;
+          if (count && count > 0) {
+            throw new Error(`Não é possível excluir este banco pois ele possui ${count} carteiras/portfólios vinculados.`);
+          }
+        }
+
+        // Verificação para Tipos de Ativo e Setores (Vinculados aos Participantes)
+        if (type === 'assetTypes' || type === 'assetSectors') {
+          const currentList = await this.getRegistry(type);
+          const item = currentList.find(i => i.id === id);
+          if (item) {
+            const column = type === 'assetTypes' ? 'category' : 'sector';
+            const { count, error: checkError } = await supabase.from('participants').select('*', { count: 'exact', head: true }).eq(column, item.name);
+            if (checkError) throw checkError;
+            if (count && count > 0) {
+              throw new Error(`Não é possível excluir este ${type === 'assetTypes' ? 'tipo' : 'setor'} pois ele está sendo usado em ${count} participantes.`);
+            }
+          }
         }
 
         const { error } = await supabase.from(tableMap[type]).delete().eq('id', id);
@@ -976,48 +1369,43 @@ export const financeService = {
         return;
       } catch (e: any) {
         console.error(`Supabase registry delete failed for ${type}, falling back to local data`, e);
+        
         if (e.message?.includes('fetch') || e.name === 'TypeError') {
           // Fall through to local fallback
         } else {
-          throw e;
+          throw e; // Lança o erro de bloqueio para que o usuário veja
         }
       }
     }
     
+    // FALLBACK LOCAL (com bloqueio)
     const localFkName = localFkMap[type];
     if (localFkName) {
         let transactions = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, []);
-        let hasChanges = false;
-        transactions = transactions.map(t => {
-            if ((t as any)[localFkName] === id) {
-                hasChanges = true;
-                return { ...t, [localFkName]: '' };
-            }
-            return t;
-        });
-        if (hasChanges) {
-            saveEntityLocal(KEYS.TRANSACTIONS, transactions);
+        const count = transactions.filter(t => (t as any)[localFkName] === id).length;
+        if (count > 0) {
+            throw new Error(`Não é possível excluir este registro pois ele possui ${count} lançamentos vinculados.`);
         }
 
         if (type === 'banks') {
             let wallets = getEntityLocal<any>(KEYS.WALLETS, []);
-            let walletChanges = false;
-            wallets = wallets.map((w: any) => {
-                if (w.bankId === id) {
-                    walletChanges = true;
-                    return { ...w, bankId: '' };
-                }
-                return w;
-            });
-            if (walletChanges) {
-                saveEntityLocal(KEYS.WALLETS, wallets);
+            const wCount = wallets.filter((w: any) => w.bankId === id).length;
+            if (wCount > 0) {
+              throw new Error(`Não é possível excluir este banco pois ele possui ${wCount} carteiras vinculadas.`);
             }
         }
     }
 
-    if (type === 'banks') {
-        // Banks are accounts, they are used in transactions. 
-        // We already check localFkMap above.
+    if (type === 'assetTypes' || type === 'assetSectors') {
+        const currentList = getEntityLocal<BaseEntity>(type === 'assetTypes' ? KEYS.ASSET_TYPES : KEYS.ASSET_SECTORS, []);
+        const item = currentList.find(i => i.id === id);
+        if (item) {
+            const partList = getEntityLocal<Participant>(KEYS.PARTICIPANTS, []);
+            const count = partList.filter(p => (type === 'assetTypes' ? p.category : p.sector) === item.name).length;
+            if (count > 0) {
+                throw new Error(`Não é possível excluir este ${type === 'assetTypes' ? 'tipo' : 'setor'} pois ele está sendo usado em ${count} participantes.`);
+            }
+        }
     }
 
     const keyMap: any = { 
@@ -1337,20 +1725,26 @@ export const financeService = {
     const participants = (await this.getRegistry('participants')) as Participant[];
     const stats = { types: 0, sectors: 0, tickers: 0 };
     
-    // 1. Sync Asset Types
-    const uniqueTypes = Array.from(new Set(participants.map(p => p.category).filter(Boolean))) as string[];
+    // 1. Sync Asset Types (Participants + Defaults)
+    const typesToSync = new Set([
+        ...participants.map(p => p.category).filter(Boolean),
+        ...INITIAL_DATA.assetTypes.map(t => t.name)
+    ]);
     const existingTypes = (await this.getRegistry('assetTypes')) as AssetType[];
-    for (const typeName of uniqueTypes) {
+    for (const typeName of Array.from(typesToSync)) {
       if (!existingTypes.find(t => t.name.toLowerCase() === typeName.toLowerCase())) {
         await this.saveRegistryItem('assetTypes', { id: '', name: typeName });
         stats.types++;
       }
     }
 
-    // 2. Sync Asset Sectors
-    const uniqueSectors = Array.from(new Set(participants.map(p => p.sector).filter(Boolean))) as string[];
+    // 2. Sync Asset Sectors (Participants + Defaults)
+    const sectorsToSync = new Set([
+        ...participants.map(p => p.sector).filter(Boolean),
+        ...INITIAL_DATA.assetSectors.map(s => s.name)
+    ]);
     const existingSectors = (await this.getRegistry('assetSectors')) as AssetSector[];
-    for (const sectorName of uniqueSectors) {
+    for (const sectorName of Array.from(sectorsToSync)) {
       if (!existingSectors.find(s => s.name.toLowerCase() === sectorName.toLowerCase())) {
         await this.saveRegistryItem('assetSectors', { id: '', name: sectorName });
         stats.sectors++;

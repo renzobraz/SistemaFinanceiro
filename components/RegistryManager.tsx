@@ -97,6 +97,13 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
     title: string;
   }>({ isOpen: false, type: 'DELETE', data: null, message: '', title: '' });
 
+  const isAssetRegistry = title.toLowerCase().includes('participante');
+  const isBankRegistry = title.toLowerCase().includes('banco');
+  
+  const gridClasses = isAssetRegistry 
+    ? 'grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px]' 
+    : 'grid grid-cols-[minmax(200px,1fr)_120px_100px]';
+
   const filteredItems = useMemo(() => {
     const filtered = items.filter(item => {
       const matchesName = !nameFilter || item.name.toLowerCase().includes(nameFilter.toLowerCase());
@@ -569,115 +576,151 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto flex flex-col">
-          {title.toLowerCase().includes('participante') && (
-            <div className="sticky top-0 z-20 bg-slate-50 border-b border-slate-200 shadow-sm">
-              {/* Cabeçalho de Títulos e Ordenação */}
-              <div className="grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px] gap-4 px-6 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                <button 
-                  onClick={() => toggleSort('name')}
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
-                >
-                  Participante {getSortIcon('name')}
-                </button>
-                <button 
-                  onClick={() => toggleSort('category')}
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
-                >
-                  Tipo {getSortIcon('category')}
-                </button>
-                <button 
-                  onClick={() => toggleSort('sector')}
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
-                >
-                  Setor {getSortIcon('sector')}
-                </button>
-                <button 
-                  onClick={() => toggleSort('ticker')}
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
-                >
-                  Ticker {getSortIcon('ticker')}
-                </button>
-                <button 
-                  onClick={() => toggleSort('currency')}
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
-                >
-                  Moeda {getSortIcon('currency')}
-                </button>
-                <div className="text-center">Ações</div>
+          <div className="sticky top-0 z-20 bg-slate-50 border-b border-slate-200 shadow-sm">
+            {/* Cabeçalho de Títulos e Ordenação */}
+            <div className={`${gridClasses} gap-4 px-6 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider`}>
+              <button 
+                onClick={() => toggleSort('name')}
+                className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
+              >
+                {isAssetRegistry ? 'Participante' : 'Nome'} {getSortIcon('name')}
+              </button>
+
+              {isAssetRegistry ? (
+                <>
+                  <button 
+                    onClick={() => toggleSort('category')}
+                    className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
+                  >
+                    Tipo {getSortIcon('category')}
+                  </button>
+                  <button 
+                    onClick={() => toggleSort('sector')}
+                    className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
+                  >
+                    Setor {getSortIcon('sector')}
+                  </button>
+                  <button 
+                    onClick={() => toggleSort('ticker')}
+                    className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
+                  >
+                    Ticker {getSortIcon('ticker')}
+                  </button>
+                  <button 
+                    onClick={() => toggleSort('currency')}
+                    className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
+                  >
+                    Moeda {getSortIcon('currency')}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {isBankRegistry ? (
+                    <button 
+                      onClick={() => toggleSort('currency')}
+                      className="flex items-center justify-center gap-1 hover:text-blue-600 transition-colors text-center group/sort"
+                    >
+                      Moeda {getSortIcon('currency')}
+                    </button>
+                  ) : <div></div>}
+                </>
+              )}
+              <div className="text-center">Ações</div>
+            </div>
+
+            {/* Linha de Filtros */}
+            <div className={`${gridClasses} gap-4 px-6 pb-3`}>
+              <div className="relative">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                <input 
+                  type="text" 
+                  value={nameFilter} 
+                  onChange={e => setNameFilter(e.target.value)}
+                  className="w-full font-normal pl-7 pr-2 py-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all"
+                  placeholder="Pesquisar..."
+                />
               </div>
 
-              {/* Linha de Filtros */}
-              <div className="grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px] gap-4 px-6 pb-3">
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
-                  <input 
-                    type="text" 
-                    value={nameFilter} 
-                    onChange={e => setNameFilter(e.target.value)}
-                    className="w-full font-normal pl-7 pr-2 py-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all"
-                    placeholder="Filtrar nome..."
-                  />
-                </div>
-                <select 
-                  value={categoryFilter} 
-                  onChange={e => setCategoryFilter(e.target.value)}
-                  className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
-                >
-                  <option value="">Todos</option>
-                  <option value="EMPTY">(Vazio)</option>
-                  {assetTypes?.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>) || uniqueCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                </select>
-                <select 
-                  value={sectorFilter} 
-                  onChange={e => setSectorFilter(e.target.value)}
-                  className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
-                >
-                  <option value="">Todos</option>
-                  <option value="EMPTY">(Vazio)</option>
-                  {assetSectors?.map(s => <option key={s.id} value={s.name}>{s.name}</option>) || uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
-                  <input 
-                    type="text" 
-                    value={tickerFilter} 
-                    onChange={e => setTickerFilter(e.target.value)}
-                    className="w-full font-normal pl-7 pr-2 py-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all"
-                    placeholder="Ticker..."
-                  />
-                </div>
-                <select 
-                  value={currencyFilter} 
-                  onChange={e => setCurrencyFilter(e.target.value)}
-                  className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
-                >
-                  <option value="">Todas</option>
-                  <option value="EMPTY">(Vazio)</option>
-                  {uniqueCurrencies.map(curr => <option key={curr} value={curr}>{curr}</option>)}
-                </select>
-                <div className="flex items-center justify-center">
-                  {(nameFilter || categoryFilter || sectorFilter || tickerFilter || currencyFilter) && (
-                    <button 
-                      onClick={() => {
-                        setNameFilter('');
-                        setCategoryFilter('');
-                        setSectorFilter('');
-                        setTickerFilter('');
-                        setCurrencyFilter('');
-                      }}
-                      className="text-[9px] text-red-500 hover:text-red-700 font-bold underline underline-offset-2 uppercase"
+              {isAssetRegistry ? (
+                <>
+                  <select 
+                    value={categoryFilter} 
+                    onChange={e => setCategoryFilter(e.target.value)}
+                    className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
+                  >
+                    <option value="">Todos</option>
+                    <option value="EMPTY">(Vazio)</option>
+                    {((assetTypes && assetTypes.length > 0) ? assetTypes : []).map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
+                    {(assetTypes && assetTypes.length > 0) ? null : uniqueCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                  </select>
+                  <select 
+                    value={sectorFilter} 
+                    onChange={e => setSectorFilter(e.target.value)}
+                    className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
+                  >
+                    <option value="">Todos</option>
+                    <option value="EMPTY">(Vazio)</option>
+                    {((assetSectors && assetSectors.length > 0) ? assetSectors : []).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                    {(assetSectors && assetSectors.length > 0) ? null : uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                    <input 
+                      type="text" 
+                      value={tickerFilter} 
+                      onChange={e => setTickerFilter(e.target.value)}
+                      className="w-full font-normal pl-7 pr-2 py-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all"
+                      placeholder="Ticker..."
+                    />
+                  </div>
+                  <select 
+                    value={currencyFilter} 
+                    onChange={e => setCurrencyFilter(e.target.value)}
+                    className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
+                  >
+                    <option value="">Todas</option>
+                    <option value="EMPTY">(Vazio)</option>
+                    {uniqueCurrencies.map(curr => <option key={curr} value={curr}>{curr}</option>)}
+                  </select>
+                </>
+              ) : (
+                <>
+                  {isBankRegistry ? (
+                    <select 
+                      value={currencyFilter} 
+                      onChange={e => setCurrencyFilter(e.target.value)}
+                      className="w-full font-normal p-1 border border-slate-200 rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer"
                     >
-                      Limpar
-                    </button>
-                  )}
-                </div>
+                      <option value="">Todas</option>
+                      <option value="EMPTY">(Vazio)</option>
+                      {uniqueCurrencies.map(curr => <option key={curr} value={curr}>{curr}</option>)}
+                    </select>
+                  ) : <div></div>}
+                </>
+              )}
+
+              <div className="flex items-center justify-center">
+                {(nameFilter || categoryFilter || sectorFilter || tickerFilter || currencyFilter) && (
+                  <button 
+                    onClick={() => {
+                      setNameFilter('');
+                      setCategoryFilter('');
+                      setSectorFilter('');
+                      setTickerFilter('');
+                      setCurrencyFilter('');
+                    }}
+                    className="text-[9px] text-red-500 hover:text-red-700 font-bold underline underline-offset-2 uppercase"
+                  >
+                    Limpar
+                  </button>
+                )}
               </div>
             </div>
-          )}
+          </div>
 
           <div className="flex-1 overflow-y-auto">
             {isAdding && (
-            <div className={`bg-blue-50/50 border-b border-blue-100 animate-fade-in ${title.toLowerCase().includes('participante') ? 'grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px] gap-4 items-center px-6 py-4' : 'flex flex-col sm:flex-row gap-2 p-4'}`}>
+            <div className={`bg-blue-50/50 border-b border-blue-100 animate-fade-in ${gridClasses} gap-4 items-center px-6 py-4`}>
               <input
                 autoFocus
                 type="text"
@@ -687,36 +730,30 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                 className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                 placeholder="Nome do registro..."
               />
-              {title.toLowerCase().includes('banco') && (
+              {isBankRegistry ? (
                 <>
-                  <select
-                    disabled={isSaving}
-                    value={tempWalletType}
-                    onChange={(e) => setTempWalletType(e.target.value as WalletType)}
-                    className="w-full sm:w-32 bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
-                  >
-                    <option value="CHECKING">Corrente</option>
-                    <option value="INVESTMENT">Investimento</option>
-                  </select>
+                   <div className="flex gap-2">
+                    <select
+                      disabled={isSaving}
+                      value={tempWalletType}
+                      onChange={(e) => setTempWalletType(e.target.value as WalletType)}
+                      className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                    >
+                      <option value="CHECKING">Corrente</option>
+                      <option value="INVESTMENT">Investimento</option>
+                    </select>
                     <select
                       disabled={isSaving}
                       value={tempCurrency}
                       onChange={(e) => setTempCurrency(e.target.value as Currency)}
-                      className="w-full sm:w-24 bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                      className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                     >
                       <option value="BRL">BRL</option>
                       <option value="USD">USD</option>
-                      <option value="EUR">EUR</option>
-                      <option value="GBP">GBP</option>
-                      <option value="JPY">JPY</option>
-                      <option value="CHF">CHF</option>
-                      <option value="CAD">CAD</option>
-                      <option value="AUD">AUD</option>
-                      <option value="CNY">CNY</option>
                     </select>
+                   </div>
                 </>
-              )}
-              {title.toLowerCase().includes('participante') && (
+              ) : isAssetRegistry ? (
                 <>
                     <select
                       disabled={isSaving}
@@ -725,7 +762,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                     >
                       <option value="">Tipo...</option>
-                      {assetTypes?.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                      {((assetTypes && assetTypes.length > 0) ? assetTypes : []).map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                     </select>
                     <select
                       disabled={isSaving}
@@ -734,7 +771,8 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                     >
                       <option value="">Setor...</option>
-                      {assetSectors?.map(s => <option key={s.id} value={s.name}>{s.name}</option>) || uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
+                      {((assetSectors && assetSectors.length > 0) ? assetSectors : []).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                      {(assetSectors && assetSectors.length > 0) ? null : uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                     <input
                       type="text"
@@ -752,15 +790,10 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                     >
                       <option value="BRL">BRL</option>
                       <option value="USD">USD</option>
-                      <option value="EUR">EUR</option>
-                      <option value="GBP">GBP</option>
-                      <option value="JPY">JPY</option>
-                      <option value="CHF">CHF</option>
-                      <option value="CAD">CAD</option>
-                      <option value="AUD">AUD</option>
-                      <option value="CNY">CNY</option>
                     </select>
                 </>
+              ) : (
+                <div className="w-full"></div>
               )}
               {foreignItems && (
                 <select
@@ -786,7 +819,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
 
           <div className="divide-y divide-slate-100">
             {filteredItems.map(item => (
-              <div key={item.id} className={`group hover:bg-slate-50/50 transition-all ${title.toLowerCase().includes('participante') ? 'grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px] gap-4 items-center px-6 py-3' : 'flex items-center justify-between p-4'}`}>
+              <div key={item.id} className={`group hover:bg-slate-50/50 transition-all ${gridClasses} gap-4 items-center px-6 py-3`}>
                 {editingId === item.id ? (
                   <>
                     <input
@@ -798,7 +831,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       className="w-full bg-white border border-blue-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                       placeholder="Nome..."
                     />
-                    {title.toLowerCase().includes('participante') && (
+                    {isAssetRegistry ? (
                       <>
                         <select
                           disabled={isSaving}
@@ -807,7 +840,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                           className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                         >
                           <option value="">Tipo...</option>
-                          {assetTypes?.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                          {((assetTypes && assetTypes.length > 0) ? assetTypes : []).map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                         </select>
                         <select
                           disabled={isSaving}
@@ -816,7 +849,8 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                           className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
                         >
                           <option value="">Setor...</option>
-                          {assetSectors?.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                          {((assetSectors && assetSectors.length > 0) ? assetSectors : []).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                          {(assetSectors && assetSectors.length > 0) ? null : uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                         <input
                           type="text"
@@ -824,7 +858,6 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                           value={tempTicker}
                           onChange={(e) => setTempTicker(e.target.value)}
                           className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 uppercase shadow-sm"
-                          placeholder="Ticker..."
                         />
                         <select
                           disabled={isSaving}
@@ -834,59 +867,44 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                         >
                           <option value="BRL">BRL</option>
                           <option value="USD">USD</option>
-                          <option value="EUR">EUR</option>
-                          <option value="GBP">GBP</option>
-                          <option value="JPY">JPY</option>
-                          <option value="CHF">CHF</option>
-                          <option value="CAD">CAD</option>
-                          <option value="AUD">AUD</option>
-                          <option value="CNY">CNY</option>
                         </select>
                       </>
+                    ) : isBankRegistry ? (
+                      <div className="flex gap-2">
+                        <select
+                          disabled={isSaving}
+                          value={tempWalletType}
+                          onChange={(e) => setTempWalletType(e.target.value as WalletType)}
+                          className="w-full bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
+                        >
+                          <option value="CHECKING">Corrente</option>
+                          <option value="INVESTMENT">Investimento</option>
+                        </select>
+                        <select
+                          disabled={isSaving}
+                          value={tempCurrency}
+                          onChange={(e) => setTempCurrency(e.target.value as Currency)}
+                          className="w-full bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
+                        >
+                          <option value="BRL">BRL</option>
+                          <option value="USD">USD</option>
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="w-full"></div>
                     )}
-                  {title.toLowerCase().includes('banco') && (
-                    <>
+                    
+                    {foreignItems && (
                       <select
                         disabled={isSaving}
-                        value={tempWalletType}
-                        onChange={(e) => setTempWalletType(e.target.value as WalletType)}
-                        className="w-full sm:w-32 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
+                        value={tempForeignKey}
+                        onChange={(e) => setTempForeignKey(e.target.value)}
+                        className="w-full sm:w-48 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
                       >
-                        <option value="CHECKING">Corrente</option>
-                        <option value="INVESTMENT">Investimento</option>
+                        <option value="">{foreignLabel || 'Selecione...'}</option>
+                        {foreignItems.map(fItem => <option key={fItem.id} value={fItem.id}>{fItem.name}</option>)}
                       </select>
-                      <select
-                        disabled={isSaving}
-                        value={tempCurrency}
-                        onChange={(e) => setTempCurrency(e.target.value as Currency)}
-                        className="w-full sm:w-24 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
-                      >
-                        <option value="BRL">BRL</option>
-                        <option value="USD">USD</option>
-                        <option value="EUR">EUR</option>
-                        <option value="GBP">GBP</option>
-                        <option value="JPY">JPY</option>
-                        <option value="CHF">CHF</option>
-                        <option value="CAD">CAD</option>
-                        <option value="AUD">AUD</option>
-                        <option value="CNY">CNY</option>
-                      </select>
-                    </>
-                  )}
-                  {title.toLowerCase().includes('carteira') && (
-                    null // Wallet is now just a portfolio/company name
-                  )}
-                  {foreignItems && (
-                    <select
-                      disabled={isSaving}
-                      value={tempForeignKey}
-                      onChange={(e) => setTempForeignKey(e.target.value)}
-                      className="w-full sm:w-48 bg-white border border-blue-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100"
-                    >
-                      <option value="">{foreignLabel || 'Selecione...'}</option>
-                      {foreignItems.map(fItem => <option key={fItem.id} value={fItem.id}>{fItem.name}</option>)}
-                    </select>
-                  )}
+                    )}
                     <div className="flex gap-1 w-full justify-end">
                       <button onClick={handleSaveEdit} disabled={isSaving} className="bg-green-600 text-white p-2 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center shadow-sm">
                         {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -910,7 +928,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       )}
                     </div>
 
-                    {title.toLowerCase().includes('participante') && (
+                    {isAssetRegistry ? (
                       <>
                         <div className="flex items-center">
                           {item.category && (
@@ -941,26 +959,16 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                           )}
                         </div>
                       </>
-                    )}
-
-                    {!title.toLowerCase().includes('participante') && (
-                      <div className="flex items-center gap-2">
-                        {item.ticker && (
-                          <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded-lg border border-slate-200 font-black uppercase tracking-widest">
-                            {item.ticker}
-                          </span>
-                        )}
-                        {item.category && (
-                          <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded-lg border border-blue-100 font-bold uppercase tracking-wider">
-                            {item.category}
-                          </span>
-                        )}
-                        {item.currency && (
-                          <span className="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 rounded-lg border border-emerald-100 font-bold uppercase tracking-wider">
-                            {item.currency}
-                          </span>
-                        )}
+                    ) : isBankRegistry ? (
+                      <div className="flex items-center justify-center">
+                         {item.currency && (
+                            <span className="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 rounded-lg border border-emerald-100 font-bold uppercase tracking-wider">
+                              {item.currency}
+                            </span>
+                          )}
                       </div>
+                    ) : (
+                      <div></div>
                     )}
 
                     <div className="flex items-center gap-1 justify-end">

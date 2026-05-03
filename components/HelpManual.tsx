@@ -8,7 +8,8 @@ import {
   ArrowRightLeft, 
   Filter,
   DollarSign,
-  PieChart as PieChartIcon
+  PieChart as PieChartIcon,
+  RefreshCw
 } from 'lucide-react';
 
 export const HelpManual: React.FC = () => {
@@ -83,19 +84,22 @@ export const HelpManual: React.FC = () => {
               <div className="bg-blue-50 p-5 rounded-xl border border-blue-100 space-y-4">
                 <div className="flex gap-3">
                   <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">1</div>
-                  <p><strong>Aporte de Capital:</strong> Faça uma <strong>Transferência</strong> da sua conta corrente para sua conta de investimento. Isso apenas move o "dinheiro vivo" (caixa) entre as contas.</p>
+                  <div className="space-y-1">
+                    <p><strong>Aporte/Compra:</strong> Lance um <strong>Débito</strong> selecionando o Ativo (Participante) de Renda Fixa. O Saldo do Banco diminuirá e o valor passará a compor sua carteira.</p>
+                  </div>
                 </div>
                 <div className="flex gap-3">
-                  <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">2</div>
-                  <p><strong>Compra do Ativo:</strong> Na conta de investimento, crie um lançamento de <strong>Débito</strong>. Selecione o <strong>Ativo (Participante)</strong>, preencha a <strong>Quantidade</strong> e o <strong>Preço Unitário</strong>.</p>
+                  <div className="w-6 h-6 bg-emerald-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">2</div>
+                  <div className="space-y-1">
+                    <p><strong>Rendimentos (Automático):</strong> No Relatório de Performance, use o botão <RefreshCw className="inline w-3 h-3 text-emerald-500" /> nos ativos sem ticker.</p>
+                    <p className="text-[11px] text-slate-500 italic">Ao informar o novo saldo bruto, o sistema calcula o juros e cria automaticamente um lançamento de <strong>Crédito</strong> para ajustar seu saldo bancário real.</p>
+                  </div>
                 </div>
                 <div className="flex gap-3">
-                  <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">3</div>
-                  <p><strong>Recebimento de Proventos:</strong> Crie um lançamento de <strong>Crédito</strong> com o valor <strong>BRUTO</strong>, selecione o <strong>Ativo</strong> e a categoria <strong>"Proventos"</strong>.</p>
-                </div>
-                <div className="flex gap-3">
-                  <div className="w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">4</div>
-                  <p><strong>Impostos Retidos:</strong> Se houver imposto (ex: 30% nos EUA), crie um lançamento de <strong>Débito</strong> com o valor do imposto, selecione o mesmo <strong>Ativo</strong> e a categoria <strong>"Impostos s/ Proventos"</strong>. O sistema calculará automaticamente o <strong>Valor Líquido</strong> no relatório de performance.</p>
+                  <div className="w-6 h-6 bg-amber-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">3</div>
+                  <div className="space-y-1">
+                    <p><strong>Organização:</strong> Ativos sem Ticker (ex: CDB, LCI) não buscam cotação na internet, dependendo exclusivamente das suas atualizações manuais para o cálculo de lucro.</p>
+                  </div>
                 </div>
               </div>
               <p className="text-xs italic text-slate-500">

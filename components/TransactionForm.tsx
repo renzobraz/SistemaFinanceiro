@@ -199,8 +199,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     return registries.participants.filter((p) => {
       if (!p || !p.name) return false;
       if (searchTerms.length === 0) return true;
+      
       const nameLower = p.name.toLowerCase();
-      return searchTerms.every((term) => nameLower.includes(term));
+      const tickerLower = (p.ticker || "").toLowerCase();
+      
+      return searchTerms.every((term) => 
+        nameLower.includes(term) || tickerLower.includes(term)
+      );
     });
   }, [registries.participants, deferredParticipantSearch]);
 
@@ -208,7 +213,9 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     const search = (deferredParticipantSearch || "").trim().toLowerCase();
     if (!search) return false;
     return registries.participants.some(
-      (p) => p && p.name && p.name.toLowerCase() === search
+      (p) => 
+        (p && p.name && p.name.toLowerCase() === search) ||
+        (p && p.ticker && p.ticker.toLowerCase() === search)
     );
   }, [registries.participants, deferredParticipantSearch]);
 
@@ -219,10 +226,12 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     let minDistance = Infinity;
     for (const p of registries.participants) {
       if (!p || !p.name) continue;
-      const dist = getLevenshteinDistance(
-        p.name.toLowerCase(),
-        search
-      );
+      
+      const nameDist = getLevenshteinDistance(p.name.toLowerCase(), search);
+      const tickerDist = p.ticker ? getLevenshteinDistance(p.ticker.toLowerCase(), search) : Infinity;
+      
+      const dist = Math.min(nameDist, tickerDist);
+      
       if (dist < minDistance && dist <= 2) {
         minDistance = dist;
         closest = p;
@@ -448,6 +457,12 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
 
     setIsSaving(true);
 
+    if (!formData.participantId) {
+      alert("Por favor, selecione um participante.");
+      setIsSaving(false);
+      return;
+    }
+
     try {
       const transactionsToSave: Transaction[] = [];
       const isNew = !id;
@@ -625,6 +640,100 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           onSubmit={handleSubmit}
           className="p-6 overflow-y-auto bg-white flex-1 space-y-6"
         >
+          {/* 1. Carteira e Conta no topo */}
+          <div
+            className={`grid grid-cols-1 gap-6 ${mode === "TRANSFER" ? "md:grid-cols-4" : "md:grid-cols-2"}`}
+          >
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                Carteira/Portfólio
+              </label>
+              <select
+                required
+                disabled={isSaving}
+                value={formData.walletId}
+                onChange={(e) =>
+                  setFormData({ ...formData, walletId: e.target.value })
+                }
+                className={inputClass}
+              >
+                <option value="">Selecione...</option>
+                {sortedWallets.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                {mode === "TRANSFER" ? "Conta/Banco Origem" : "Conta/Banco"}
+              </label>
+              <select
+                required
+                disabled={isSaving}
+                value={formData.bankId}
+                onChange={(e) =>
+                  setFormData({ ...formData, bankId: e.target.value })
+                }
+                className={inputClass}
+              >
+                <option value="">Selecione...</option>
+                {sortedBanks.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {mode === "TRANSFER" && (
+              <>
+                <div>
+                  <label className="block text-xs font-bold text-blue-600 uppercase mb-1">
+                    Carteira Destino
+                  </label>
+                  <select
+                    required
+                    disabled={isSaving}
+                    value={targetWalletId}
+                    onChange={(e) => setTargetWalletId(e.target.value)}
+                    className={`${inputClass} border-blue-200 bg-blue-50/30`}
+                  >
+                    <option value="">Selecione...</option>
+                    {sortedWallets.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-blue-600 uppercase mb-1">
+                    Conta/Banco Destino
+                  </label>
+                  <select
+                    required
+                    disabled={isSaving}
+                    value={targetBankId}
+                    onChange={(e) => setTargetBankId(e.target.value)}
+                    className={`${inputClass} border-blue-200 bg-blue-50/30`}
+                  >
+                    <option value="">Selecione...</option>
+                    {sortedBanks.map((b) => (
+                      <option
+                        key={b.id}
+                        value={b.id}
+                        disabled={b.id === formData.bankId}
+                      >
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -861,177 +970,54 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             </div>
           )}
 
-          <div
-            className={`grid grid-cols-1 gap-6 ${mode === "TRANSFER" ? "md:grid-cols-4" : "md:grid-cols-3"}`}
-          >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                Carteira/Portfólio
+                Categoria <span className="text-red-500">*</span>
               </label>
               <select
                 required
                 disabled={isSaving}
-                value={formData.walletId}
+                value={formData.categoryId}
                 onChange={(e) =>
-                  setFormData({ ...formData, walletId: e.target.value })
+                  setFormData({ ...formData, categoryId: e.target.value })
                 }
-                className={inputClass}
+                className={`${inputClass} border-blue-100 bg-blue-50/10`}
               >
                 <option value="">Selecione...</option>
-                {sortedWallets.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
+                {sortedCategories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
                   </option>
                 ))}
               </select>
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                {mode === "TRANSFER" ? "Conta/Banco Origem" : "Conta/Banco"}
+                Centro de Custo <span className="text-red-500">*</span>
               </label>
               <select
                 required
                 disabled={isSaving}
-                value={formData.bankId}
+                value={formData.costCenterId}
                 onChange={(e) =>
-                  setFormData({ ...formData, bankId: e.target.value })
+                  setFormData({ ...formData, costCenterId: e.target.value })
                 }
-                className={inputClass}
+                className={`${inputClass} border-blue-100 bg-blue-50/10`}
               >
                 <option value="">Selecione...</option>
-                {sortedBanks.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
+                {sortedCostCenters.map((cc) => (
+                  <option key={cc.id} value={cc.id}>
+                    {cc.name}
                   </option>
                 ))}
               </select>
             </div>
-            {mode === "TRANSFER" && (
-              <>
-                <div>
-                  <label className="block text-xs font-bold text-blue-600 uppercase mb-1">
-                    Carteira Destino
-                  </label>
-                  <select
-                    required
-                    disabled={isSaving}
-                    value={targetWalletId}
-                    onChange={(e) => setTargetWalletId(e.target.value)}
-                    className={`${inputClass} border-blue-200 bg-blue-50/30`}
-                  >
-                    <option value="">Selecione...</option>
-                    {sortedWallets.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-blue-600 uppercase mb-1">
-                    Conta/Banco Destino
-                  </label>
-                  <select
-                    required
-                    disabled={isSaving}
-                    value={targetBankId}
-                    onChange={(e) => setTargetBankId(e.target.value)}
-                    className={`${inputClass} border-blue-200 bg-blue-50/30`}
-                  >
-                    <option value="">Selecione...</option>
-                    {sortedBanks.map((b) => (
-                      <option
-                        key={b.id}
-                        value={b.id}
-                        disabled={b.id === formData.bankId}
-                      >
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </>
-            )}
           </div>
-
-          {mode === "TRANSFER" && formData.bankId && targetBankId && (
-            (() => {
-              const sourceBank = registries.banks.find(b => b.id === formData.bankId);
-              const targetBank = registries.banks.find(b => b.id === targetBankId);
-              
-              if (sourceBank && targetBank && sourceBank.currency !== targetBank.currency) {
-                return (
-                  <div className="bg-blue-50 p-6 rounded-xl border border-blue-100 animate-fade-in space-y-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <ArrowRightLeft className="w-5 h-5 text-blue-600" />
-                      <h4 className="text-sm font-bold text-blue-800 uppercase tracking-wider">Câmbio e Taxas ({sourceBank.currency} → {targetBank.currency})</h4>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                      <div>
-                        <label className="block text-xs font-bold text-blue-700 uppercase mb-1">Cotação Comercial</label>
-                        <input
-                          type="number"
-                          step="0.0001"
-                          value={exchangeRate || ''}
-                          onChange={(e) => setExchangeRate(Number(e.target.value))}
-                          className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="Ex: 5.15"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-blue-700 uppercase mb-1">Spread (%)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={spread || ''}
-                          onChange={(e) => setSpread(Number(e.target.value))}
-                          className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="Ex: 1.5"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-blue-700 uppercase mb-1">IOF (%)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={iof || ''}
-                          onChange={(e) => setIof(Number(e.target.value))}
-                          className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="Ex: 1.1"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-blue-700 uppercase mb-1">VET (Final)</label>
-                        <input
-                          type="number"
-                          step="0.0001"
-                          value={vet || ''}
-                          onChange={(e) => setVet(Number(e.target.value))}
-                          className="w-full px-3 py-2 bg-blue-100 border border-blue-300 rounded-lg text-sm font-bold text-blue-800 outline-none"
-                          placeholder="VET"
-                        />
-                      </div>
-                    </div>
-
-                    {vet > 0 && formData.value > 0 && (
-                      <div className="pt-2 border-t border-blue-100 flex justify-between items-center">
-                        <span className="text-xs text-blue-600 font-medium">Valor Estimado no Destino:</span>
-                        <span className="text-lg font-bold text-blue-800">
-                          {targetBank.currency} {(formData.value / vet).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              }
-              return null;
-            })()
-          )}
 
           <div className="relative" ref={dropdownRef}>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                Participante
+                Participante <span className="text-red-500">*</span>
               </label>
               <div className="relative">
                 <input
@@ -1149,9 +1135,9 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                   <div className="py-1">
                     {filteredParticipants.length > 0 ? (
                       <List
-                        height={Math.min(filteredParticipants.length * 56, 250)}
+                        height={Math.min(filteredParticipants.length * 64, 320)}
                         itemCount={filteredParticipants.length}
-                        itemSize={56}
+                        itemSize={64}
                         width="100%"
                         className="custom-scrollbar"
                       >
@@ -1169,8 +1155,8 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                                 setParticipantSearch(p.name);
                                 setIsParticipantDropdownOpen(false);
                               }}
-                              className={`w-full text-left px-4 py-3 text-sm flex items-center gap-3 transition-colors ${
-                                index % 2 === 0 ? "bg-white" : "bg-slate-50"
+                              className={`w-full text-left px-4 py-3 text-sm flex items-center gap-3 transition-colors border-b border-slate-50 last:border-0 ${
+                                index % 2 === 0 ? "bg-white" : "bg-slate-50/50"
                               } hover:bg-blue-50 hover:text-blue-700 ${
                                 isFocused ? "bg-blue-100 ring-2 ring-inset ring-blue-500" : ""
                               }`}
@@ -1178,9 +1164,16 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                               <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 font-bold text-xs shrink-0">
                                 {p.name.substring(0, 2).toUpperCase()}
                               </div>
-                              <span className="font-medium truncate">
-                                <HighlightMatch text={p.name} search={deferredParticipantSearch} />
-                              </span>
+                              <div className="flex flex-col min-w-0">
+                                <span className="font-medium truncate">
+                                  <HighlightMatch text={p.name} search={deferredParticipantSearch} />
+                                </span>
+                                {p.ticker && (
+                                  <span className="text-[10px] text-blue-600 font-bold font-mono">
+                                    <HighlightMatch text={p.ticker} search={deferredParticipantSearch} />
+                                  </span>
+                                )}
+                              </div>
                             </button>
                           );
                         }}
@@ -1197,49 +1190,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               )}
             </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                Categoria
-              </label>
-              <select
-                required
-                disabled={isSaving}
-                value={formData.categoryId}
-                onChange={(e) =>
-                  setFormData({ ...formData, categoryId: e.target.value })
-                }
-                className={inputClass}
-              >
-                <option value="">Selecione...</option>
-                {sortedCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                Centro de Custo
-              </label>
-              <select
-                disabled={isSaving}
-                value={formData.costCenterId}
-                onChange={(e) =>
-                  setFormData({ ...formData, costCenterId: e.target.value })
-                }
-                className={inputClass}
-              >
-                <option value="">Selecione...</option>
-                {sortedCostCenters.map((cc) => (
-                  <option key={cc.id} value={cc.id}>
-                    {cc.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
         </form>
 
         <div className="p-6 border-t border-gray-100 bg-gray-50 flex flex-wrap justify-end gap-3">

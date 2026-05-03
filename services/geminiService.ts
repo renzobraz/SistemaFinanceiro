@@ -46,6 +46,23 @@ const CACHE_EXPIRY = {
   ASSET_PRICES: 15 * 60 * 1000,   // 15 minutos
 };
 
+const STRINGS_PARA_SILENCIAR = [
+  'subErrors',
+  'validation failed',
+  'Failed validation',
+  'yahoo-finance2',
+  'QuoteResponseArray',
+  'QuoteSummaryResult'
+];
+
+function cleanErrorMessage(error: any): string {
+  let msg = typeof error === 'string' ? error : (error?.message || String(error));
+  if (STRINGS_PARA_SILENCIAR.some(s => msg.includes(s))) {
+    return msg.split('\n')[0].split('https://')[0].split('{')[0].trim() || "Erro na consulta de dados financeiros";
+  }
+  return msg;
+}
+
 interface CachedResult<T> {
   data: T;
   timestamp: number;
@@ -91,34 +108,97 @@ export const geminiService = {
       }
     }
 
-    try {
-      // BUSCA REAL: Chama o nosso novo backend que consulta o Yahoo Finance
-      const response = await fetch(`/api/prices?tickers=${encodeURIComponent(tickers.join(","))}`);
-      if (!response.ok) throw new Error("Falha ao buscar preços reais");
-      
-      const sanitizedData = await response.json();
-      
-      // Mescla com cache existente
-      const existingRaw = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
-      const existing = existingRaw ? JSON.parse(existingRaw).data : {};
-      const merged = { ...existing, ...sanitizedData };
-      setCachedData(CACHE_KEYS.ASSET_PRICES, merged);
-      
-      return { prices: sanitizedData, timestamp: Date.now() };
-    } catch (error) {
-      console.error("Erro ao buscar preços reais via Backend:", error);
-      
-      // Se falhar o real, tenta o cache mesmo expirado
-      const stale = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
-      if (stale) {
-        try { 
-          const parsed = JSON.parse(stale);
-          return { prices: parsed.data, timestamp: parsed.timestamp }; 
-        } catch(e) {}
+    const maxRetries = 3;
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        // BUSCA REAL: Chama o nosso novo backend que consulta o Yahoo Finance
+        // Adiciona um timestamp para evitar cache do navegador
+        const response = await fetch(`/api/prices?tickers=${encodeURIComponent(tickers.join(","))}&_t=${Date.now()}`);
+        
+        const contentType = response.headers.get("content-type");
+        
+        if (!response.ok || !contentType || !contentType.includes("application/json")) {
+          const text = (await response.text()).substring(0, 500);
+          
+          if (text.includes("Starting Server...") || (response.status === 200 && text.includes("<!DOCTYPE html>"))) {
+            console.warn(`Attempt ${attempt + 1}: Backend ainda iniciando ou retornando HTML. Retentando em 2s...`);
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          
+          throw new Error(`Falha ao buscar preços reais: Status ${response.status}${!contentType?.includes("application/json") ? " (Não-JSON)" : ""}`);
+        }
+        
+        const sanitizedData = await response.json();
+        
+        // Mescla apenas dados válidos com o cache existente
+        const existingRaw = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
+        const existing = existingRaw ? JSON.parse(existingRaw).data : {};
+        
+        const validDataToCache: Record<string, any> = {};
+        Object.entries(sanitizedData).forEach(([t, val]: [string, any]) => {
+          if (val && val.current !== null) {
+            validDataToCache[t] = val;
+          }
+        });
+
+        const merged = { ...existing, ...validDataToCache };
+        setCachedData(CACHE_KEYS.ASSET_PRICES, merged);
+        
+        return { prices: sanitizedData, timestamp: Date.now() };
+      } catch (error) {
+        lastError = error;
+        console.warn(`Attempt ${attempt + 1} failed:`, cleanErrorMessage(error));
+        if (attempt < maxRetries - 1) await new Promise(r => setTimeout(r, 1500));
       }
     }
 
+    console.error("Todas as tentativas de buscar preços falharam:", cleanErrorMessage(lastError));
+    
+    // Se falhar o real após retentativas, tenta o cache mesmo expirado
+    const stale = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
+    if (stale) {
+      try { 
+        const parsed = JSON.parse(stale);
+        return { prices: parsed.data, timestamp: parsed.timestamp }; 
+      } catch(e) {}
+    }
+
     return { prices: {}, timestamp: Date.now() };
+  },
+
+  async fetchAssetHistory(ticker: string): Promise<{date: string, close: number}[]> {
+    const maxRetries = 2;
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const response = await fetch(`/api/history?ticker=${encodeURIComponent(ticker)}&_t=${Date.now()}`);
+        
+        const contentType = response.headers.get("content-type");
+        if (!response.ok || !contentType || !contentType.includes("application/json")) {
+          const text = (await response.text()).substring(0, 500);
+          
+          if (text.includes("Starting Server...") || (response.status === 200 && text.includes("<!DOCTYPE html>"))) {
+            console.warn(`Attempt ${attempt + 1}: Backend history ainda iniciando. Retentando em 2s...`);
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          throw new Error(`Falha ao buscar histórico: Status ${response.status}`);
+        }
+        
+        return await response.json();
+      } catch (error) {
+        lastError = error;
+        console.warn(`History attempt ${attempt + 1} failed:`, cleanErrorMessage(error));
+        if (attempt < maxRetries - 1) await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    console.error("Erro ao buscar histórico após retentativas:", cleanErrorMessage(lastError));
+    return [];
   },
 
   async getInvestmentSuggestions(assets: any[]): Promise<InvestmentSuggestion[]> {
@@ -207,5 +287,130 @@ export const geminiService = {
     }
 
     return { rates: { BRL: 1, USD: 5.15, EUR: 5.60, GBP: 6.55 }, timestamp: Date.now() };
+  },
+
+  async parseTransaction(description: string): Promise<any> {
+    const ai = getAi();
+    if (!ai) return null;
+    
+    const prompt = `Analise a seguinte descrição de transação bancária e extraia os dados em JSON:
+    "${description}"
+    
+    Campos necessários:
+    - description: Uma descrição limpa.
+    - amount: O valor numérico (positivo).
+    - type: 'INCOME' ou 'EXPENSE'.
+    - category: Uma categoria provável (ex: Alimentação, Transporte, Lazer, etc).
+    - participant: Nome da empresa ou pessoa envolvida.
+    
+    Responda APENAS o JSON puro.`;
+    
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      return JSON.parse(response.text.replace(/```json|```/g, '').trim());
+    } catch (e) {
+      return null;
+    }
+  },
+
+  async parseBrokerageNote(fileBase64: string, mimeType: string): Promise<any> {
+    const ai = getAi();
+    if (!ai) throw new Error("IA não configurada.");
+    
+    const prompt = `Analise esta Nota de Corretagem (Padrão SINACOR) e extraia os dados de forma estruturada em JSON.
+    
+    ESTRUTURA DESEJADA:
+    {
+      "metadata": { 
+        "date": "YYYY-MM-DD", 
+        "noteNumber": "string", 
+        "liquidValue": number, 
+        "settlementDate": "YYYY-MM-DD",
+        "isCredit": boolean (true se o valor líquido for C, false se for D)
+      },
+      "summary": {
+        "totalSales": number,
+        "totalPurchases": number,
+        "clearingFees": number,
+        "exchangeFees": number,
+        "brokerage": number,
+        "taxes": number,
+        "otherCosts": number
+      },
+      "trades": Array de [{ 
+         "ticker": "string", 
+         "type": "BUY" | "SELL", 
+         "quantity": number, 
+         "price": number, 
+         "total": number, 
+         "assetName": "string" 
+       }],
+      "costs": { "total": number, "details": "string" }
+    }
+
+    INSTRUÇÕES CRÍTICAS PARA NOTAS LONGAS:
+    - Esta nota pode ter MUITAS páginas ou linhas. NÃO OMITA NENHUMA LINHA de "Negócios Realizados".
+    - Se a tabela de negócios continuar em outra página, continue extraindo todos os itens.
+    - O "liquidValue" deve ser o valor exato encontrado no campo "Líquido para [Data]" ou "Total Líquido da Nota".
+    - "totalSales" é a soma de todos os itens com 'V' (Venda).
+    - "totalPurchases" é a soma de todos os itens com 'C' (Compra).
+    - "costs.total" deve ser a soma de TODAS as taxas (Liquidação, Registro, Emolumentos, Corretagem, ISS, IRRF).
+    
+    REGRAS DE VALIDAÇÃO:
+    - O valor de cada linha deve ser (quantidade * preço).
+    - O valor líquido final deve ser (Vendas - Compras - Taxas). Se vendas > compras+taxas, é Crédito (C). Caso contrário, Débito (D).
+    
+    Responda APENAS o JSON puro.`;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          { inlineData: { data: fileBase64, mimeType } },
+          prompt
+        ],
+        config: { 
+          responseMimeType: "application/json",
+          temperature: 0.1
+        }
+      });
+
+      const rawText = response.text || "";
+      
+      // Limpeza profunda para encontrar o bloco JSON
+      let cleanedText = rawText.trim();
+      
+      // Remove blocos de código se existirem
+      if (cleanedText.includes("```")) {
+        cleanedText = cleanedText.replace(/```json|```/g, "").trim();
+      }
+      
+      // Tenta localizar o primeiro '{' e o último '}' para garantir que temos apenas o objeto
+      const firstBrace = cleanedText.indexOf("{");
+      const lastBrace = cleanedText.lastIndexOf("}");
+      
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        cleanedText = cleanedText.substring(firstBrace, lastBrace + 1);
+      }
+
+      try {
+        return JSON.parse(cleanedText);
+      } catch (parseError) {
+        console.error("Erro de parse inicial, tentando limpeza agressiva:", parseError);
+        // Tenta remover possíveis comentários ou vírgulas pendentes que quebram o JSON
+        const aggressiveClean = cleanedText
+          .replace(/,\s*([\]}])/g, "$1") // Remove vírgulas antes de fechar colchetes/chaves
+          .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, ""); // Remove comentários
+        
+        return JSON.parse(aggressiveClean);
+      }
+    } catch (e: any) {
+      console.error("Erro ao processar nota com Gemini:", e);
+      throw new Error(`Falha no processamento: ${e.message || "IA retornou dados inválidos"}. Tente subir apenas uma página por vez se a nota for muito grande.`);
+    }
   }
 };

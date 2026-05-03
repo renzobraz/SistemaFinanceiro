@@ -12,7 +12,12 @@ import {
   TrendingUp,
   PieChart,
   BookOpen,
-  BarChart3
+  BarChart3,
+  Users,
+  ChevronDown,
+  Filter,
+  Terminal,
+  AtSign
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,6 +30,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     const saved = localStorage.getItem('sidebar_collapsed');
     return saved === 'true';
   });
+
+  const [isSettingsOpen, setIsSettingsOpen] = useState(() => activeTab.startsWith('settings'));
 
   const toggleSidebar = () => {
     const newState = !isCollapsed;
@@ -42,6 +49,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     { id: 'registries', label: 'Cadastros', icon: Database },
   ];
 
+  const settingsSubItems = [
+    { id: 'settings-filters', label: 'Filtro Inicialização', icon: Filter },
+    { id: 'settings-team', label: 'Gerenciar Equipe', icon: Users },
+    { id: 'settings-email', label: 'Configuração E-mail', icon: AtSign },
+    { id: 'settings-database', label: 'Conexão Banco de Dados', icon: Database },
+    { id: 'settings-sql', label: 'Configuração SQL', icon: Terminal },
+    { id: 'settings-manual', label: 'Manual / Ajuda', icon: BookOpen },
+  ];
+
   const widthClass = isCollapsed ? 'w-20' : 'w-20 lg:w-64';
   const textClass = isCollapsed ? 'hidden' : 'hidden lg:block';
 
@@ -54,7 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
         </span>
       </div>
 
-      <nav className="flex-1 py-6 overflow-y-auto overflow-x-hidden">
+      <nav className="flex-1 py-6 overflow-y-auto overflow-x-hidden text-sm uppercase tracking-tighter">
         <ul className="space-y-2 px-2">
           {menuItems.map((item) => {
             const Icon = item.icon;
@@ -64,19 +80,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
                 <button
                   onClick={() => setActiveTab(item.id)}
                   title={isCollapsed ? item.label : ''}
-                  className={`w-full flex items-center px-3 py-3 rounded-lg transition-colors duration-200 group relative ${
+                  className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-300 group relative ${
                     isActive
-                      ? 'bg-blue-600 text-white'
-                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50 scale-[1.02]'
+                      : 'text-slate-400 hover:bg-slate-800/80 hover:text-white hover:pl-5'
                   } ${isCollapsed ? 'justify-center' : 'justify-center lg:justify-start'}`}
                 >
-                  <Icon className="w-5 h-5 flex-shrink-0" />
-                  <span className={`ml-3 font-medium whitespace-nowrap transition-opacity duration-200 ${textClass}`}>
+                  <Icon className={`w-5 h-5 flex-shrink-0 transition-transform duration-300 ${isActive ? 'scale-110' : 'group-hover:scale-110'}`} />
+                  <span className={`ml-3 font-bold whitespace-nowrap transition-all duration-300 ${textClass}`}>
                     {item.label}
                   </span>
                   
                   {isCollapsed && (
-                    <div className="absolute left-full ml-2 px-2 py-1 bg-slate-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 whitespace-nowrap">
+                    <div className="absolute left-full ml-4 px-3 py-2 bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 whitespace-nowrap shadow-xl">
                       {item.label}
                     </div>
                   )}
@@ -84,42 +100,73 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               </li>
             );
           })}
+
+          {/* Menu Configurações com Submenu */}
+          <li>
+            <button
+              onClick={() => {
+                if (isCollapsed) {
+                  toggleSidebar();
+                  setIsSettingsOpen(true);
+                } else {
+                  setIsSettingsOpen(!isSettingsOpen);
+                }
+              }}
+              className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-300 group relative ${
+                activeTab.startsWith('settings')
+                  ? 'bg-blue-600/10 text-blue-600'
+                  : 'text-slate-400 hover:bg-slate-800/80 hover:text-white'
+              } ${isCollapsed ? 'justify-center' : 'justify-center lg:justify-start'}`}
+            >
+              <Settings className={`w-5 h-5 flex-shrink-0 transition-transform duration-300 ${activeTab.startsWith('settings') ? 'scale-110' : 'group-hover:scale-110'}`} />
+              <span className={`ml-3 font-bold whitespace-nowrap transition-all duration-300 flex-1 text-left ${textClass}`}>
+                Configurações
+              </span>
+              {!isCollapsed && (
+                <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${isSettingsOpen ? 'rotate-180' : ''}`} />
+              )}
+            </button>
+
+            {/* Submenu de Configurações */}
+            {!isCollapsed && isSettingsOpen && (
+              <ul className="mt-1 space-y-1 ml-6 border-l border-slate-800 pl-4 animate-in slide-in-from-top-2 duration-300">
+                {settingsSubItems.map((sub) => {
+                  const SubIcon = sub.icon;
+                  const isSubActive = activeTab === sub.id;
+                  return (
+                    <li key={sub.id}>
+                      <button
+                        onClick={() => setActiveTab(sub.id)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold transition-all ${
+                          isSubActive
+                            ? 'text-blue-400 bg-blue-400/5'
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <SubIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="whitespace-nowrap">{sub.label}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </li>
         </ul>
       </nav>
 
-      <div className="p-2 border-t border-slate-800 space-y-2">
-         <button 
-          onClick={() => setActiveTab('manual')}
-          title={isCollapsed ? 'Manual / Ajuda' : ''}
-          className={`w-full flex items-center px-3 py-3 rounded-lg transition-colors ${
-             activeTab === 'manual' 
-             ? 'bg-blue-600 text-white' 
-             : 'text-slate-400 hover:text-white hover:bg-slate-800'
-          } ${isCollapsed ? 'justify-center' : 'justify-center lg:justify-start'}`}
-        >
-          <BookOpen className="w-5 h-5 flex-shrink-0" />
-          <span className={`ml-3 whitespace-nowrap ${textClass}`}>Manual / Ajuda</span>
-        </button>
-
-        <button 
-          onClick={() => setActiveTab('settings')}
-          title={isCollapsed ? 'Configurações' : ''}
-          className={`w-full flex items-center px-3 py-3 rounded-lg transition-colors ${
-             activeTab === 'settings' 
-             ? 'bg-blue-600 text-white' 
-             : 'text-slate-400 hover:text-white hover:bg-slate-800'
-          } ${isCollapsed ? 'justify-center' : 'justify-center lg:justify-start'}`}
-        >
-          <Settings className="w-5 h-5 flex-shrink-0" />
-          <span className={`ml-3 whitespace-nowrap ${textClass}`}>Configurações</span>
-        </button>
-
+      <div className="p-3 border-t border-slate-800">
         <button
           onClick={toggleSidebar}
-          className="w-full flex items-center justify-center p-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+          className="w-full flex items-center justify-center p-3 rounded-xl text-slate-500 hover:text-white hover:bg-slate-800 transition-all duration-300 group"
           title={isCollapsed ? "Expandir Menu" : "Recolher Menu"}
         >
-          {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+          {isCollapsed ? <ChevronRight className="w-5 h-5" /> : (
+            <div className="flex items-center gap-3">
+              <ChevronLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+              <span className="text-[10px] font-black uppercase tracking-widest">Recolher Menu</span>
+            </div>
+          )}
         </button>
       </div>
     </div>

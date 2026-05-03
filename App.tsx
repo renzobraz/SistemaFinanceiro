@@ -10,8 +10,11 @@ import { CashFlowReport } from './components/CashFlowReport';
 import { ExpenseAnalysisReport } from './components/ExpenseAnalysisReport';
 import { AssetPerformanceReport } from './components/AssetPerformanceReport';
 import { HelpManual } from './components/HelpManual';
+import { SettingsPage } from './components/SettingsPage';
 import { financeService, DEFAULT_SUPABASE_CONFIG } from './services/financeService';
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus, AssetType, AssetSector, AssetTicker } from './types';
+import { BrokerageImport } from './components/BrokerageImport';
+import { Auth } from './components/Auth';
 import { 
   Plus, 
   Wallet as WalletIcon, 
@@ -25,17 +28,21 @@ import {
   AlertCircle,
   RefreshCcw,
   SearchX,
+  FileUp,
   Database,
   Layers,
   Loader2,
   XCircle,
   PieChart,
   LayoutGrid,
-  Hash
+  Hash,
+  LogOut,
+  User
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 
 const App: FC = () => {
+  const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [activeRegistryTab, setActiveRegistryTab] = useState('wallets'); 
   const [loading, setLoading] = useState(true);
@@ -43,6 +50,7 @@ const App: FC = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [isLocalMode, setIsLocalMode] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const initialPrefsApplied = useRef(false);
   
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   // Armazena o saldo acumulado ANTES da data de início do filtro
@@ -56,6 +64,7 @@ const App: FC = () => {
     wallets: Wallet[];
     assetTypes: AssetType[];
     assetSectors: AssetSector[];
+    assetTickers: AssetTicker[];
   }>({
     banks: [],
     categories: [],
@@ -63,7 +72,8 @@ const App: FC = () => {
     participants: [],
     wallets: [],
     assetTypes: [],
-    assetSectors: []
+    assetSectors: [],
+    assetTickers: []
   });
 
   const [selectedWalletId, setSelectedWalletId] = useState<string>(() => financeService.getUserPreferences().defaultWalletId);
@@ -76,6 +86,7 @@ const App: FC = () => {
   const [endDate, setEndDate] = useState<string>(() => financeService.getDateRangeFromPreference(financeService.getUserPreferences().defaultDateRange).end);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [partnerTransaction, setPartnerTransaction] = useState<Transaction | null>(null);
 
@@ -107,7 +118,8 @@ const App: FC = () => {
           participants: 'fincontrol_participants', 
           wallets: 'fincontrol_wallets',
           assetTypes: 'fincontrol_asset_types',
-          assetSectors: 'fincontrol_asset_sectors'
+          assetSectors: 'fincontrol_asset_sectors',
+          assetTickers: 'fincontrol_asset_tickers'
         };
         const localData = {
           banks: JSON.parse(localStorage.getItem(keyMap.banks) || '[]'),
@@ -117,16 +129,19 @@ const App: FC = () => {
           wallets: JSON.parse(localStorage.getItem(keyMap.wallets) || '[]'),
           assetTypes: JSON.parse(localStorage.getItem(keyMap.assetTypes) || '[]'),
           assetSectors: JSON.parse(localStorage.getItem(keyMap.assetSectors) || '[]'),
+          assetTickers: JSON.parse(localStorage.getItem(keyMap.assetTickers) || '[]'),
         };
         
-        if (localData.banks.length > 0 || localData.categories.length > 0) {
+        const hasAnyData = Object.values(localData).some(arr => Array.isArray(arr) && arr.length > 0);
+        
+        if (hasAnyData) {
           if (requestId === lastRegistryRequestIdRef.current) {
             setRegistries(localData as any);
           }
         }
       }
 
-      const [bk, cat, cc, pt, wa, at, as] = await Promise.all([
+      const [bk, cat, cc, pt, wa, at, as, atk] = await Promise.all([
         financeService.getRegistry<Bank>('banks', forceRefresh),
         financeService.getRegistry<Category>('categories', forceRefresh),
         financeService.getRegistry<CostCenter>('costCenters', forceRefresh),
@@ -134,6 +149,7 @@ const App: FC = () => {
         financeService.getRegistry<Wallet>('wallets', forceRefresh),
         financeService.getRegistry<AssetType>('assetTypes', forceRefresh),
         financeService.getRegistry<AssetSector>('assetSectors', forceRefresh),
+        financeService.getRegistry<AssetTicker>('assetTickers', forceRefresh),
       ]);
 
       if (requestId === lastRegistryRequestIdRef.current) {
@@ -144,8 +160,29 @@ const App: FC = () => {
           participants: pt, 
           wallets: wa,
           assetTypes: at,
-          assetSectors: as
+          assetSectors: as,
+          assetTickers: atk
         });
+
+        // Sincroniza tabelas auxiliares se necessário (especialmente importante se sumiram)
+        if (at.length === 0 || as.length === 0) {
+           const stats = await financeService.syncAuxiliaryRegistries();
+           if (stats.types > 0 || stats.sectors > 0 || stats.tickers > 0) {
+              // Recarrega se houve novos cadastros criados pela sincronização
+              const [newAt, newAs, newAtk] = await Promise.all([
+                financeService.getRegistry<AssetType>('assetTypes', true),
+                financeService.getRegistry<AssetSector>('assetSectors', true),
+                financeService.getRegistry<AssetTicker>('assetTickers', true)
+              ]);
+              
+              setRegistries(prev => ({
+                ...prev,
+                assetTypes: newAt,
+                assetSectors: newAs,
+                assetTickers: newAtk
+              }));
+           }
+        }
       }
     } catch (error: any) {
       console.error("Failed to load registries", error);
@@ -207,8 +244,8 @@ const App: FC = () => {
     }
   }, [startDate, endDate, selectedBankId, selectedWalletId, statusFilter, activeTab]);
 
-  const loadAll = async () => {
-    setLoading(true);
+  const loadAll = async (isInitialFetch = false) => {
+    if (isInitialFetch) setLoading(true);
     
     // Verifica conexão
     const supabase = financeService.getSupabase();
@@ -218,6 +255,13 @@ const App: FC = () => {
 
     if (supabase) {
         try {
+            // Verifica sessão atual
+            const { data: { session } } = await supabase.auth.getSession();
+            setUser(session?.user || null);
+            if (session?.user) {
+                localStorage.setItem('supabase_user_id', session.user.id);
+            }
+
             // Teste rápido de conexão
             const { error } = await supabase.from('banks').select('id').limit(1);
             if (error && (error.message?.includes('fetch') || error.name === 'TypeError')) {
@@ -230,30 +274,76 @@ const App: FC = () => {
         }
     }
 
-    // Carrega registros (tenta local primeiro)
-    const registriesPromise = loadRegistries();
-    
-    // Carrega transações
-    const transactionsPromise = loadTransactions();
-
     // Se já temos registros no localStorage, podemos liberar o loading mais cedo
     const keyMap: any = { banks: 'fincontrol_banks', categories: 'fincontrol_categories' };
     const hasLocalData = !!localStorage.getItem(keyMap.banks) || !!localStorage.getItem(keyMap.categories);
 
-    if (hasLocalData) {
-        // Se tem dados locais, esperamos apenas as transações (que são o dado principal)
-        // Os registros (nomes de bancos, etc) serão atualizados em background pelo registriesPromise
-        await transactionsPromise;
-    } else {
-        // Se não tem nada local, esperamos tudo para não mostrar tela vazia
-        await Promise.all([registriesPromise, transactionsPromise]);
+    // Se é o carregamento inicial, busca as preferências ANTES de buscar as transações
+    // para que a busca de transações já use os filtros corretos
+    if (!initialPrefsApplied.current) {
+        try {
+            const savedPrefs = await financeService.getUserSettings();
+            if (savedPrefs.defaultTab) setActiveTab(savedPrefs.defaultTab);
+            setSelectedWalletId(savedPrefs.defaultWalletId);
+            setSelectedBankId(savedPrefs.defaultBankId);
+            setPerformanceBankId(savedPrefs.defaultPerformanceBankId || 'ALL');
+            setPerformanceWalletId(savedPrefs.defaultPerformanceWalletId || 'ALL');
+            setStatusFilter(savedPrefs.defaultStatus);
+            const range = financeService.getDateRangeFromPreference(savedPrefs.defaultDateRange);
+            setStartDate(range.start);
+            setEndDate(range.end);
+            initialPrefsApplied.current = true;
+        } catch (e) {
+            console.warn("Falha ao carregar preferências", e);
+        }
     }
 
-    setLoading(false);
+    // Carrega registros e transações
+    const registriesPromise = loadRegistries();
+    const transactionsPromise = loadTransactions();
+
+    if (isInitialFetch) {
+        if (hasLocalData) {
+            // Se tem dados locais, esperamos apenas as transações (que são o dado principal)
+            await transactionsPromise;
+        } else {
+            // Se não tem nada local, esperamos tudo para não mostrar tela vazia
+            await Promise.all([registriesPromise, transactionsPromise]);
+        }
+        setLoading(false);
+    }
   };
 
   useEffect(() => {
-    loadAll();
+    loadAll(true);
+
+    // Listen for auth changes
+    const supabase = financeService.getSupabase();
+    if (supabase) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+        const newUser = session?.user || null;
+        
+        // Evita recarregar se o usuário for o mesmo
+        setUser((prevUser: any) => {
+            if (prevUser?.id === newUser?.id) return prevUser;
+            
+            if (newUser) {
+                localStorage.setItem('supabase_user_id', newUser.id);
+                // Se o usuário mudou (de null para algo ou mudou conta), recarrega
+                if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+                    loadAll(false);
+                }
+            } else {
+                localStorage.removeItem('supabase_user_id');
+            }
+            return newUser;
+        });
+      });
+
+      return () => {
+        subscription.unsubscribe();
+      };
+    }
   }, [isConnected]);
 
   // Recarrega transações quando os filtros mudam
@@ -287,6 +377,11 @@ const App: FC = () => {
       const da = new Date(a.date).getTime();
       const db = new Date(b.date).getTime();
       if (da !== db) return da - db;
+      
+      // Secondary sort: Oldest creation first for balance calculation
+      if (a.createdAt && b.createdAt) {
+          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
       return (a.id || '').localeCompare(b.id || '');
     });
 
@@ -326,6 +421,15 @@ const App: FC = () => {
         showAlert('Erro ao Excluir', e);
     }
   };
+  
+  const handleUpdateTransactionsStatus = async (ids: string[], status: 'PAID' | 'PENDING') => {
+    try {
+        await financeService.updateTransactionsStatus(ids, status);
+        await loadTransactions();
+    } catch (e: any) {
+        showAlert('Erro ao Atualizar Status', e);
+    }
+  };
 
   const handleQuickAddParticipant = async (name: string): Promise<Participant> => {
       const newP = await financeService.saveRegistryItem('participants', { id: '', name });
@@ -360,6 +464,10 @@ const App: FC = () => {
 
   const selectClass = "bg-white border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 outline-none text-slate-700 font-medium cursor-pointer hover:bg-gray-50 transition-colors h-[38px] flex items-center min-w-[140px]";
 
+  if (!user && isConnected && !isLocalMode) {
+    return <Auth onLogin={loadAll} />;
+  }
+
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
@@ -384,6 +492,24 @@ const App: FC = () => {
                     {isLocalMode ? <Database className="w-3 h-3 text-blue-500" /> : isConnected ? <CheckCircle2 className="w-3 h-3 text-green-500" /> : <WifiOff className="w-3 h-3" />}
                     <span className="inline">{isLocalMode ? 'Modo Local (Mock)' : isConnected ? 'Supabase' : 'Offline'}</span>
                 </div>
+
+                {user && (
+                  <div className="flex items-center gap-3 pr-2 border-r border-slate-200 mr-1">
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-full">
+                      <User className="w-3 h-3 text-slate-400" />
+                      <span className="text-[10px] font-bold text-slate-600 truncate max-w-[120px]">
+                        {user.email}
+                      </span>
+                    </div>
+                    <button 
+                      onClick={() => financeService.signOut()}
+                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                      title="Sair"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
                 
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-600 rounded-full text-[10px] font-black uppercase tracking-wider border border-slate-200 shadow-inner">
                     {refreshing ? <Loader2 className="w-3 h-3 animate-spin text-blue-500" /> : <Layers className="w-3 h-3" />}
@@ -434,9 +560,19 @@ const App: FC = () => {
             )}
 
             {!['registries', 'settings', 'manual'].includes(activeTab) && (
+              <div className="flex gap-2">
+                {(activeTab === 'investments' || activeTab === 'bank-transactions') && (
+                  <button 
+                    onClick={() => setIsImportOpen(true)} 
+                    className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors h-[38px] shadow-sm"
+                  >
+                    <FileUp className="w-4 h-4 text-blue-600" /> <span>Incluir nota</span>
+                  </button>
+                )}
                 <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
                     <Plus className="w-4 h-4" /> <span>Lançar</span>
                 </button>
+              </div>
             )}
           </div>
         </header>
@@ -503,16 +639,16 @@ const App: FC = () => {
           )}
 
           {activeTab === 'expenses-analysis' && (
-            <div className="flex-1 overflow-auto p-8">
-              <div className="max-w-7xl mx-auto">
+            <div className="flex-1 overflow-auto p-2 sm:p-4">
+              <div className="w-full">
                 <ExpenseAnalysisReport transactions={transactions} registries={registries} />
               </div>
             </div>
           )}
 
           {activeTab === 'investments' && (
-            <div className="flex-1 overflow-auto p-8">
-              <div className="max-w-7xl mx-auto">
+            <div className="flex-1 overflow-auto p-2 sm:p-4">
+              <div className="w-full">
                 <AssetPerformanceReport 
                   transactions={transactions} 
                   registries={{
@@ -564,6 +700,7 @@ const App: FC = () => {
                       handleEdit();
                     }} 
                     onDelete={handleDeleteTransactions} 
+                    onUpdateStatus={handleUpdateTransactionsStatus}
                     onImport={() => {}} 
                     variant="full" 
                     externalBalanceMap={globalBalanceMap} 
@@ -664,32 +801,43 @@ const App: FC = () => {
             </div>
           )}
 
-          {activeTab === 'settings' && (
+          {activeTab.startsWith('settings') && (
             <div className="flex-1 overflow-auto p-8">
-               <SettingsView 
-                 onSaveConfig={() => setIsConnected(true)} 
-                 onSavePrefs={(prefs) => {
-                   setSelectedWalletId(prefs.defaultWalletId);
-                   setSelectedBankId(prefs.defaultBankId);
-                   setPerformanceBankId(prefs.defaultPerformanceBankId || 'ALL');
-                   setPerformanceWalletId(prefs.defaultPerformanceWalletId || 'ALL');
-                   setStatusFilter(prefs.defaultStatus);
-                   const range = financeService.getDateRangeFromPreference(prefs.defaultDateRange);
-                   setStartDate(range.start);
-                   setEndDate(range.end);
+               <SettingsPage 
+                 activeSubTab={activeTab} 
+                 registries={registries}
+                 onSaveConfig={() => setIsConnected(true)}
+                 onUpdatePrefs={(prefs) => {
+                    setSelectedWalletId(prefs.defaultWalletId);
+                    setSelectedBankId(prefs.defaultBankId);
+                    setPerformanceBankId(prefs.defaultPerformanceBankId || 'ALL');
+                    setPerformanceWalletId(prefs.defaultPerformanceWalletId || 'ALL');
+                    setStatusFilter(prefs.defaultStatus);
+                    const range = financeService.getDateRangeFromPreference(prefs.defaultDateRange);
+                    setStartDate(range.start);
+                    setEndDate(range.end);
                  }}
-                 registries={registries} 
                />
-            </div>
-          )}
-
-          {activeTab === 'manual' && (
-            <div className="flex-1 overflow-auto p-8">
-               <HelpManual />
             </div>
           )}
         </div>
       </main>
+
+      {isImportOpen && (
+        <BrokerageImport 
+          onClose={() => setIsImportOpen(false)}
+          onSuccess={() => {
+            setIsImportOpen(false);
+            loadTransactions();
+            loadRegistries(true);
+          }}
+          banks={registries.banks}
+          wallets={registries.wallets}
+          categories={registries.categories}
+          participants={registries.participants}
+          costCenters={registries.costCenters}
+        />
+      )}
 
       <TransactionForm 
         isOpen={isFormOpen} 

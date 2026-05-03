@@ -61,6 +61,7 @@ export interface Transaction {
 
   // Link for transfers
   linkedId?: string;
+  createdAt?: string;
 }
 
 export type DateRangeOption = 'CURRENT_MONTH' | 'CURRENT_WEEK' | 'LAST_3_DAYS' | 'TODAY' | 'LAST_30_DAYS' | 'PREVIOUS_MONTH' | 'ALL';
@@ -72,6 +73,7 @@ export interface UserPreferences {
   defaultWalletId: string;
   defaultPerformanceBankId?: string;
   defaultPerformanceWalletId?: string;
+  defaultTab?: string;
 }
 
 export interface FinancialSummary {
@@ -80,4 +82,57 @@ export interface FinancialSummary {
   totalExpense: number;
   pendingIncome: number;
   pendingExpense: number;
+}
+
+export interface UserPermission {
+  id: string;
+  owner_id: string;
+  invited_email: string;
+  status: 'pending' | 'active';
+  role: 'viewer' | 'editor' | 'admin';
+  created_at: string;
+}
+
+export interface SmtpSettings {
+  id?: string;
+  user_id?: string;
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+  from_name: string;
+  from_email: string;
+}
+
+export interface BrokerageTrade {
+  ticker: string;
+  type: 'BUY' | 'SELL';
+  quantity: number;
+  price: number;
+  total: number;
+  assetName: string;
+}
+
+export interface BrokerageNote {
+  metadata: {
+    date: string;
+    noteNumber: string;
+    liquidValue: number;
+    settlementDate: string;
+    isCredit?: boolean;
+  };
+  summary?: {
+    totalSales: number;
+    totalPurchases: number;
+    clearingFees: number;
+    exchangeFees: number;
+    brokerage: number;
+    taxes: number;
+    otherCosts: number;
+  };
+  trades: BrokerageTrade[];
+  costs: {
+    total: number;
+    details: string;
+  };
 }

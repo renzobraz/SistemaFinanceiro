@@ -15,7 +15,9 @@ import {
   ChevronFirst,
   ChevronLast,
   Zap,
-  History
+  History,
+  RotateCcw,
+  XCircle
 } from 'lucide-react';
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet } from '../types';
 import { ConfirmModal } from './ConfirmModal';
@@ -31,6 +33,7 @@ interface TransactionListProps {
   };
   onEdit: (t: Transaction) => void;
   onDelete: (ids: string[]) => void;
+  onUpdateStatus?: (ids: string[], status: 'PAID' | 'PENDING') => void;
   onImport: (importedData: any[]) => void;
   variant?: 'card' | 'full';
   externalBalanceMap?: Record<string, number>;
@@ -65,6 +68,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   registries, 
   onEdit, 
   onDelete,
+  onUpdateStatus,
   variant = 'card',
   externalBalanceMap,
   initialSortByStatus = 'ALL',
@@ -90,7 +94,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     isOpen: boolean;
     ids: string[];
     message: string;
-    type: 'DELETE' | 'DEDUPLICATE';
+    type: 'DELETE' | 'DEDUPLICATE' | 'UNPAY';
   }>({ isOpen: false, ids: [], message: '', type: 'DELETE' });
 
   useEffect(() => {
@@ -109,11 +113,15 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
     if (deferredSearchTerm) {
       const lowerTerm = deferredSearchTerm.toLowerCase();
-      data = data.filter(t => 
-        t.description.toLowerCase().includes(lowerTerm) ||
-        t.docNumber.toLowerCase().includes(lowerTerm) ||
-        getName(registries.participants, t.participantId).toLowerCase().includes(lowerTerm)
-      );
+      data = data.filter(t => {
+        const participant = registries.participants.find(p => p.id === t.participantId);
+        return (
+          t.description.toLowerCase().includes(lowerTerm) ||
+          t.docNumber.toLowerCase().includes(lowerTerm) ||
+          (participant?.name || "").toLowerCase().includes(lowerTerm) ||
+          (participant?.ticker || "").toLowerCase().includes(lowerTerm)
+        );
+      });
     }
 
     if (columnFilters.bankId) data = data.filter(t => t.bankId === columnFilters.bankId);
@@ -147,6 +155,12 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         
         if (sortConfig.key === 'date') {
             const dir = sortConfig.direction === 'asc' ? 1 : -1;
+            
+            // Prefer createdAt for secondary sort if available
+            if (a.createdAt && b.createdAt) {
+                return (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) * dir;
+            }
+            // Fallback to ID
             return (a.id || '').localeCompare(b.id || '') * dir;
         }
 
@@ -199,7 +213,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   };
 
   const confirmAction = () => {
-      onDelete(confirmModal.ids);
+      if (confirmModal.type === 'DELETE' || confirmModal.type === 'DEDUPLICATE') {
+          onDelete(confirmModal.ids);
+      } else if (confirmModal.type === 'UNPAY' && onUpdateStatus) {
+          onUpdateStatus(confirmModal.ids, 'PENDING');
+      }
       setSelectedIds(prev => prev.filter(id => !confirmModal.ids.includes(id)));
   };
 
@@ -261,7 +279,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     setSortConfig({ key, direction });
   };
 
-  const formatMoney = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+  const formatMoney = (val: number) => {
+    return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
+  };
 
   const containerClasses = variant === 'card' 
     ? "bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-full"
@@ -337,6 +357,16 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         <span className="font-medium text-blue-700">{selectedIds.length}</span>
                         <span>selecionados</span>
                     </div>
+
+                    <button 
+                        onClick={() => setConfirmModal({isOpen: true, ids: selectedIds, type: 'UNPAY', message: `Deseja desmarcar ${selectedIds.length} lançamentos como "Pago"? Eles voltarão para o status "Pendente".`})} 
+                        className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-sm hover:bg-amber-100 font-medium transition-colors border border-amber-100"
+                        title="Desmarcar como Pago"
+                    >
+                        <XCircle className="w-4 h-4" />
+                        <span className="hidden md:inline">Desmarcar Pago</span>
+                    </button>
+
                     <button onClick={() => setConfirmModal({isOpen: true, ids: selectedIds, type: 'DELETE', message: `Deseja realmente excluir ${selectedIds.length} registros?`})} className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100 font-medium transition-colors border border-red-100">
                         <Trash2 className="w-4 h-4" />
                     </button>
@@ -438,7 +468,17 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         })()}
                     </td>
                     <td className="p-3 text-slate-600 truncate max-w-[120px]">{getName(registries.categories, t.categoryId)}</td>
-                    <td className="p-3 text-slate-600 truncate max-w-[120px]" title={getName(registries.participants, t.participantId)}>{getName(registries.participants, t.participantId)}</td>
+                    <td className="p-3 text-slate-600 truncate max-w-[120px]" title={getName(registries.participants, t.participantId)}>
+                        <div className="flex flex-col min-w-0">
+                            <span className="truncate">{getName(registries.participants, t.participantId)}</span>
+                            {(() => {
+                                const participant = registries.participants.find(p => p.id === t.participantId);
+                                return participant?.ticker ? (
+                                    <span className="text-[9px] text-blue-600 font-bold font-mono truncate">{participant.ticker}</span>
+                                ) : null;
+                            })()}
+                        </div>
+                    </td>
                     <td className="p-3 text-slate-600 truncate max-w-[120px]">{getName(registries.costCenters, t.costCenterId)}</td>
                     <td className="p-3 text-slate-800 font-bold">
                         {t.description}
@@ -541,10 +581,18 @@ export const TransactionList: React.FC<TransactionListProps> = ({
             isOpen={confirmModal.isOpen} 
             onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))} 
             onConfirm={confirmAction} 
-            title={confirmModal.type === 'DELETE' ? "Confirmação de Exclusão" : "Remover Duplicados"} 
+            title={
+                confirmModal.type === 'DELETE' ? "Confirmação de Exclusão" : 
+                confirmModal.type === 'UNPAY' ? "Desmarcar como Pago" :
+                "Remover Duplicados"
+            } 
             message={confirmModal.message} 
-            isDestructive={true} 
-            confirmText={confirmModal.type === 'DELETE' ? "Excluir" : "Remover Agora"}
+            isDestructive={confirmModal.type === 'DELETE'} 
+            confirmText={
+                confirmModal.type === 'DELETE' ? "Excluir" : 
+                confirmModal.type === 'UNPAY' ? "Sim, Desmarcar" :
+                "Remover Agora"
+            }
         />
     </>
   );
