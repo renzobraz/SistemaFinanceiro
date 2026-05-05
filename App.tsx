@@ -431,6 +431,15 @@ const App: FC = () => {
     }
   };
 
+  const handleUpdateTransactionsDate = async (ids: string[], date: string) => {
+    try {
+        await financeService.updateTransactionsDate(ids, date);
+        await loadTransactions();
+    } catch (e: any) {
+        showAlert('Erro ao Atualizar Data', e);
+    }
+  };
+
   const handleQuickAddParticipant = async (name: string): Promise<Participant> => {
       const newP = await financeService.saveRegistryItem('participants', { id: '', name });
       setRegistries(prev => ({ ...prev, participants: [...prev.participants, newP] }));
@@ -701,6 +710,7 @@ const App: FC = () => {
                     }} 
                     onDelete={handleDeleteTransactions} 
                     onUpdateStatus={handleUpdateTransactionsStatus}
+                    onUpdateDate={handleUpdateTransactionsDate}
                     onImport={() => {}} 
                     variant="full" 
                     externalBalanceMap={globalBalanceMap} 
@@ -850,6 +860,7 @@ const App: FC = () => {
         preSelectedBankId={selectedBankId}
         preSelectedWalletId={selectedWalletId}
         registries={registries} 
+        transactions={transactions}
       />
 
       <ConfirmModal isOpen={alertState.isOpen} onClose={() => setAlertState(prev => ({ ...prev, isOpen: false }))} onConfirm={() => setAlertState(prev => ({ ...prev, isOpen: false }))} title={alertState.title} message={alertState.message} confirmText="OK" showCancel={false} isDestructive={alertState.title.toLowerCase().includes('erro')} />

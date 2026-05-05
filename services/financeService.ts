@@ -951,6 +951,38 @@ export const financeService = {
     saveEntityLocal(KEYS.TRANSACTIONS, updatedList);
   },
 
+  async updateTransactionsDate(ids: string[], date: string): Promise<void> {
+    const supabase = getSupabase();
+    
+    // Invalida cache de saldos (a data influencia o saldo acumulado por período)
+    cache.balances = {};
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('transactions')
+          .update({ date })
+          .in('id', ids);
+        
+        if (error) throw new Error(formatSupabaseError(error));
+        return;
+      } catch (e: any) {
+        console.error("Supabase update date failed, falling back to local data", e);
+        
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    await delay(300);
+    const list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
+    const updatedList = list.map(t => ids.includes(t.id) ? { ...t, date } : t);
+    saveEntityLocal(KEYS.TRANSACTIONS, updatedList);
+  },
+
   async getRegistry<T extends BaseEntity>(type: string, forceRefresh = false): Promise<T[]> {
     const supabase = getSupabase();
     const tableMap: any = { 
@@ -1435,12 +1467,24 @@ export const financeService = {
       assetSectors: 'asset_sectors',
       assetTickers: 'asset_tickers'
     };
-    const fkMap: any = { banks: 'bank_id', categories: 'category_id', costCenters: 'cost_center_id', participants: 'participant_id', wallets: 'wallet_id' };
-    const localFkMap: any = { banks: 'bankId', categories: 'categoryId', costCenters: 'costCenterId', participants: 'participantId', wallets: 'walletId' };
     
+    // Mapeamento de quais tabelas e colunas precisam ser atualizadas quando um registro deste tipo é unificado
+    const updateTargets: Record<string, Array<{ table: string, column: string, localKey: string }>> = {
+      banks: [
+        { table: 'transactions', column: 'bank_id', localKey: KEYS.TRANSACTIONS },
+        { table: 'wallets', column: 'bank_id', localKey: KEYS.WALLETS }
+      ],
+      categories: [{ table: 'transactions', column: 'category_id', localKey: KEYS.TRANSACTIONS }],
+      costCenters: [{ table: 'transactions', column: 'cost_center_id', localKey: KEYS.TRANSACTIONS }],
+      participants: [{ table: 'transactions', column: 'participant_id', localKey: KEYS.TRANSACTIONS }],
+      wallets: [{ table: 'transactions', column: 'wallet_id', localKey: KEYS.TRANSACTIONS }],
+      assetTypes: [{ table: 'participants', column: 'category', localKey: KEYS.PARTICIPANTS }],
+      assetSectors: [{ table: 'participants', column: 'sector', localKey: KEYS.PARTICIPANTS }],
+      assetTickers: [{ table: 'participants', column: 'ticker', localKey: KEYS.PARTICIPANTS }]
+    };
+
     const tableName = tableMap[type];
-    const fkName = fkMap[type];
-    const localFkName = localFkMap[type];
+    const targets = updateTargets[type] || [];
 
     let mergedCount = 0;
     let deletedCount = 0;
@@ -1486,16 +1530,25 @@ export const financeService = {
         const master = group[0];
         const duplicates = group.slice(1);
         const duplicateIds = duplicates.map(d => d.id);
+        const duplicateNames = duplicates.map(d => d.name);
 
-        const { error: updateError } = await supabase
-          .from('transactions')
-          .update({ [fkName]: master.id })
-          .in(fkName, duplicateIds);
-        
-        if (updateError) throw new Error(formatSupabaseError(updateError));
-
-        if (type === 'banks') {
-          // Bank is now the account, no need to update wallets
+        // Atualizar todos os alvos (Ex: Transactions, Wallets, Participants)
+        for (const target of targets) {
+          // Se o alvo for uma coluna de Nome (Ex: assetTypes vincula ao Nome da Categoria no Participante)
+          // usamos o nome. Se for ID, usamos o ID.
+          const isNameReference = target.column === 'category' || target.column === 'sector' || target.column === 'ticker';
+          
+          if (isNameReference) {
+            await supabase
+              .from(target.table)
+              .update({ [target.column]: master.name })
+              .in(target.column, duplicateNames);
+          } else {
+            await supabase
+              .from(target.table)
+              .update({ [target.column]: master.id })
+              .in(target.column, duplicateIds);
+          }
         }
 
         const { error: deleteError } = await supabase
@@ -1511,13 +1564,25 @@ export const financeService = {
         processedGroups++;
         if (onProgress) onProgress(processedGroups, totalGroups);
       }
+      
+      // Limpa caches após operação em larga escala
+      cache.registries = {};
+      cache.balances = {};
+      
       return { merged: mergedCount, deleted: deletedCount };
     }
 
-    const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+    const keyMap: any = { 
+      banks: KEYS.BANKS, 
+      categories: KEYS.CATEGORIES, 
+      costCenters: KEYS.COST_CENTERS, 
+      participants: KEYS.PARTICIPANTS, 
+      wallets: KEYS.WALLETS,
+      assetTypes: KEYS.ASSET_TYPES,
+      assetSectors: KEYS.ASSET_SECTORS,
+      assetTickers: KEYS.ASSET_TICKERS
+    };
     let items = getEntityLocal<any>(keyMap[type], []);
-    let transactions = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, []);
-    let wallets = getEntityLocal<Wallet>(KEYS.WALLETS, []);
 
     const groups = new Map<string, any[]>();
     for (const item of items) {
@@ -1539,18 +1604,29 @@ export const financeService = {
       const master = group[0];
       const duplicates = group.slice(1);
       const duplicateIds = duplicates.map(d => d.id);
+      const duplicateNames = duplicates.map(d => d.name);
 
       duplicateIds.forEach(id => duplicateIdsToRemove.add(id));
 
-      transactions = transactions.map(t => {
-        if (duplicateIds.includes((t as any)[localFkName])) {
-          return { ...t, [localFkName]: master.id };
-        }
-        return t;
-      });
-
-      if (type === 'banks') {
-        // Bank is now the account, no need to update wallets
+      // Atualizar localmente todos os alvos
+      for (const target of targets) {
+        const isNameReference = target.column === 'category' || target.column === 'sector' || target.column === 'ticker';
+        const localList = getEntityLocal<any>(target.localKey, []);
+        
+        const updatedList = localList.map((item: any) => {
+          if (isNameReference) {
+            if (duplicateNames.includes(item[target.column])) {
+              return { ...item, [target.column]: master.name };
+            }
+          } else {
+            if (duplicateIds.includes(item[target.column])) {
+              return { ...item, [target.column]: master.id };
+            }
+          }
+          return item;
+        });
+        
+        saveEntityLocal(target.localKey, updatedList);
       }
 
       mergedCount += duplicateIds.length;
@@ -1564,8 +1640,6 @@ export const financeService = {
     if (deletedCount > 0) {
       items = items.filter(i => !duplicateIdsToRemove.has(i.id));
       saveEntityLocal(keyMap[type], items);
-      saveEntityLocal(KEYS.TRANSACTIONS, transactions);
-      if (type === 'banks') saveEntityLocal(KEYS.WALLETS, wallets);
     }
 
     return { merged: mergedCount, deleted: deletedCount };
@@ -1666,24 +1740,54 @@ export const financeService = {
 
   async mergeItems(type: string, masterId: string, duplicateIds: string[]): Promise<void> {
     const supabase = getSupabase();
-    const tableMap: any = { banks: 'banks', categories: 'categories', costCenters: 'cost_centers', participants: 'participants', wallets: 'wallets' };
-    const fkMap: any = { banks: 'bank_id', categories: 'category_id', costCenters: 'cost_center_id', participants: 'participant_id', wallets: 'wallet_id' };
-    const localFkMap: any = { banks: 'bankId', categories: 'categoryId', costCenters: 'costCenterId', participants: 'participantId', wallets: 'walletId' };
+    const tableMap: any = { 
+      banks: 'banks', 
+      categories: 'categories', 
+      costCenters: 'cost_centers', 
+      participants: 'participants', 
+      wallets: 'wallets',
+      assetTypes: 'asset_types',
+      assetSectors: 'asset_sectors',
+      assetTickers: 'asset_tickers'
+    };
     
+    const updateTargets: Record<string, Array<{ table: string, column: string, localKey: string }>> = {
+      banks: [
+        { table: 'transactions', column: 'bank_id', localKey: KEYS.TRANSACTIONS },
+        { table: 'wallets', column: 'bank_id', localKey: KEYS.WALLETS }
+      ],
+      categories: [{ table: 'transactions', column: 'category_id', localKey: KEYS.TRANSACTIONS }],
+      costCenters: [{ table: 'transactions', column: 'cost_center_id', localKey: KEYS.TRANSACTIONS }],
+      participants: [{ table: 'transactions', column: 'participant_id', localKey: KEYS.TRANSACTIONS }],
+      wallets: [{ table: 'transactions', column: 'wallet_id', localKey: KEYS.TRANSACTIONS }],
+      assetTypes: [{ table: 'participants', column: 'category', localKey: KEYS.PARTICIPANTS }],
+      assetSectors: [{ table: 'participants', column: 'sector', localKey: KEYS.PARTICIPANTS }],
+      assetTickers: [{ table: 'participants', column: 'ticker', localKey: KEYS.PARTICIPANTS }]
+    };
+
     const tableName = tableMap[type];
-    const fkName = fkMap[type];
-    const localFkName = localFkMap[type];
+    const targets = updateTargets[type] || [];
 
     if (supabase) {
-      const { error: updateError } = await supabase
-        .from('transactions')
-        .update({ [fkName]: masterId })
-        .in(fkName, duplicateIds);
-      
-      if (updateError) throw new Error(formatSupabaseError(updateError));
+      // Obter os nomes do mestre e dos duplicados para o caso de referência por nome (category, sector, ticker)
+      const { data: allItems } = await supabase.from(tableName).select('id, name').in('id', [masterId, ...duplicateIds]);
+      const masterItem = allItems?.find(i => i.id === masterId);
+      const duplicateNames = (allItems || []).filter(i => i.id !== masterId).map(i => i.name);
 
-      if (type === 'banks') {
-        // Bank is now the account, no need to update wallets
+      for (const target of targets) {
+        const isNameReference = target.column === 'category' || target.column === 'sector' || target.column === 'ticker';
+        
+        if (isNameReference && masterItem) {
+          await supabase
+            .from(target.table)
+            .update({ [target.column]: masterItem.name })
+            .in(target.column, duplicateNames);
+        } else {
+          await supabase
+            .from(target.table)
+            .update({ [target.column]: masterId })
+            .in(target.column, duplicateIds);
+        }
       }
 
       const { error: deleteError } = await supabase
@@ -1693,31 +1797,47 @@ export const financeService = {
       
       if (deleteError) throw new Error(formatSupabaseError(deleteError));
     } else {
-      const keyMap: any = { banks: KEYS.BANKS, categories: KEYS.CATEGORIES, costCenters: KEYS.COST_CENTERS, participants: KEYS.PARTICIPANTS, wallets: KEYS.WALLETS };
+      const keyMap: any = { 
+        banks: KEYS.BANKS, 
+        categories: KEYS.CATEGORIES, 
+        costCenters: KEYS.COST_CENTERS, 
+        participants: KEYS.PARTICIPANTS, 
+        wallets: KEYS.WALLETS,
+        assetTypes: KEYS.ASSET_TYPES,
+        assetSectors: KEYS.ASSET_SECTORS,
+        assetTickers: KEYS.ASSET_TICKERS
+      };
+      
       let items = getEntityLocal<any>(keyMap[type], []);
-      let transactions = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, []);
-      let wallets = getEntityLocal<Wallet>(KEYS.WALLETS, []);
+      const masterItem = items.find(i => i.id === masterId);
+      const duplicateNames = items.filter(i => duplicateIds.includes(i.id)).map(i => i.name);
 
-      transactions = transactions.map(t => {
-        if (duplicateIds.includes((t as any)[localFkName])) {
-          return { ...t, [localFkName]: masterId };
-        }
-        return t;
-      });
-
-      if (type === 'banks') {
-        // Bank is now the account, no need to update wallets
+      for (const target of targets) {
+        const isNameReference = target.column === 'category' || target.column === 'sector' || target.column === 'ticker';
+        const localList = getEntityLocal<any>(target.localKey, []);
+        
+        const updatedList = localList.map((item: any) => {
+          if (isNameReference && masterItem) {
+            if (duplicateNames.includes(item[target.column])) {
+              return { ...item, [target.column]: masterItem.name };
+            }
+          } else {
+            if (duplicateIds.includes(item[target.column])) {
+              return { ...item, [target.column]: masterId };
+            }
+          }
+          return item;
+        });
+        
+        saveEntityLocal(target.localKey, updatedList);
       }
 
       items = items.filter(i => !duplicateIds.includes(i.id));
-      
       saveEntityLocal(keyMap[type], items);
-      saveEntityLocal(KEYS.TRANSACTIONS, transactions);
-      if (type === 'banks') saveEntityLocal(KEYS.WALLETS, wallets);
     }
 
     // Invalida cache
-    delete cache.registries[type];
+    cache.registries = {}; // Limpa tudo para garantir consistência
     cache.balances = {};
   },
 

@@ -241,11 +241,19 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
         await financeService.saveTransaction(transaction);
       }
 
-      // Add costs entry if relevant
+      // Lança as taxas separadamente como solicitado para bater com o banco
       if (parsedNote.costs?.total > 0) {
-        // Find a category for fees
         const feeCat = categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('despesa')) || categories[0];
         
+        // Garante participante "Taxas Corretagem"
+        let feeParticipant = updatedParticipants.find(p => p.name === 'Taxas Corretagem');
+        if (!feeParticipant) {
+           feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
+             id: '',
+             name: 'Taxas Corretagem',
+           });
+        }
+
         const feesTransaction: Transaction = {
           id: "",
           date: finalSettlementDate,
@@ -256,20 +264,10 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
           status: 'PAID',
           bankId: selectedBankId,
           categoryId: feeCat.id,
-          participantId: 'taxas-corretagem', 
+          participantId: feeParticipant.id, 
           costCenterId: selectedCostCenterId,
           walletId: selectedWalletId
         };
-        
-        // Ensure "Taxas Corretagem" participant exists or use a dummy
-        let feeParticipant = updatedParticipants.find(p => p.name === 'Taxas Corretagem');
-        if (!feeParticipant) {
-           feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
-             id: '',
-             name: 'Taxas Corretagem',
-           });
-        }
-        feesTransaction.participantId = feeParticipant.id;
         
         await financeService.saveTransaction(feesTransaction);
       }

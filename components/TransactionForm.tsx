@@ -38,6 +38,7 @@ interface TransactionFormProps {
     participants: Participant[];
     wallets: Wallet[];
   };
+  transactions: Transaction[];
 }
 
 const emptyTransaction: Omit<Transaction, "id"> = {
@@ -138,6 +139,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   preSelectedBankId,
   preSelectedWalletId,
   registries,
+  transactions,
 }) => {
   const [formData, setFormData] =
     useState<Omit<Transaction, "id">>(emptyTransaction);
@@ -154,6 +156,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [spread, setSpread] = useState<number>(0);
   const [iof, setIof] = useState<number>(0);
   const [vet, setVet] = useState<number>(0);
+  const [targetValue, setTargetValue] = useState<number>(0);
   const [originalValue, setOriginalValue] = useState<number>(0);
   const [originalCurrency, setOriginalCurrency] = useState<string>("");
 
@@ -261,10 +264,48 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
 
   useEffect(() => {
     if (exchangeRate > 0) {
-      const calculatedVet = exchangeRate * (1 + (spread + iof) / 100);
+      // VET = (Rate * (1 + Spread)) * (1 + IOF)
+      const calculatedVet = (exchangeRate * (1 + spread / 100)) * (1 + iof / 100);
       setVet(Number(calculatedVet.toFixed(4)));
+      
+      // Atualiza o valor creditado com base no novo VET
+      if (formData.value > 0) {
+        setTargetValue(Number((formData.value / calculatedVet).toFixed(2)));
+      }
+    } else {
+      setVet(0);
+      setTargetValue(0);
     }
-  }, [exchangeRate, spread, iof]);
+  }, [exchangeRate, spread, iof, formData.value]);
+
+  const handleTargetValueChange = (val: number) => {
+    setTargetValue(val);
+    if (val > 0 && formData.value > 0) {
+      const targetVet = formData.value / val;
+      // Rate = VET / ((1 + Spread) * (1 + IOF))
+      const factors = (1 + spread / 100) * (1 + iof / 100);
+      const newRate = targetVet / factors;
+      setExchangeRate(Number(newRate.toFixed(4)));
+    }
+  };
+
+  useEffect(() => {
+    // Auto-preenchimento de Categoria e Centro de Custo com base no histórico do participante
+    if (!id && formData.participantId && transactions.length > 0) {
+      // Busca a transação mais recente deste participante
+      const recent = [...transactions]
+        .filter(t => t.participantId === formData.participantId)
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+
+      if (recent) {
+        setFormData(prev => ({
+          ...prev,
+          categoryId: prev.categoryId || recent.categoryId,
+          costCenterId: prev.costCenterId || recent.costCenterId
+        }));
+      }
+    }
+  }, [formData.participantId, id, transactions]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -296,6 +337,11 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         setSpread(initialData.spread || 0);
         setIof(initialData.iof || 0);
         setVet(initialData.vet || 0);
+        if (initialData.vet && initialData.vet > 0) {
+          setTargetValue(Number((initialData.value / initialData.vet).toFixed(2)));
+        } else {
+          setTargetValue(0);
+        }
         setOriginalValue(initialData.originalValue || 0);
         setOriginalCurrency(initialData.originalCurrency || "");
       } else {
@@ -306,6 +352,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         setSpread(0);
         setIof(0);
         setVet(0);
+        setTargetValue(0);
         setOriginalValue(0);
         setOriginalCurrency("");
       }
@@ -343,6 +390,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       setSpread(0);
       setIof(0);
       setVet(0);
+      setTargetValue(0);
       setOriginalValue(0);
       setOriginalCurrency("");
     }
@@ -443,14 +491,15 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                            category?.name.toLowerCase() === 'impostos s/ proventos';
 
     const isInvestment = !!participant?.category && isInvestmentBank && !isDividendOrTax;
+    const isFixedIncome = participant?.category?.toLowerCase() === 'renda fixa';
 
-    if (isInvestment) {
+    if (isInvestment && !isFixedIncome) {
       if (!formData.quantity || formData.quantity <= 0) {
-        alert("Para investimentos, a quantidade é obrigatória e deve ser maior que zero.");
+        alert("Para este tipo de investimento, a quantidade é obrigatória e deve ser maior que zero.");
         return;
       }
       if (!formData.unitPrice || formData.unitPrice <= 0) {
-        alert("Para investimentos, o preço unitário é obrigatório.");
+        alert("Para este tipo de investimento, o preço unitário é obrigatório.");
         return;
       }
     }
@@ -734,6 +783,85 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             )}
           </div>
 
+          {/* Exchange Section */}
+          {mode === "TRANSFER" && (() => {
+            const sourceBank = registries.banks.find(b => b.id === formData.bankId);
+            const targetBank = registries.banks.find(b => b.id === targetBankId);
+            if (sourceBank && targetBank && sourceBank.currency !== targetBank.currency) {
+              return (
+                <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 animate-fade-in space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ArrowRightLeft className="w-4 h-4 text-blue-600" />
+                    <span className="text-xs font-black text-blue-800 uppercase tracking-wider">Dados de Câmbio ({sourceBank.currency} → {targetBank.currency})</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-blue-600 uppercase mb-1">Valor Creditado</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        disabled={isSaving}
+                        value={targetValue || ""}
+                        onChange={(e) => handleTargetValueChange(parseFloat(e.target.value) || 0)}
+                        className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 font-bold"
+                        placeholder="Ex: 1000.00"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-blue-600 uppercase mb-1">Cotação Coml.</label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        disabled={isSaving}
+                        value={exchangeRate || ""}
+                        onChange={(e) => setExchangeRate(parseFloat(e.target.value) || 0)}
+                        className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800"
+                        placeholder="Ex: 5.15"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-blue-600 uppercase mb-1">Spread (%)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        disabled={isSaving}
+                        value={spread || ""}
+                        onChange={(e) => setSpread(parseFloat(e.target.value) || 0)}
+                        className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800"
+                        placeholder="Ex: 2.0"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-blue-600 uppercase mb-1">IOF (%)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        disabled={isSaving}
+                        value={iof || ""}
+                        onChange={(e) => setIof(parseFloat(e.target.value) || 0)}
+                        className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800"
+                        placeholder="Ex: 1.1"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-blue-600 uppercase mb-1">VET Final</label>
+                      <div className="px-3 py-2 bg-blue-100/50 border border-blue-200 rounded-lg text-sm font-black text-blue-800 h-[38px] flex items-center">
+                        {vet.toFixed(4)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-blue-100 flex justify-between items-center">
+                    <span className="text-xs text-blue-600 italic">Valor creditado no destino:</span>
+                    <span className="text-sm font-black text-blue-800 font-mono">
+                      {targetBank.currency} {targetValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -794,6 +922,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                                      category?.name.toLowerCase() === 'impostos s/ proventos';
 
               const isInvestment = !!participant?.category && isInvestmentBank && !isDividendOrTax;
+              const isFixedIncome = participant?.category?.toLowerCase() === 'renda fixa';
               
               if (!isInvestment) return null;
 
@@ -801,7 +930,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 <>
                   <div className="md:col-span-1 animate-fade-in">
                     <label className="block text-sm font-medium text-blue-700 mb-1">
-                      Quantidade
+                      Quantidade {isFixedIncome && <span className="text-[10px] font-normal text-blue-400 italic">(Opcional)</span>}
                     </label>
                     <input
                       type="number"
@@ -815,12 +944,12 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                         })
                       }
                       className="w-full px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-blue-800 placeholder:text-blue-300"
-                      placeholder="Ex: 100"
+                      placeholder={isFixedIncome ? "Opcional" : "Ex: 100"}
                     />
                   </div>
                   <div className="md:col-span-1 animate-fade-in">
                     <label className="block text-sm font-medium text-blue-700 mb-1">
-                      Preço Unit. (R$)
+                      Preço Unit. (R$) {isFixedIncome && <span className="text-[10px] font-normal text-blue-400 italic">(Opcional)</span>}
                     </label>
                     <input
                       type="number"
@@ -834,7 +963,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                         })
                       }
                       className="w-full px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-blue-800 placeholder:text-blue-300"
-                      placeholder="Ex: 10.50"
+                      placeholder={isFixedIncome ? "Opcional" : "Ex: 10.50"}
                     />
                   </div>
                 </>
