@@ -1070,9 +1070,16 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                                       }`}>
                                         {group.master.id === item.id && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
                                       </div>
-                                      <span className={`text-sm ${group.master.id === item.id ? 'font-bold text-blue-700' : 'text-slate-600'}`}>
-                                        {item.name}
-                                      </span>
+                                      <div className="flex flex-col">
+                                        <span className={`text-sm ${group.master.id === item.id ? 'font-bold text-blue-700' : 'text-slate-600'}`}>
+                                          {item.name}
+                                        </span>
+                                        {item.ticker && (
+                                          <span className="text-[10px] text-slate-400 font-mono font-black uppercase tracking-widest leading-none mt-0.5 group-hover:text-blue-400 transition-colors">
+                                            {item.ticker}
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
                                     {group.master.id === item.id && (
                                       <span className="text-[10px] font-bold bg-blue-600 text-white px-2 py-0.5 rounded uppercase">Principal</span>

@@ -41,11 +41,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'reports', label: 'Relatórios', icon: BarChart3 },
     { id: 'cashflow', label: 'Fluxo de Caixa', icon: TrendingUp },
     { id: 'expenses-analysis', label: 'Análise de Gastos', icon: PieChart },
     { id: 'investments', label: 'Investimentos', icon: BarChart3 },
     { id: 'payables', label: 'Contas a Pagar/Receber', icon: CalendarClock },
     { id: 'bank-transactions', label: 'Movimentação Bancária', icon: ArrowRightLeft },
+    { id: 'brokerage-notes', label: 'Notas de Corretagem', icon: BookOpen },
     { id: 'registries', label: 'Cadastros', icon: Database },
   ];
 

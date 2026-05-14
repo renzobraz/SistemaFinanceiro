@@ -189,6 +189,34 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, regist
                     ))}
                   </select>
                 </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Banco Padrão (Investimentos)</label>
+                  <select 
+                    value={prefs.defaultPerformanceBankId}
+                    onChange={(e) => setPrefs({...prefs, defaultPerformanceBankId: e.target.value})}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
+                  >
+                    <option value="ALL">Todos os Bancos</option>
+                    {registries.banks.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Carteira Padrão (Investimentos)</label>
+                  <select 
+                    value={prefs.defaultPerformanceWalletId}
+                    onChange={(e) => setPrefs({...prefs, defaultPerformanceWalletId: e.target.value})}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
+                  >
+                    <option value="ALL">Todas Carteiras</option>
+                    {registries.wallets.map(w => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="p-6 bg-blue-50/50 rounded-2xl border border-blue-100 flex items-start gap-4">

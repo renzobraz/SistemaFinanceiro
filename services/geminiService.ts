@@ -56,7 +56,10 @@ const STRINGS_PARA_SILENCIAR = [
 ];
 
 function cleanErrorMessage(error: any): string {
+  if (!error) return "Erro desconhecido (vazio)";
   let msg = typeof error === 'string' ? error : (error?.message || String(error));
+  if (msg === 'null' || msg === 'undefined' || !msg) return "Erro desconhecido ou sem mensagem";
+  
   if (STRINGS_PARA_SILENCIAR.some(s => msg.includes(s))) {
     return msg.split('\n')[0].split('https://')[0].split('{')[0].trim() || "Erro na consulta de dados financeiros";
   }
@@ -96,7 +99,7 @@ function setCachedData(key: string, data: any) {
 }
 
 export const geminiService = {
-  async fetchAssetPrices(tickers: string[], force: boolean = false): Promise<{prices: Record<string, { current: number; target: number | null }>, timestamp: number}> {
+  async fetchAssetPrices(tickers: string[], force: boolean = false): Promise<{prices: Record<string, { current: number; target: number | null }>, timestamp: number, error?: string}> {
     if (tickers.length === 0) return { prices: {}, timestamp: Date.now() };
     
     // Tenta cache primeiro
@@ -133,6 +136,10 @@ export const geminiService = {
         
         const sanitizedData = await response.json();
         
+        if (!sanitizedData || typeof sanitizedData !== 'object') {
+          throw new Error("Resposta da API de preços é inválida ou nula");
+        }
+        
         // Mescla apenas dados válidos com o cache existente
         const existingRaw = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
         const existing = existingRaw ? JSON.parse(existingRaw).data : {};
@@ -160,13 +167,15 @@ export const geminiService = {
     // Se falhar o real após retentativas, tenta o cache mesmo expirado
     const stale = localStorage.getItem(CACHE_KEYS.ASSET_PRICES);
     if (stale) {
+      console.log("[Prices] Tentando recuperar dados do cache expirado como fallback.");
       try { 
         const parsed = JSON.parse(stale);
         return { prices: parsed.data, timestamp: parsed.timestamp }; 
       } catch(e) {}
     }
 
-    return { prices: {}, timestamp: Date.now() };
+    // Se nem cache tiver, pelo menos tenta retornar um objeto que não quebre a UI
+    return { prices: {}, timestamp: Date.now(), error: cleanErrorMessage(lastError) };
   },
 
   async fetchAssetHistory(ticker: string): Promise<{date: string, close: number}[]> {

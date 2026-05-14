@@ -79,13 +79,21 @@ export const HelpManual: React.FC = () => {
             </h2>
             <div className="text-slate-600 space-y-3 leading-relaxed text-sm">
               <p>
-                Para que o <strong>Relatório de Performance</strong> funcione corretamente, siga este fluxo ao comprar um ativo:
+                Para que o <strong>Relatório de Performance</strong> funcione corretamente, siga este fluxo ao cadastrar e movimentar ativos:
               </p>
               <div className="bg-blue-50 p-5 rounded-xl border border-blue-100 space-y-4">
                 <div className="flex gap-3">
+                  <div className="w-6 h-6 bg-slate-700 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">0</div>
+                  <div className="space-y-1 text-slate-700">
+                    <p><strong>REQUISITO CRUCIAL:</strong> No menu <strong>Cadastros &gt; Participantes</strong>, o ativo deve ter o campo <strong>"Tipo"</strong> preenchido (ex: Renda Fixa, CDB, Tesouro Direto). 
+                    <br/><span className="text-red-600 font-bold">Atenção:</span> Preencher apenas a "Categoria" não é suficiente; o sistema usa o "Tipo" para filtrar o que deve aparecer no relatório de ativos.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
                   <div className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">1</div>
                   <div className="space-y-1">
-                    <p><strong>Aporte/Compra:</strong> Lance um <strong>Débito</strong> selecionando o Ativo (Participante) de Renda Fixa. O Saldo do Banco diminuirá e o valor passará a compor sua carteira.</p>
+                    <p><strong>Aporte/Compra:</strong> Lance um <strong>Débito</strong> selecionando o Ativo. O Saldo do Banco diminuirá e o valor passará a compor sua carteira.</p>
+                    <p className="text-[11px] text-slate-500">Para Renda Fixa, se você não informar a <strong>Quantidade</strong>, o sistema assumirá automaticamente "1 unidade" para facilitar o controle por valor bruto.</p>
                   </div>
                 </div>
                 <div className="flex gap-3">
@@ -98,7 +106,7 @@ export const HelpManual: React.FC = () => {
                 <div className="flex gap-3">
                   <div className="w-6 h-6 bg-amber-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">3</div>
                   <div className="space-y-1">
-                    <p><strong>Organização:</strong> Ativos sem Ticker (ex: CDB, LCI) não buscam cotação na internet, dependendo exclusivamente das suas atualizações manuais para o cálculo de lucro.</p>
+                    <p><strong>Ativos sem Ticker:</strong> CDB, LCI, Tesouro Direto e Fundos dependem exclusivamente das suas atualizações manuais de saldo bruto para o cálculo de lucro real.</p>
                   </div>
                 </div>
               </div>

@@ -25,6 +25,7 @@ interface TransactionFormProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (transaction: Transaction | Transaction[]) => Promise<void>;
+  onDelete?: (ids: string[]) => Promise<void>;
   onAddParticipant: (name: string) => Promise<Participant>;
   initialData?: Transaction | null;
   partnerData?: Transaction | null;
@@ -132,6 +133,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   isOpen,
   onClose,
   onSave,
+  onDelete,
   onAddParticipant,
   initialData,
   partnerData,
@@ -149,6 +151,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [targetWalletId, setTargetWalletId] = useState("");
   const [linkedId, setLinkedId] = useState<string | undefined>(undefined);
   const [isSaving, setIsSaving] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [discountValue, setDiscountValue] = useState<number>(0);
 
   // Exchange State
@@ -317,33 +320,37 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
 
       if (initialData.linkedId) {
         setMode("TRANSFER");
-        if (initialData.type === "CREDIT" && partnerData) {
-          newFormData.bankId = partnerData.bankId;
-          newFormData.walletId = partnerData.walletId;
-          setTargetBankId(initialData.bankId);
-          setTargetWalletId(initialData.walletId);
+        // Garantimos que o formulário sempre carregue a lógica "Origem -> Destino"
+        // independente de qual "perna" da transferência o usuário clicou para editar.
+        const debitLeg = initialData.type === "DEBIT" ? initialData : partnerData;
+        const creditLeg = initialData.type === "CREDIT" ? initialData : partnerData;
+
+        if (debitLeg) {
+          newFormData.bankId = debitLeg.bankId;
+          newFormData.walletId = debitLeg.walletId;
+          newFormData.value = debitLeg.value;
+          newFormData.type = "DEBIT";
+        }
+
+        if (creditLeg) {
+          setTargetBankId(creditLeg.bankId);
+          setTargetWalletId(creditLeg.walletId);
+          setTargetValue(creditLeg.value);
         } else {
-          if (partnerData) {
-            setTargetBankId(partnerData.bankId);
-            setTargetWalletId(partnerData.walletId);
-          } else {
-            setTargetBankId("");
-            setTargetWalletId("");
-          }
+          setTargetBankId("");
+          setTargetWalletId("");
+          setTargetValue(0);
         }
         
         // Load exchange fields if they exist
-        setExchangeRate(initialData.exchangeRate || 0);
-        setSpread(initialData.spread || 0);
-        setIof(initialData.iof || 0);
-        setVet(initialData.vet || 0);
-        if (initialData.vet && initialData.vet > 0) {
-          setTargetValue(Number((initialData.value / initialData.vet).toFixed(2)));
-        } else {
-          setTargetValue(0);
-        }
-        setOriginalValue(initialData.originalValue || 0);
-        setOriginalCurrency(initialData.originalCurrency || "");
+        const exData = debitLeg || initialData;
+        setExchangeRate(exData.exchangeRate || 0);
+        setSpread(exData.spread || 0);
+        setIof(exData.iof || 0);
+        setVet(exData.vet || 0);
+
+        setOriginalValue(exData.originalValue || 0);
+        setOriginalCurrency(exData.originalCurrency || "");
       } else {
         setMode("DEFAULT");
         setTargetBankId("");
@@ -481,34 +488,51 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     e.preventDefault();
     if (isSaving) return;
 
+    setIsSaving(true);
+    setValidationErrors([]);
+
+    // Validação de Campos Obrigatórios
+    const errors: string[] = [];
+    
     // Validação de Investimento
     const category = registries.categories.find(c => c.id === formData.categoryId);
     const participant = registries.participants.find(p => p.id === formData.participantId);
     const bank = registries.banks.find(b => b.id === formData.bankId);
     const isInvestmentBank = bank?.type === 'INVESTMENT';
-
     const isDividendOrTax = category?.name.toLowerCase() === 'proventos' || 
                            category?.name.toLowerCase() === 'impostos s/ proventos';
-
     const isInvestment = !!participant?.category && isInvestmentBank && !isDividendOrTax;
-    const isFixedIncome = participant?.category?.toLowerCase() === 'renda fixa';
+    const isFixedIncome = participant?.category?.toLowerCase() === 'renda fixa' || 
+                         participant?.category?.toLowerCase() === 'tesouro direto' ||
+                         participant?.category?.toLowerCase() === 'cdb';
 
     if (isInvestment && !isFixedIncome) {
       if (!formData.quantity || formData.quantity <= 0) {
-        alert("Para este tipo de investimento, a quantidade é obrigatória e deve ser maior que zero.");
-        return;
+        errors.push("Quantidade (Obrigatória para este investimento)");
       }
       if (!formData.unitPrice || formData.unitPrice <= 0) {
-        alert("Para este tipo de investimento, o preço unitário é obrigatório.");
-        return;
+        errors.push("Preço Unitário (Obrigatório para este investimento)");
       }
     }
 
-    setIsSaving(true);
+    if (!formData.walletId) errors.push("Carteira/Portfólio");
+    if (!formData.bankId) errors.push("Conta/Banco");
+    if (!formData.date) errors.push("Data");
+    if (formData.value <= 0) errors.push("Valor (deve ser maior que zero)");
+    if (!formData.type) errors.push("Tipo (Débito/Crédito)");
+    if (!formData.categoryId) errors.push("Categoria");
+    if (!formData.participantId) errors.push("Participante");
 
-    if (!formData.participantId) {
-      alert("Por favor, selecione um participante.");
+    if (mode === "TRANSFER") {
+      if (!targetWalletId) errors.push("Carteira Destino");
+      if (!targetBankId) errors.push("Conta/Banco Destino");
+    }
+
+    if (errors.length > 0) {
+      setValidationErrors(errors);
       setIsSaving(false);
+      // Scroll to top of form to see errors
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
@@ -628,6 +652,15 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         transactionsToSave.push(refund);
       }
 
+      // Se era uma transferência e agora não é mais, exclui a perna parceira
+      if (id && initialData?.linkedId && mode !== "TRANSFER" && partnerData?.id && onDelete) {
+        try {
+          await onDelete([partnerData.id]);
+        } catch (e) {
+          console.warn("Falha ao excluir transação parceira, mas prosseguindo com o salvamento principal.", e);
+        }
+      }
+
       await onSave(transactionsToSave);
       onClose();
     } catch (error) {
@@ -695,7 +728,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           >
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                Carteira/Portfólio
+                Carteira/Portfólio <span className="text-red-500">*</span>
               </label>
               <select
                 required
@@ -716,7 +749,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                {mode === "TRANSFER" ? "Conta/Banco Origem" : "Conta/Banco"}
+                {mode === "TRANSFER" ? "Conta/Banco Origem" : "Conta/Banco"} <span className="text-red-500">*</span>
               </label>
               <select
                 required
@@ -865,7 +898,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Data
+                Data <span className="text-red-500">*</span>
               </label>
               <input
                 type="date"
@@ -898,7 +931,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div className={id ? "md:col-span-1" : "md:col-span-1"}>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Valor (R$)
+                Valor (R$) <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -989,7 +1022,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             {mode === "DEFAULT" ? (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tipo
+                  Tipo <span className="text-red-500">*</span>
                 </label>
                 <select
                   disabled={isSaving}
@@ -1123,10 +1156,9 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                Centro de Custo <span className="text-red-500">*</span>
+                Centro de Custo
               </label>
               <select
-                required
                 disabled={isSaving}
                 value={formData.costCenterId}
                 onChange={(e) =>
@@ -1319,7 +1351,26 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               )}
             </div>
 
+            {/* Espaçador dinâmico para evitar que o dropdown de participantes seja cortado pelo rodapé */}
+            <div className={`transition-all duration-300 ${isParticipantDropdownOpen ? 'h-64' : 'h-0'}`} />
+
         </form>
+
+        <div className="px-6 py-4 flex flex-col gap-2">
+          {validationErrors.length > 0 && (
+            <div className="bg-red-50 border border-red-100 p-4 rounded-xl animate-fade-in">
+              <div className="flex items-center gap-2 mb-2">
+                <X className="w-4 h-4 text-red-600" />
+                <span className="text-xs font-black text-red-600 uppercase tracking-wider">Atenção: Campos Obrigatórios Não Preenchidos</span>
+              </div>
+              <ul className="text-xs text-red-500 font-medium list-disc list-inside grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
+                {validationErrors.map((err, i) => (
+                  <li key={i}>{err}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
 
         <div className="p-6 border-t border-gray-100 bg-gray-50 flex flex-wrap justify-end gap-3">
           <button

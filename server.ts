@@ -64,31 +64,29 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 function sanitizeYahooError(e: any): any {
-  if (e && typeof e === 'object') {
-    // Remove propriedades verbosas e pesadas do yahoo-finance2
-    const propsParaRemover = ['errors', 'subErrors', 'raw', 'validation', 'stack', 'help'];
-    propsParaRemover.forEach(p => {
-      try {
-        if (p in e) delete (e as any)[p];
-      } catch (err) {}
-    });
+  if (!e) return { message: "Erro desconhecido no Yahoo Finance" };
+  
+  if (typeof e === 'object') {
+    // Se for um erro do Yahoo-Finance2, ele pode ser muito pesado.
+    // Criamos uma versão limpa para enviar ao frontend.
+    const clean: any = { message: e.message || "Erro de dados no Yahoo Finance" };
     
-    // Força limpeza se ainda houver rastro de erros (como subErrors)
-    if (e.errors) try { delete e.errors; } catch(err) {}
-    if (e.subErrors) try { delete e.subErrors; } catch(err) {}
+    if (e.code) clean.code = e.code;
+    if (e.status) clean.status = e.status;
     
-    if (e.message && typeof e.message === 'string') {
-      const cleanMsg = e.message
+    if (typeof clean.message === 'string') {
+      const cleanMsg = clean.message
         .split('\n')[0]
         .split('https://')[0]
         .split('validation failed')[0]
         .split('Failed validation')[0]
         .trim();
       
-      e.message = cleanMsg || "Erro de dados no Yahoo Finance";
+      clean.message = cleanMsg || "Erro de dados no Yahoo Finance";
     }
+    return clean;
   }
-  return e;
+  return { message: String(e) };
 }
 
 async function robustQuote(symbols: string | string[]) {
@@ -157,19 +155,19 @@ async function startServer() {
 
       // Configuração do transportador SMTP
       const transporter = nodemailer.createTransport({
-        host: smtpConfig?.host || process.env.SMTP_HOST || "smtp.gmail.com",
-        port: parseInt(String(smtpConfig?.port || process.env.SMTP_PORT || "465")),
-        secure: String(smtpConfig?.port || process.env.SMTP_PORT || "465") === "465", 
+        host: smtpConfig?.host || "smtp.gmail.com",
+        port: parseInt(String(smtpConfig?.port || "465")),
+        secure: String(smtpConfig?.port || "465") === "465", 
         auth: {
-          user: smtpConfig?.user || process.env.SMTP_USER,
-          pass: smtpConfig?.pass || process.env.SMTP_PASS,
+          user: smtpConfig?.user || "",
+          pass: smtpConfig?.pass || "",
         },
       });
 
-      const appUrl = process.env.VITE_APP_URL || "http://localhost:3000";
+      const appUrl = (process.env.VITE_APP_URL || "").replace(/\/$/, "");
       
       const mailOptions = {
-        from: smtpConfig ? `"${smtpConfig.from_name}" <${smtpConfig.from_email}>` : (process.env.SMTP_FROM || `"FinControl" <no-reply@fincontrol.com>`),
+        from: smtpConfig ? `"${smtpConfig.from_name}" <${smtpConfig.from_email}>` : `"FinControl" <no-reply@fincontrol.com>`,
         to: email,
         subject: `Você foi convidado para a equipe do FinControl`,
         html: `
@@ -314,7 +312,8 @@ async function startServer() {
           quotesArray = Array.isArray(quotes) ? quotes : [quotes];
           quotesArray = quotesArray.filter(q => q && q.symbol);
         } catch (batchError: any) {
-          console.warn(`[Yahoo] Erro em lote: ${batchError.message}. Tentando individualmente...`);
+          const cleanBatchErr = sanitizeYahooError(batchError);
+          console.warn(`[Yahoo] Erro em lote: ${cleanBatchErr.message}. Tentando individualmente...`);
           for (const sym of yahooTickers) {
             try {
               const q = await robustQuote(sym);
@@ -349,6 +348,7 @@ async function startServer() {
             const bTickers = Array.from(new Set(missingFromYahoo.map(t => (tickerMap.get(t) || t).replace(".SA", "")))).join(",");
             const token = process.env.VITE_BRAPI_TOKEN || process.env.BRAPI_TOKEN;
             const url = `https://brapi.dev/api/quote/${bTickers}${token ? `?token=${token}` : ""}`;
+            console.log(`[Brapi] Chamando URL: ${url.split('token=')[0]}token=***`);
             const response = await fetch(url);
             if (response.ok) {
               const dataValue: any = await response.json();
@@ -375,7 +375,9 @@ async function startServer() {
           try {
             const hTickers = Array.from(new Set(stillMissing.map(t => (tickerMap.get(t) || t).replace(".SA", "")))).join(",");
             const key = process.env.HGBRASIL_API_KEY || "703816a7";
-            const response = await fetch(`https://api.hgbrasil.com/finance/stock_price?key=${key}&symbol=${hTickers}`);
+            const hgUrl = `https://api.hgbrasil.com/finance/stock_price?key=${key}&symbol=${hTickers}`;
+            console.log(`[HG Brasil] Chamando URL: ${hgUrl.split('key=')[0]}key=***`);
+            const response = await fetch(hgUrl);
             if (response.ok) {
               const dataValue: any = await response.json();
               if (dataValue && dataValue.results) {

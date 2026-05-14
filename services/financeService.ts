@@ -12,7 +12,8 @@ import {
   AssetTicker,
   UserPermission,
   SmtpSettings,
-  UserPreferences
+  UserPreferences,
+  AssetAccrual
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -174,6 +175,7 @@ const KEYS = {
   PREFERENCES: 'fincontrol_preferences',
   USER_SETTINGS: 'fincontrol_user_settings',
   IGNORED_UNIFICATIONS: 'fincontrol_ignored_unifications',
+  ASSET_ACCRUALS: 'fincontrol_asset_accruals',
 };
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -236,7 +238,7 @@ const formatSupabaseError = (error: any): string => {
 };
 
 const mapTransactionFromDb = (db: any): Transaction => ({
-  id: db.id,
+  id: String(db.id),
   date: db.date ? String(db.date).substring(0, 10) : new Date().toISOString().substring(0, 10), // Força YYYY-MM-DD
   description: db.description,
   docNumber: db.doc_number || '',
@@ -245,12 +247,12 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   unitPrice: db.unit_price ? Number(db.unit_price) : undefined,
   type: db.type,
   status: db.status,
-  bankId: db.bank_id || '',
-  categoryId: db.category_id || '',
-  participantId: db.participant_id || '',
-  costCenterId: db.cost_center_id || '',
-  walletId: db.wallet_id || '',
-  linkedId: db.linked_id || undefined,
+  bankId: db.bank_id ? String(db.bank_id) : '',
+  categoryId: db.category_id ? String(db.category_id) : '',
+  participantId: db.participant_id ? String(db.participant_id) : '',
+  costCenterId: db.cost_center_id ? String(db.cost_center_id) : '',
+  walletId: db.wallet_id ? String(db.wallet_id) : '',
+  linkedId: db.linked_id ? String(db.linked_id) : undefined,
   createdAt: db.created_at || undefined,
   exchangeRate: db.exchange_rate ? Number(db.exchange_rate) : undefined,
   spread: db.spread ? Number(db.spread) : undefined,
@@ -608,6 +610,129 @@ export const financeService = {
       .eq('id', id);
 
     if (error) throw error;
+  },
+
+  async getAssetAccruals(assetId?: string): Promise<AssetAccrual[]> {
+    const supabase = getSupabase();
+    let supabaseData: AssetAccrual[] = [];
+
+    if (supabase) {
+      try {
+        let query = supabase.from('asset_accruals').select('*');
+        if (assetId) query = query.eq('asset_id', assetId);
+        const { data, error } = await query.order('date', { ascending: false });
+        if (error) {
+          if (error.code === 'PGRST204' || error.code === '42P01') {
+             console.warn("Tabela asset_accruals não encontrada no Supabase.");
+          } else {
+             console.error("Erro ao buscar acréscimos no Supabase:", error);
+             throw error;
+          }
+        } else {
+          supabaseData = (data || []).map(d => ({
+            id: String(d.id),
+            assetId: String(d.asset_id),
+            bankId: d.bank_id ? String(d.bank_id) : '',
+            date: d.date,
+            value: Number(d.value),
+            description: d.description || '',
+            createdAt: d.created_at
+          }));
+          console.log(`[DEBUG] Acréscimos carregados do Supabase:`, supabaseData.length);
+        }
+      } catch (e) {
+        console.warn("Falha ao buscar acréscimos no Supabase, usando local", e);
+      }
+    }
+
+    const localData = getEntityLocal<AssetAccrual>(KEYS.ASSET_ACCRUALS, []);
+    
+    // Mesclar dados locais e remotos para garantir que o usuário não perca dados
+    const mergedMap = new Map<string, AssetAccrual>();
+    
+    // 1. Adicionar locais
+    localData.forEach(item => {
+      if (item && item.id) mergedMap.set(String(item.id), item);
+    });
+    
+    // 2. Sobreescrever com Supabase
+    supabaseData.forEach(item => {
+      if (item && item.id) mergedMap.set(String(item.id), item);
+    });
+
+    const finalResult = Array.from(mergedMap.values()).sort((a,b) => b.date.localeCompare(a.date));
+    console.log(`[DEBUG] Total de acréscimos (Supabase + Local):`, finalResult.length);
+    
+    return finalResult;
+  },
+
+  async saveAssetAccrual(accrual: AssetAccrual): Promise<AssetAccrual> {
+    const itemToSave = {
+      ...accrual,
+      id: (accrual.id && accrual.id.trim() !== '' && accrual.id !== 'undefined') ? accrual.id : uuidv4(),
+      createdAt: accrual.createdAt || new Date().toISOString()
+    };
+
+    console.log('[DEBUG] Preparando para salvar acréscimo manual:', {
+      id: itemToSave.id,
+      assetId: itemToSave.assetId,
+      bankId: itemToSave.bankId || 'NULL',
+      value: itemToSave.value,
+      date: itemToSave.date
+    });
+
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const payload = {
+          id: itemToSave.id,
+          asset_id: itemToSave.assetId,
+          bank_id: (itemToSave.bankId && String(itemToSave.bankId).trim() !== '' && String(itemToSave.bankId) !== 'undefined') ? String(itemToSave.bankId) : null,
+          date: itemToSave.date,
+          value: itemToSave.value,
+          description: itemToSave.description,
+          created_at: itemToSave.createdAt
+        };
+        const storedUserId = localStorage.getItem('supabase_user_id');
+        if (storedUserId) (payload as any).user_id = storedUserId;
+
+        const { error } = await supabase.from('asset_accruals').upsert(payload);
+        if (error) {
+           console.error("Erro ao salvar acréscimo no Supabase:", error);
+           // Se não for erro de tabela inexistente, lançamos para o usuário saber
+           if (error.code !== 'PGRST204' && error.code !== '42P01') {
+             throw error;
+           }
+        }
+      } catch (e) {
+        console.warn("Falha ao salvar acréscimo no Supabase, mantendo local", e);
+      }
+    }
+
+    const list = getEntityLocal<AssetAccrual>(KEYS.ASSET_ACCRUALS, []);
+    const index = list.findIndex(a => String(a.id) === String(itemToSave.id));
+    if (index >= 0) {
+      list[index] = itemToSave;
+    } else {
+      list.push(itemToSave);
+    }
+    saveEntityLocal(KEYS.ASSET_ACCRUALS, list);
+    return itemToSave;
+  },
+
+  async deleteAssetAccrual(id: string): Promise<void> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { error } = await supabase.from('asset_accruals').delete().eq('id', id);
+      if (error) {
+        console.error("Erro ao excluir acréscimo no Supabase:", error);
+        throw new Error(formatSupabaseError(error));
+      }
+    }
+
+    let list = getEntityLocal<AssetAccrual>(KEYS.ASSET_ACCRUALS, []);
+    list = list.filter(a => String(a.id) !== String(id));
+    saveEntityLocal(KEYS.ASSET_ACCRUALS, list);
   },
 
   async getSmtpSettings(): Promise<SmtpSettings | null> {
@@ -983,6 +1108,38 @@ export const financeService = {
     saveEntityLocal(KEYS.TRANSACTIONS, updatedList);
   },
 
+  async updateTransactionsValue(ids: string[], value: number): Promise<void> {
+    const supabase = getSupabase();
+    
+    // Invalida cache de saldos
+    cache.balances = {};
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('transactions')
+          .update({ value })
+          .in('id', ids);
+        
+        if (error) throw new Error(formatSupabaseError(error));
+        return;
+      } catch (e: any) {
+        console.error("Supabase update value failed, falling back to local data", e);
+        
+        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    await delay(300);
+    const list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
+    const updatedList = list.map(t => ids.includes(t.id) ? { ...t, value: Number(value) } : t);
+    saveEntityLocal(KEYS.TRANSACTIONS, updatedList);
+  },
+
   async getRegistry<T extends BaseEntity>(type: string, forceRefresh = false): Promise<T[]> {
     const supabase = getSupabase();
     const tableMap: any = { 
@@ -1044,20 +1201,20 @@ export const financeService = {
         let result: T[] = [];
         if (type === 'banks') {
           result = allData.map((d: any) => ({ 
-            id: d.id, 
+            id: String(d.id), 
             name: d.name, 
             type: d.type || 'CHECKING', 
             currency: d.currency || 'BRL' 
           })) as any;
         } else if (type === 'wallets') {
           result = allData.map((d: any) => ({ 
-            id: d.id, 
+            id: String(d.id), 
             name: d.name 
           })) as any;
         } else if (type === 'participants') {
           const virtualTargetPrices = JSON.parse(localStorage.getItem('fincontrol_virtual_target_prices') || '{}');
           result = allData.map((d: any) => ({ 
-            id: d.id, 
+            id: String(d.id), 
             name: d.name, 
             category: d.category,
             sector: d.sector,
@@ -1069,12 +1226,12 @@ export const financeService = {
           })) as any;
         } else if (type === 'assetTickers') {
           result = allData.map((d: any) => ({
-            id: d.id,
+            id: String(d.id),
             name: d.name,
             ticker: d.ticker
           })) as any;
         } else {
-          result = Array.from(new Map(allData.map(item => [item.id, item])).values()) as T[];
+          result = Array.from(new Map(allData.map(item => [String(item.id), { ...item, id: String(item.id) }])).values()) as T[];
         }
 
         // Atualiza cache em memória
@@ -1663,7 +1820,11 @@ export const financeService = {
       
       const current = sortedItems[i];
       const currentNorm = normalize(current.name);
-      if (currentNorm.length < 3) continue; // Evita nomes muito curtos que gerariam muitos falsos positivos
+      
+      // TIPO PARTICIPANTE: Se tiver Ticker, pode agrupar por ele mesmo que o nome seja diferente
+      const currentTicker = type === 'participants' && (current as any).ticker ? String((current as any).ticker).trim().toUpperCase() : null;
+
+      if (currentNorm.length < 3 && (!currentTicker || currentTicker === "")) continue; 
 
       const group = { master: current, duplicates: [] as any[] };
 
@@ -1672,13 +1833,24 @@ export const financeService = {
         
         const other = sortedItems[j];
         const otherNorm = normalize(other.name);
+        const otherTicker = type === 'participants' && (other as any).ticker ? String((other as any).ticker).trim().toUpperCase() : null;
 
         // Verifica se este par já foi ignorado
         const pairId = [current.id, other.id].sort().join(':');
         if (ignoredPairs.includes(pairId)) continue;
 
-        // Critério: Um contém o outro (ex: "Petrobras" e "Petrobras S.A.")
-        if (otherNorm.includes(currentNorm) || currentNorm.includes(otherNorm)) {
+        let shouldMerge = false;
+
+        // 1. Critério de Ticker (Específico para participantes)
+        if (currentTicker && otherTicker && currentTicker !== "" && currentTicker === otherTicker) {
+            shouldMerge = true;
+        } 
+        // 2. Critério de Nome: Um contém o outro (ex: "Petrobras" e "Petrobras S.A.")
+        else if (currentNorm.length >= 3 && (otherNorm.includes(currentNorm) || currentNorm.includes(otherNorm))) {
+            shouldMerge = true;
+        }
+
+        if (shouldMerge) {
            group.duplicates.push(other);
         }
       }

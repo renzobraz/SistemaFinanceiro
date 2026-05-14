@@ -64,6 +64,16 @@ export interface Transaction {
   createdAt?: string;
 }
 
+export interface AssetAccrual {
+  id: string;
+  assetId: string;
+  bankId?: string;
+  date: string;
+  value: number;
+  description: string;
+  createdAt?: string;
+}
+
 export type DateRangeOption = 'CURRENT_MONTH' | 'CURRENT_WEEK' | 'LAST_3_DAYS' | 'TODAY' | 'LAST_30_DAYS' | 'PREVIOUS_MONTH' | 'ALL';
 
 export interface UserPreferences {

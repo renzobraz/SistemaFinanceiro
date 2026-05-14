@@ -62,16 +62,25 @@ export const CashFlowReport: React.FC<CashFlowReportProps> = ({
   registries 
 }) => {
   const [granularity, setGranularity] = useState<Granularity>('MONTHLY');
-  const [selectedBankIds, setSelectedBankIds] = useState<Set<string>>(new Set());
+  const [selectedBankIds, setSelectedBankIds] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem('fincontrol_cashflow_banks');
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [showBankSelector, setShowBankSelector] = useState(false);
 
-  // Inicializa com todos os bancos selecionados na primeira carga
+  // Inicializa com todos os bancos selecionados na primeira carga se não houver salvo
   useEffect(() => {
-    if (selectedBankIds.size === 0 && registries.banks.length > 0) {
+    const saved = localStorage.getItem('fincontrol_cashflow_banks');
+    if (!saved && selectedBankIds.size === 0 && registries.banks.length > 0) {
       setSelectedBankIds(new Set(registries.banks.map(b => b.id)));
     }
   }, [registries.banks]);
+
+  // Persistir seleções
+  useEffect(() => {
+    localStorage.setItem('fincontrol_cashflow_banks', JSON.stringify(Array.from(selectedBankIds)));
+  }, [selectedBankIds]);
 
   const toggleBank = (id: string) => {
     const next = new Set(selectedBankIds);
