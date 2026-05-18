@@ -10,6 +10,7 @@ import { CashFlowReport } from './components/CashFlowReport';
 import { ExpenseAnalysisReport } from './components/ExpenseAnalysisReport';
 import { AssetPerformanceReport } from './components/AssetPerformanceReport';
 import { BrokerageNotesReport } from './components/BrokerageNotesReport';
+import { ProfitDistributionReport } from './components/ProfitDistributionReport';
 import ReportsDashboard from './src/components/reports/ReportsDashboard';
 import { HelpManual } from './components/HelpManual';
 import { SettingsPage } from './components/SettingsPage';
@@ -40,7 +41,8 @@ import {
   Hash,
   LogOut,
   User,
-  History as HistoryIcon
+  History as HistoryIcon,
+  Scaling
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 
@@ -128,50 +130,21 @@ const App: FC = () => {
   };
 
   // Carrega apenas os cadastros (uma única vez ou quando conectar)
-  const loadRegistries = useCallback(async (forceRefresh = false) => {
+  const loadRegistries = useCallback(async (forceRefresh = false, walletId?: string) => {
     const requestId = ++lastRegistryRequestIdRef.current;
     try {
-      // Tenta carregar do localStorage primeiro para exibição imediata
-      if (!forceRefresh) {
-        const keyMap: any = { 
-          banks: 'fincontrol_banks', 
-          categories: 'fincontrol_categories', 
-          costCenters: 'fincontrol_cost_centers', 
-          participants: 'fincontrol_participants', 
-          wallets: 'fincontrol_wallets',
-          assetTypes: 'fincontrol_asset_types',
-          assetSectors: 'fincontrol_asset_sectors',
-          assetTickers: 'fincontrol_asset_tickers'
-        };
-        const localData = {
-          banks: JSON.parse(localStorage.getItem(keyMap.banks) || '[]'),
-          categories: JSON.parse(localStorage.getItem(keyMap.categories) || '[]'),
-          costCenters: JSON.parse(localStorage.getItem(keyMap.costCenters) || '[]'),
-          participants: JSON.parse(localStorage.getItem(keyMap.participants) || '[]'),
-          wallets: JSON.parse(localStorage.getItem(keyMap.wallets) || '[]'),
-          assetTypes: JSON.parse(localStorage.getItem(keyMap.assetTypes) || '[]'),
-          assetSectors: JSON.parse(localStorage.getItem(keyMap.assetSectors) || '[]'),
-          assetTickers: JSON.parse(localStorage.getItem(keyMap.assetTickers) || '[]'),
-        };
-        
-        const hasAnyData = Object.values(localData).some(arr => Array.isArray(arr) && arr.length > 0);
-        
-        if (hasAnyData) {
-          if (requestId === lastRegistryRequestIdRef.current) {
-            setRegistries(localData as any);
-          }
-        }
-      }
+      // Se não quiser filtrar por carteira (ex: aba de carteiras em si), removemos o walletId
+      const actualWalletId = (activeRegistryTab === 'wallets') ? undefined : (walletId === 'ALL' ? undefined : walletId);
 
       const [bk, cat, cc, pt, wa, at, as, atk] = await Promise.all([
-        financeService.getRegistry<Bank>('banks', forceRefresh),
-        financeService.getRegistry<Category>('categories', forceRefresh),
-        financeService.getRegistry<CostCenter>('costCenters', forceRefresh),
-        financeService.getRegistry<Participant>('participants', forceRefresh),
-        financeService.getRegistry<Wallet>('wallets', forceRefresh),
-        financeService.getRegistry<AssetType>('assetTypes', forceRefresh),
-        financeService.getRegistry<AssetSector>('assetSectors', forceRefresh),
-        financeService.getRegistry<AssetTicker>('assetTickers', forceRefresh),
+        financeService.getRegistry<Bank>('banks', forceRefresh, actualWalletId),
+        financeService.getRegistry<Category>('categories', forceRefresh, actualWalletId),
+        financeService.getRegistry<CostCenter>('costCenters', forceRefresh, actualWalletId),
+        financeService.getRegistry<Participant>('participants', forceRefresh, actualWalletId),
+        financeService.getRegistry<Wallet>('wallets', forceRefresh), // Carteiras sempre carregam todas
+        financeService.getRegistry<AssetType>('assetTypes', forceRefresh, actualWalletId),
+        financeService.getRegistry<AssetSector>('assetSectors', forceRefresh, actualWalletId),
+        financeService.getRegistry<AssetTicker>('assetTickers', forceRefresh, actualWalletId),
       ]);
 
       if (requestId === lastRegistryRequestIdRef.current) {
@@ -192,9 +165,9 @@ const App: FC = () => {
            if (stats.types > 0 || stats.sectors > 0 || stats.tickers > 0) {
               // Recarrega se houve novos cadastros criados pela sincronização
               const [newAt, newAs, newAtk] = await Promise.all([
-                financeService.getRegistry<AssetType>('assetTypes', true),
-                financeService.getRegistry<AssetSector>('assetSectors', true),
-                financeService.getRegistry<AssetTicker>('assetTickers', true)
+                financeService.getRegistry<AssetType>('assetTypes', true, actualWalletId),
+                financeService.getRegistry<AssetSector>('assetSectors', true, actualWalletId),
+                financeService.getRegistry<AssetTicker>('assetTickers', true, actualWalletId)
               ]);
               
               setRegistries(prev => ({
@@ -209,7 +182,7 @@ const App: FC = () => {
     } catch (error: any) {
       console.error("Failed to load registries", error);
     }
-  }, []);
+  }, [activeRegistryTab]);
 
   // Carrega transações baseado nos filtros atuais (Database-side)
   const loadTransactions = useCallback(async () => {
@@ -277,8 +250,12 @@ const App: FC = () => {
 
     if (supabase) {
         try {
-            // Verifica sessão atual
-            const { data: { session } } = await supabase.auth.getSession();
+            // Verifica sessão atual - timeout de 5 segundos para não travar o carregamento
+            const sessionPromise = supabase.auth.getSession();
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000));
+            
+            const { data: { session } } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
+            
             setUser(session?.user || null);
             if (session?.user) {
                 localStorage.setItem('supabase_user_id', session.user.id);
@@ -286,11 +263,12 @@ const App: FC = () => {
 
             // Teste rápido de conexão
             const { error } = await supabase.from('banks').select('id').limit(1);
-            if (error && (error.message?.includes('fetch') || error.name === 'TypeError')) {
+            if (error && (error.message?.includes('fetch') || error.name === 'TypeError' || error.message?.includes('Network'))) {
                 setIsOffline(true);
             }
         } catch (e: any) {
-            if (e.message?.includes('fetch') || e.name === 'TypeError') {
+            console.warn("Supabase connection check failed:", e.message);
+            if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message === 'Timeout' || e.message?.includes('Network')) {
                 setIsOffline(true);
             }
         }
@@ -378,10 +356,11 @@ const App: FC = () => {
   }, [startDate, endDate, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter, activeTab, loadTransactions]);
 
   useEffect(() => {
-    if (activeTab === 'registries') {
-      loadRegistries();
+    // Carrega registros para quase todas as abas que usam o formulário ou exibem nomes
+    if (!['settings', 'manual'].includes(activeTab)) {
+      loadRegistries(false, selectedWalletId);
     }
-  }, [activeTab, loadRegistries]);
+  }, [activeTab, loadRegistries, selectedWalletId, activeRegistryTab]);
 
   useEffect(() => {
     if (activeTab === 'payables') {
@@ -474,7 +453,7 @@ const App: FC = () => {
   };
 
   const handleQuickAddParticipant = async (name: string): Promise<Participant> => {
-      const newP = await financeService.saveRegistryItem('participants', { id: '', name });
+      const newP = await financeService.saveRegistryItem('participants', { id: '', name, walletId: selectedWalletId });
       setRegistries(prev => ({ ...prev, participants: [...prev.participants, newP] }));
       return newP;
   };
@@ -581,9 +560,11 @@ const App: FC = () => {
                       className="bg-white border border-gray-300 rounded-lg px-2 text-[10px] focus:ring-1 focus:ring-blue-500 outline-none text-slate-700 font-bold h-[34px] min-w-[130px]"
                     >
                       <option value={activeTab === 'investments' ? 'ALL' : ''}>{activeTab === 'investments' ? 'Todos Bancos' : 'Banco'}</option>
-                      {registries.banks.map(b => (
-                        <option key={b.id} value={b.id}>{b.name}</option>
-                      ))}
+                      {registries.banks
+                        .filter(b => b.active !== false || b.id === (activeTab === 'investments' ? performanceBankId : selectedBankId))
+                        .map(b => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
                     </select>
 
                     <select 
@@ -592,9 +573,11 @@ const App: FC = () => {
                       className="bg-white border border-gray-300 rounded-lg px-2 text-[10px] focus:ring-1 focus:ring-blue-500 outline-none text-slate-700 font-bold h-[34px] min-w-[130px]"
                     >
                       <option value={activeTab === 'investments' ? 'ALL' : ''}>{activeTab === 'investments' ? 'Todas Carteiras' : 'Carteira'}</option>
-                      {registries.wallets.map(w => (
-                        <option key={w.id} value={w.id}>{w.name}</option>
-                      ))}
+                      {registries.wallets
+                        .filter(w => w.active !== false || w.id === (activeTab === 'investments' ? performanceWalletId : selectedWalletId))
+                        .map(w => (
+                          <option key={w.id} value={w.id}>{w.name}</option>
+                        ))}
                     </select>
 
                     {activeTab === 'investments' && (
@@ -640,6 +623,28 @@ const App: FC = () => {
                       title="Sair"
                     >
                       <LogOut className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+            )}
+
+            {activeTab === 'registries' && (
+                <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-lg px-3 py-1.5 shadow-sm h-[38px] group hover:border-blue-400 transition-all">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-slate-200 pr-3 mr-1">Selecione sua carteira</span>
+                        <select 
+                          value={selectedWalletId} 
+                          onChange={(e) => setSelectedWalletId(e.target.value)}
+                          className="bg-transparent border-none text-xs font-black text-blue-600 outline-none cursor-pointer pr-4"
+                        >
+                          <option value="ALL">Todas (Ver Tudo)</option>
+                          {registries.wallets.map(w => (
+                            <option key={w.id} value={w.id}>{w.name}</option>
+                          ))}
+                        </select>
+                    </div>
+                    
+                    <button onClick={() => loadRegistries(true, selectedWalletId)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-gray-200 h-[38px] w-[38px] flex items-center justify-center" title="Sincronizar">
+                      <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-blue-500' : ''}`} />
                     </button>
                 </div>
             )}
@@ -761,6 +766,15 @@ const App: FC = () => {
             </div>
           )}
 
+          {activeTab === 'distribution' && (
+            <div className="flex-1 overflow-auto bg-slate-50">
+              <ProfitDistributionReport onNavigateToRegistries={() => {
+                setActiveTab('registries');
+                setActiveRegistryTab('participants');
+              }} />
+            </div>
+          )}
+
           {(activeTab === 'payables' || activeTab === 'bank-transactions') && (
             <div className="flex-1 flex flex-col animate-fade-in bg-white h-full relative">
                <div className="absolute inset-0 overflow-hidden flex flex-col">
@@ -810,24 +824,28 @@ const App: FC = () => {
           )}
 
           {activeTab === 'registries' && (
-            <div className="flex-1 overflow-auto p-8">
-                <div className="h-full flex flex-col animate-fade-in">
-                  <div className="flex flex-wrap gap-2 mb-6">
-                    {registryTabs.map(tab => (
-                        <button key={tab.id} onClick={() => setActiveRegistryTab(tab.id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeRegistryTab === tab.id ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-200'}`}>
-                          <tab.icon className="w-4 h-4" /> {tab.label}
-                        </button>
-                    ))}
+            <div className="flex-1 overflow-auto p-4 sm:p-8">
+                <div className="h-full flex flex-col animate-fade-in max-w-7xl mx-auto">
+                  <div className="flex items-center mb-6">
+                    <div className="flex flex-wrap gap-2">
+                      {registryTabs.map(tab => (
+                          <button key={tab.id} onClick={() => setActiveRegistryTab(tab.id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeRegistryTab === tab.id ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}>
+                            <tab.icon className="w-4 h-4" /> {tab.label}
+                          </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+
+                  <div className="flex-1 min-h-0">
                     <RegistryManager 
                         title={registryTabs.find(t => t.id === activeRegistryTab)?.label || ''} 
                         items={registries[activeRegistryTab as keyof typeof registries]} 
                         // @ts-ignore
-                        onAdd={(name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id:'', name, ...extra}).then(() => loadRegistries())}
-                        onDelete={(id) => financeService.deleteRegistryItem(activeRegistryTab, id).then(() => loadRegistries())}
+                        onAdd={(name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id:'', name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(false, selectedWalletId))}
+                        onDelete={(id) => financeService.deleteRegistryItem(activeRegistryTab, id).then(() => loadRegistries(false, selectedWalletId))}
                         // @ts-ignore
-                        onEdit={(id, name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id, name, ...extra}).then(() => loadRegistries())}
+                        onEdit={(id, name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id, name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(false, selectedWalletId))}
+                        onToggleActive={(id, active) => financeService.toggleRegistryItemActive(activeRegistryTab, id, active).then(() => loadRegistries(false, selectedWalletId))}
                         onImport={async (data) => {
                             try {
                                 const newItems = [];
@@ -853,16 +871,16 @@ const App: FC = () => {
                                             extra.bankId = val1;
                                         }
                                     }
-
+ 
                                     // Busca se já existe um item com o mesmo nome para atualizar em vez de duplicar
                                     const existing = existingItems.find(x => x.name.toLowerCase() === name.toLowerCase());
                                     const idToUse = existing ? existing.id : '';
 
                                     // @ts-ignore
-                                    const newItem = await financeService.saveRegistryItem(activeRegistryTab, { id: idToUse, name, ...extra });
+                                    const newItem = await financeService.saveRegistryItem(activeRegistryTab, { id: idToUse, name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra });
                                     newItems.push(newItem);
                                 }
-                                await loadRegistries();
+                                await loadRegistries(false, selectedWalletId);
                                 showAlert('Importação Concluída', `${newItems.length} itens processados com sucesso.`);
                             } catch (e: any) {
                                 showAlert('Erro na Importação', e);
@@ -870,7 +888,7 @@ const App: FC = () => {
                         }}
                         onDeduplicate={async (onProgress) => {
                             const res = await financeService.deduplicateRegistry(activeRegistryTab, onProgress);
-                            await loadRegistries();
+                            await loadRegistries(false, selectedWalletId);
                             await loadTransactions();
                             return res;
                         }}
@@ -880,12 +898,12 @@ const App: FC = () => {
                         onRemoveIgnored={(pairId) => financeService.removeIgnoredUnification(activeRegistryTab, pairId)}
                         onMerge={async (masterId, duplicateIds) => {
                             await financeService.mergeItems(activeRegistryTab, masterId, duplicateIds);
-                            await loadRegistries();
+                            await loadRegistries(false, selectedWalletId);
                             await loadTransactions();
                         }}
                         onAutoFillTickers={activeRegistryTab === 'participants' ? async () => {
                             const count = await financeService.autoFillTickers();
-                            await loadRegistries();
+                            await loadRegistries(false, selectedWalletId);
                             return count;
                         } : undefined}
                         foreignItems={activeRegistryTab === 'wallets' ? registries.banks : undefined}

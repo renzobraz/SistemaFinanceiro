@@ -69,7 +69,8 @@ export const CashFlowChart: React.FC<CashFlowChartProps> = ({ transactions }) =>
   }, [transactions]);
 
   const formatCurrency = (value: number) => {
-    return currency(value, { symbol: 'R$ ', separator: '.', decimal: ',', precision: 2 }).format();
+    const absoluteVal = Math.abs(value) < 0.005 ? 0 : value;
+    return currency(absoluteVal, { symbol: 'R$ ', separator: '.', decimal: ',', precision: 2 }).format();
   };
 
   return (

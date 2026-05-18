@@ -107,13 +107,15 @@ export const ExpenseAnalysisReport: React.FC<ExpenseAnalysisReportProps> = ({ tr
 
   const totalExpenseValue = useMemo(() => expenses.reduce((acc, curr) => acc + curr.value, 0), [expenses]);
 
-  const formatCurrency = (val: number, decimals: boolean = true) => 
-    new Intl.NumberFormat('pt-BR', { 
+  const formatCurrency = (val: number, decimals: boolean = true) => {
+    const absoluteVal = Math.abs(val) < 0.005 ? 0 : val;
+    return new Intl.NumberFormat('pt-BR', { 
       style: 'currency', 
       currency: 'BRL',
       maximumFractionDigits: decimals ? 2 : 0,
       minimumFractionDigits: decimals ? 2 : 0
-    }).format(val);
+    }).format(absoluteVal);
+  };
 
   const formatMonth = (key: string) => {
     const [year, month] = key.split('-');
@@ -209,9 +211,19 @@ export const ExpenseAnalysisReport: React.FC<ExpenseAnalysisReportProps> = ({ tr
                                     layout="horizontal" 
                                     verticalAlign="bottom" 
                                     align="center"
+                                    formatter={(value, entry: any) => {
+                                        const item = analysisData.find(d => d.name === value);
+                                        const percent = item && totalExpenseValue > 0 ? (item.value / totalExpenseValue * 100).toFixed(1) : '0';
+                                        return <span className="text-slate-600 font-medium">{value} ({percent}%)</span>;
+                                    }}
                                     wrapperStyle={{ 
-                                        paddingTop: '20px',
-                                        fontSize: '11px'
+                                        paddingTop: '30px',
+                                        fontSize: '10px',
+                                        width: '100%',
+                                        display: 'flex',
+                                        justifyContent: 'center',
+                                        flexWrap: 'wrap',
+                                        gap: '10px'
                                     }}
                                 />
                             </PieChart>

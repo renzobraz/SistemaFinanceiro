@@ -76,8 +76,10 @@ export const Summary: React.FC<SummaryProps> = ({ transactions, banks, previousB
     ];
   }, [summary]);
 
-  const formatCurrency = (val: number) => 
-    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+  const formatCurrency = (val: number) => {
+    const absoluteVal = Math.abs(val) < 0.005 ? 0 : val;
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(absoluteVal);
+  };
 
   return (
     <>
@@ -87,7 +89,7 @@ export const Summary: React.FC<SummaryProps> = ({ transactions, banks, previousB
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Saldo Atual (Realizado)</p>
-              <h3 className={`text-2xl font-bold mt-1 ${summary.finalBalance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>
+              <h3 className={`text-2xl font-bold mt-1 ${summary.finalBalance >= -0.005 ? 'text-slate-800' : 'text-red-600'}`}>
                 {formatCurrency(summary.finalBalance)}
               </h3>
             </div>
@@ -163,7 +165,7 @@ export const Summary: React.FC<SummaryProps> = ({ transactions, banks, previousB
             {bankBalances.map(b => (
               <div key={b.id} className="p-4 rounded-lg bg-slate-50 border border-slate-100 flex flex-col hover:border-blue-200 transition-colors">
                 <span className="text-sm text-slate-500 font-medium mb-1 truncate" title={b.name}>{b.name}</span>
-                <span className={`text-xl font-bold ${b.balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>
+                <span className={`text-xl font-bold ${b.balance >= -0.005 ? 'text-slate-800' : 'text-red-600'}`}>
                   {formatCurrency(b.balance)}
                 </span>
               </div>

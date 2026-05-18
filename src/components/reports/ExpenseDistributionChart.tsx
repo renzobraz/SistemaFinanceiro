@@ -58,7 +58,9 @@ export const ExpenseDistributionChart: React.FC<ExpenseDistributionChartProps> =
   }, [expenseData]);
 
   const formatCurrency = (value: number) => {
-    return currency(value, { symbol: 'R$ ', separator: '.', decimal: ',', precision: 2 }).format();
+    // Garante que o valor zero não seja exibido como negativo devido a erros de precisão
+    const absoluteVal = Math.abs(value) < 0.001 ? 0 : value;
+    return currency(absoluteVal, { symbol: 'R$ ', separator: '.', decimal: ',', precision: 2 }).format();
   };
 
   const renderLegendText = (value: string, entry: any) => {

@@ -931,15 +931,17 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     callback(numericValue);
   };
 
-  const formatCurrency = (val: number, currency: Currency = 'BRL') => {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(val);
+  const formatCurrency = (val: number, currencyValue: Currency = 'BRL') => {
+    const absoluteVal = Math.abs(val) < 0.005 ? 0 : val;
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: currencyValue }).format(absoluteVal);
   };
 
   const formatValue = (val: number, decimals: number = 2) => {
+    const absoluteVal = Math.abs(val) < 0.005 ? 0 : val;
     return new Intl.NumberFormat('pt-BR', { 
       minimumFractionDigits: decimals, 
       maximumFractionDigits: decimals 
-    }).format(val);
+    }).format(absoluteVal);
   };
 
   const getSuggestion = (asset: AssetPerformance) => {
@@ -1821,18 +1823,18 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-slate-50 rounded-lg">
-              {totals.profit >= 0 ? <TrendingUp className="w-5 h-5 text-emerald-600" /> : <TrendingDown className="w-5 h-5 text-red-600" />}
+              {totals.profit >= -0.005 ? <TrendingUp className="w-5 h-5 text-emerald-600" /> : <TrendingDown className="w-5 h-5 text-red-600" />}
             </div>
             <span className="text-sm font-medium text-slate-500">Lucro Total</span>
           </div>
           <div className="space-y-1">
-            <div className={`text-2xl font-black tracking-tight ${totals.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+            <div className={`text-2xl font-black tracking-tight ${totals.profit >= -0.005 ? 'text-emerald-600' : 'text-red-600'}`}>
               {formatCurrency(totals.profit / safeBaseRate, baseCurrency)}
             </div>
             {Object.keys(totalsByCurrency).length > 1 && selectedBankId === 'ALL' && (
               <div className="flex flex-wrap gap-x-2 text-[10px] text-slate-400 font-medium">
                 {Object.entries(totalsByCurrency).map(([cur, data]) => (
-                  <span key={cur} className={data.profit >= 0 ? 'text-emerald-600/70' : 'text-red-600/70'}>
+                  <span key={cur} className={data.profit >= -0.005 ? 'text-emerald-600/70' : 'text-red-600/70'}>
                     {formatCurrency(data.profit, cur as Currency)}
                   </span>
                 ))}
@@ -2223,17 +2225,17 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                       </td>
 
                       <td className="p-3 text-sm font-black text-slate-700 text-right font-mono border-l border-slate-100">
-                        <span className={totals.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                        <span className={totals.profit >= -0.005 ? 'text-emerald-600' : 'text-red-600'}>
                           {formatCurrency(totals.profit / safeBaseRate, baseCurrency)}
                         </span>
                       </td>
                       <td className="p-3 border-l border-slate-100 text-right text-sm font-black font-mono">
-                        <span className={totals.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                        <span className={totals.profit >= -0.005 ? 'text-emerald-600' : 'text-red-600'}>
                           {(totals.invested > 0 ? (totals.profit / totals.invested * 100) : 0).toFixed(2)}%
                         </span>
                       </td>
                       <td className="p-3 border-l border-slate-100 text-right text-sm font-black font-mono">
-                        <span className={(totals.profit + totals.received) >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                        <span className={(totals.profit + totals.received) >= -0.005 ? 'text-emerald-600' : 'text-red-600'}>
                           {(totals.invested > 0 ? ((totals.profit + totals.received) / totals.invested * 100) : 0).toFixed(2)}%
                         </span>
                       </td>
@@ -2533,8 +2535,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                             ) : (asset.lastPrice !== undefined && asset.lastPrice !== null && asset.lastPrice > 0) ? (
                               <div className="flex flex-col items-end">
                                 <span className="text-xs font-bold text-slate-800 font-mono">{formatValue(lastPriceDisplay, 2)}</span>
-                                <span className={`text-[9px] font-bold flex items-center gap-0.5 ${asset.variation! >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                  {asset.variation! >= 0 ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
+                                <span className={`text-[9px] font-bold flex items-center gap-0.5 ${asset.variation! >= -0.005 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                  {asset.variation! >= -0.005 ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
                                   {formatValue(Math.abs(asset.variation!), 2)}%
                                 </span>
                               </div>
@@ -2659,7 +2661,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                           
                           <td className="p-3 text-right border-l border-slate-100">
                             <div className="flex flex-col items-end">
-                              <span className={`text-xs font-bold font-mono ${profitDisplay >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              <span className={`text-xs font-bold font-mono ${profitDisplay >= -0.005 ? 'text-emerald-600' : 'text-red-600'}`}>
                                 {(asset.lastPrice || isBalanceBased(asset)) ? formatValue(profitDisplay, 2) : '---'}
                               </span>
                               <span className="text-[9px] text-slate-400">
@@ -2724,13 +2726,13 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                           })()}
 
                           <td className="p-3 text-right border-l border-slate-100">
-                            <span className={`text-xs font-bold font-mono ${(asset.rentability || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            <span className={`text-xs font-bold font-mono ${(asset.rentability || 0) >= -0.005 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {(asset.rentability || 0).toFixed(2)}%
                             </span>
                           </td>
 
                           <td className="p-3 text-right border-l border-slate-100">
-                            <span className={`text-xs font-bold font-mono ${(asset.totalReturn || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            <span className={`text-xs font-bold font-mono ${(asset.totalReturn || 0) >= -0.005 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {(asset.totalReturn || 0).toFixed(2)}%
                             </span>
                           </td>
@@ -2867,7 +2869,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                     </div>
                     <div className="pt-2 border-t border-slate-200 flex justify-between text-sm">
                       <span className="text-slate-600 font-bold">Saldo Fin:</span>
-                      <span className={`font-black font-mono ${(detailAsset.totalBoughtValue - detailAsset.totalSold) >= 0 ? 'text-slate-800' : 'text-red-500'}`}>
+                      <span className={`font-black font-mono ${(detailAsset.totalBoughtValue - detailAsset.totalSold) >= -0.005 ? 'text-slate-800' : 'text-red-500'}`}>
                         {formatValue(detailAsset.totalBoughtValue - detailAsset.totalSold, 2)}
                       </span>
                     </div>

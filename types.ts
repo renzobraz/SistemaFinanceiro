@@ -5,6 +5,8 @@ export type TransactionStatus = 'PAID' | 'PENDING';
 export interface BaseEntity {
   id: string;
   name: string;
+  active?: boolean;
+  walletId?: string;
 }
 
 export interface Bank extends BaseEntity {
@@ -26,6 +28,9 @@ export interface Participant extends BaseEntity {
   currentPrice?: number; // Preço atual (mercado)
   targetPrice?: number;  // Preço alvo para compra/venda
   lastUpdate?: string;   // Data da última atualização de preço
+  isPartner?: boolean;   // Se este participante é um sócio para distribuição
+  sharePercent?: number; // % de participação padrão
+  cashSharePercent?: number; // % de participação específica para Caixa
 }
 export type Currency = 'BRL' | 'USD' | 'EUR' | 'GBP' | 'JPY' | 'CHF' | 'CAD' | 'AUD' | 'CNY';
 
@@ -58,6 +63,7 @@ export interface Transaction {
   participantId: string;
   costCenterId: string;
   walletId: string;
+  notes?: string;
 
   // Link for transfers
   linkedId?: string;

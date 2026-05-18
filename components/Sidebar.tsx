@@ -45,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     { id: 'cashflow', label: 'Fluxo de Caixa', icon: TrendingUp },
     { id: 'expenses-analysis', label: 'Análise de Gastos', icon: PieChart },
     { id: 'investments', label: 'Investimentos', icon: BarChart3 },
+    { id: 'distribution', label: 'Distribuição Lucros', icon: TrendingUp },
     { id: 'payables', label: 'Contas a Pagar/Receber', icon: CalendarClock },
     { id: 'bank-transactions', label: 'Movimentação Bancária', icon: ArrowRightLeft },
     { id: 'brokerage-notes', label: 'Notas de Corretagem', icon: BookOpen },

@@ -265,13 +265,15 @@ export const geminiService = {
     }
 
     try {
-      // BUSCA REAL: Usa uma API pública de câmbio (ExchangeRate-API) que é gratuita e precisa
-      const response = await fetch("https://api.exchangerate-api.com/v4/latest/BRL");
-      if (!response.ok) throw new Error("Falha ao buscar taxas de câmbio");
+      // BUSCA REAL: Usa o nosso proxy no servidor para evitar bloqueios no cliente (CORS/Network)
+      const response = await fetch(`/api/rates?_t=${Date.now()}`);
+      if (!response.ok) throw new Error("Falha ao buscar taxas de câmbio via servidor");
       
       const data = await response.json();
       const rates = data.rates;
       
+      if (!rates || !rates.USD) throw new Error("Dados de câmbio inválidos recebidos");
+
       // A API retorna quanto 1 Real vale em outras moedas (ex: USD: 0.19)
       // Precisamos inverter para saber quanto 1 Moeda Estrangeira vale em Reais
       const sanitizedRates: Record<string, number> = {

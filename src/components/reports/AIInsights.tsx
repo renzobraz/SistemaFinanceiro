@@ -26,6 +26,8 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ transactions, registries
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [expanded, setExpanded] = useState(false);
+
   const fetchInsights = async () => {
     if (transactions.length === 0) {
       setInsights("Adicione algumas transações para que eu possa analisar seu perfil financeiro!");
@@ -37,6 +39,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ transactions, registries
     try {
       const result = await getAIInsights({ transactions, registries });
       setInsights(result);
+      if (result) setExpanded(true); // Expande automaticamente ao carregar novos insights
     } catch (err) {
       setError("Não foi possível carregar os insights. Tente novamente em instantes.");
     } finally {
@@ -49,34 +52,66 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ transactions, registries
   }, [transactions]); // Recarrega se as transações mudarem significativamente (ex: troca de filtro)
 
   return (
-    <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm relative overflow-hidden">
+    <div className="bg-white border border-slate-200 rounded-3xl p-6 lg:p-8 shadow-sm relative overflow-hidden transition-all duration-300">
       {/* Background Decor */}
       <div className="absolute top-0 right-0 p-12 opacity-[0.03] translate-x-1/4 -translate-y-1/4">
         <BrainCircuit className="w-64 h-64 text-blue-600" />
       </div>
 
-      <div className="flex items-center justify-between mb-8 relative z-10">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-blue-50 rounded-2xl">
+      <div className="flex items-center justify-between relative z-10">
+        <div 
+          className="flex items-center gap-4 cursor-pointer group"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <div className="p-3 bg-blue-50 rounded-2xl group-hover:bg-blue-100 transition-colors">
             <Sparkles className="w-6 h-6 text-blue-600" />
           </div>
           <div>
-            <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Insights Inteligentes</h3>
+            <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+              Insights Inteligentes
+              <span className={`text-[9px] px-1.5 py-0.5 rounded bg-blue-600 text-white transition-opacity duration-300 ${expanded ? 'opacity-100' : 'opacity-0'}`}>
+                LIVE
+              </span>
+            </h3>
             <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Análise por Inteligência Artificial</p>
           </div>
         </div>
         
-        <button 
-          onClick={fetchInsights}
-          disabled={loading}
-          className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all disabled:opacity-50"
-          title="Recarregar Análise"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={fetchInsights}
+            disabled={loading}
+            className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all disabled:opacity-50"
+            title="Recarregar Análise"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          
+          <button 
+            onClick={() => setExpanded(!expanded)}
+            className="p-2.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all"
+            title={expanded ? "Recolher" : "Expandir"}
+          >
+            <motion.div
+              animate={{ rotate: expanded ? 180 : 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              <RefreshCw className="w-4 h-4 rotate-90" /> {/* Usando ícone similar para expandir se necessário ou lucide chevron */}
+            </motion.div>
+          </button>
+        </div>
       </div>
 
-      <div className="relative z-10">
+      <motion.div 
+        className="relative z-10 overflow-hidden"
+        initial={false}
+        animate={{ 
+          height: expanded ? 'auto' : 0,
+          marginTop: expanded ? 24 : 0,
+          opacity: expanded ? 1 : 0
+        }}
+        transition={{ duration: 0.4, ease: "easeInOut" }}
+      >
         <AnimatePresence mode="wait">
           {loading ? (
             <motion.div 
@@ -126,7 +161,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ transactions, registries
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
+      </motion.div>
     </div>
   );
 };

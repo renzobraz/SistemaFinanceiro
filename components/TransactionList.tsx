@@ -307,7 +307,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   };
 
   const formatMoney = (val: number) => {
-    return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
+    // Garante que o valor zero não seja exibido como negativo devido a erros de precisão
+    const absoluteVal = Math.abs(val) < 0.001 ? 0 : val;
+    return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(absoluteVal);
   };
 
   const containerClasses = variant === 'card' 
@@ -553,7 +555,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     </td>
                     <td className="p-3 text-right text-red-600 font-bold">{t.type === 'DEBIT' ? formatMoney(t.value) : '-'}</td>
                     <td className="p-3 text-right text-green-600 font-bold">{t.type === 'CREDIT' ? formatMoney(t.value) : '-'}</td>
-                    <td className={`p-3 text-right font-black ${balanceMap[t.id] >= 0 ? 'text-slate-700' : 'text-red-500'}`}>{balanceMap[t.id] !== undefined ? formatMoney(balanceMap[t.id]) : '(Pendente)'}</td>
+                    <td className={`p-3 text-right font-black ${balanceMap[t.id] >= -0.005 ? 'text-slate-700' : 'text-red-500'}`}>{balanceMap[t.id] !== undefined ? formatMoney(balanceMap[t.id]) : '(Pendente)'}</td>
                     <td className="p-3 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${t.status === 'PAID' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{t.status === 'PAID' ? 'Pago' : 'Pendente'}</span>
                     </td>

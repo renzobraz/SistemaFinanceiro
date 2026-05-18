@@ -112,7 +112,9 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({ tran
   };
 
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+    // Garante que o valor zero não seja exibido como negativo devido a erros de precisão
+    const absoluteVal = Math.abs(value) < 0.001 ? 0 : value;
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(absoluteVal);
   };
 
   const getSortIcon = (key: string) => {
@@ -270,7 +272,7 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({ tran
                         {item.quantity?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </td>
                       <td className="p-4 text-right text-xs font-bold font-mono text-slate-500">
-                        {unitPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        {formatCurrency(unitPrice)}
                       </td>
                       <td className={`p-4 text-right text-xs font-black font-mono ${
                         item.type === 'DEBIT' ? 'text-red-700' : 'text-emerald-700'

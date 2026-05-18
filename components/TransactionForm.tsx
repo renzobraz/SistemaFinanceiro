@@ -177,23 +177,43 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const sortedBanks = useMemo(
-    () => [...registries.banks].sort((a, b) => a.name.localeCompare(b.name)),
-    [registries.banks],
+  const sourceBanks = useMemo(
+    () => [...registries.banks]
+      .filter(b => b.active !== false || b.id === formData.bankId)
+      .filter(b => !formData.walletId || !b.walletId || b.walletId === formData.walletId)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [registries.banks, formData.bankId, formData.walletId],
   );
+
+  const targetBanks = useMemo(
+    () => [...registries.banks]
+      .filter(b => b.active !== false || b.id === targetBankId)
+      .filter(b => !targetWalletId || !b.walletId || b.walletId === targetWalletId)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [registries.banks, targetBankId, targetWalletId],
+  );
+
   const sortedCategories = useMemo(
     () =>
-      [...registries.categories].sort((a, b) => a.name.localeCompare(b.name)),
-    [registries.categories],
+      [...registries.categories]
+        .filter(c => c.active !== false || c.id === formData.categoryId)
+        .filter(c => !formData.walletId || !c.walletId || c.walletId === formData.walletId)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [registries.categories, formData.categoryId, formData.walletId],
   );
   const sortedCostCenters = useMemo(
     () =>
-      [...registries.costCenters].sort((a, b) => a.name.localeCompare(b.name)),
-    [registries.costCenters],
+      [...registries.costCenters]
+        .filter(cc => cc.active !== false || cc.id === formData.costCenterId)
+        .filter(cc => !formData.walletId || !cc.walletId || cc.walletId === formData.walletId)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [registries.costCenters, formData.costCenterId, formData.walletId],
   );
   const sortedWallets = useMemo(
-    () => [...registries.wallets].sort((a, b) => a.name.localeCompare(b.name)),
-    [registries.wallets],
+    () => [...registries.wallets]
+      .filter(w => w.active !== false || w.id === formData.walletId || w.id === targetWalletId)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [registries.wallets, formData.walletId, targetWalletId],
   );
 
   const filteredParticipants = useMemo(() => {
@@ -202,7 +222,10 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       .split(" ")
       .filter((t) => t.trim() !== "");
 
-    return registries.participants.filter((p) => {
+    return registries.participants
+      .filter(p => p.active !== false || p.id === formData.participantId)
+      .filter(p => !formData.walletId || !p.walletId || p.walletId === formData.walletId)
+      .filter((p) => {
       if (!p || !p.name) return false;
       if (searchTerms.length === 0) return true;
       
@@ -213,7 +236,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         nameLower.includes(term) || tickerLower.includes(term)
       );
     });
-  }, [registries.participants, deferredParticipantSearch]);
+  }, [registries.participants, deferredParticipantSearch, formData.walletId, formData.participantId]);
 
   const exactMatchExists = useMemo(() => {
     const search = (deferredParticipantSearch || "").trim().toLowerCase();
@@ -472,10 +495,12 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   };
 
   const formatCurrencyInput = (val: number) => {
+    // Garante que o valor zero não seja exibido como negativo devido a erros de precisão
+    const absoluteVal = Math.abs(val) < 0.001 ? 0 : val;
     return new Intl.NumberFormat('pt-BR', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
-    }).format(val);
+    }).format(absoluteVal);
   };
 
   const handleCurrencyInputChange = (e: React.ChangeEvent<HTMLInputElement>, callback: (val: number) => void) => {
@@ -761,7 +786,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 className={inputClass}
               >
                 <option value="">Selecione...</option>
-                {sortedBanks.map((b) => (
+                {sourceBanks.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
                   </option>
@@ -801,7 +826,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                     className={`${inputClass} border-blue-200 bg-blue-50/30`}
                   >
                     <option value="">Selecione...</option>
-                    {sortedBanks.map((b) => (
+                    {targetBanks.map((b) => (
                       <option
                         key={b.id}
                         value={b.id}

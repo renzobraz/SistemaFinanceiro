@@ -170,9 +170,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, regist
                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
                   >
                     <option value="">Todos os Bancos</option>
-                    {registries.banks.map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
+                    {registries.banks
+                      .filter(b => b.active !== false || b.id === prefs.defaultBankId)
+                      .map(b => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
                   </select>
                 </div>
 
@@ -184,9 +186,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, regist
                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
                   >
                     <option value="">Todas Carteiras</option>
-                    {registries.wallets.map(w => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
-                    ))}
+                    {registries.wallets
+                      .filter(w => w.active !== false || w.id === prefs.defaultWalletId)
+                      .map(w => (
+                        <option key={w.id} value={w.id}>{w.name}</option>
+                      ))}
                   </select>
                 </div>
 
@@ -198,9 +202,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, regist
                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
                   >
                     <option value="ALL">Todos os Bancos</option>
-                    {registries.banks.map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
+                    {registries.banks
+                      .filter(b => b.active !== false || b.id === prefs.defaultPerformanceBankId)
+                      .map(b => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
                   </select>
                 </div>
 
@@ -212,9 +218,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, regist
                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
                   >
                     <option value="ALL">Todas Carteiras</option>
-                    {registries.wallets.map(w => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
-                    ))}
+                    {registries.wallets
+                      .filter(w => w.active !== false || w.id === prefs.defaultPerformanceWalletId)
+                      .map(w => (
+                        <option key={w.id} value={w.id}>{w.name}</option>
+                      ))}
                   </select>
                 </div>
               </div>

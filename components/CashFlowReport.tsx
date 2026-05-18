@@ -177,8 +177,9 @@ export const CashFlowReport: React.FC<CashFlowReportProps> = ({
   };
 
   const formatCurrency = (val: number, showSign: boolean = false) => {
-    const formatted = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
-    if (!showSign) return formatted;
+    const absoluteVal = Math.abs(val) < 0.005 ? 0 : val;
+    const formatted = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(absoluteVal);
+    if (!showSign || absoluteVal === 0) return formatted;
     return val > 0 ? `+ ${formatted}` : formatted;
   };
 
@@ -310,10 +311,10 @@ export const CashFlowReport: React.FC<CashFlowReportProps> = ({
                         <td className="p-4 text-sm text-blue-600 text-right font-mono font-medium">{formatCurrency(row.initial)}</td>
                         <td className="p-4 text-sm text-green-600 text-right font-mono">{formatCurrency(row.income)}</td>
                         <td className="p-4 text-sm text-red-600 text-right font-mono">{formatCurrency(row.expense)}</td>
-                        <td className={`p-4 text-sm font-bold text-right font-mono ${row.operational >= 0 ? 'text-slate-700' : 'text-red-500'}`}>
+                        <td className={`p-4 text-sm font-bold text-right font-mono ${row.operational >= -0.005 ? 'text-slate-700' : 'text-red-500'}`}>
                             {formatCurrency(row.operational, true)}
                         </td>
-                        <td className={`p-4 text-sm font-black text-right font-mono bg-blue-50/30 ${row.final >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
+                        <td className={`p-4 text-sm font-black text-right font-mono bg-blue-50/30 ${row.final >= -0.005 ? 'text-blue-700' : 'text-red-700'}`}>
                             {formatCurrency(row.final)}
                         </td>
                     </tr>

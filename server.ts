@@ -489,6 +489,25 @@ async function startServer() {
     }
   });
 
+  // API para buscar taxas de câmbio via servidor (mais robusto que via client)
+  app.get("/api/rates", async (req, res) => {
+    try {
+      console.log("[Rates] Buscando taxas de câmbio...");
+      const response = await fetch("https://api.exchangerate-api.com/v4/latest/BRL");
+      if (!response.ok) throw new Error(`Falha na API externa: ${response.status}`);
+      
+      const data: any = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error("[Rates] Erro ao buscar taxas:", error.message);
+      // Retorna fallback se a API externa falhar mas o servidor estiver OK
+      res.json({
+        rates: { BRL: 1, USD: 0.19, EUR: 0.17, GBP: 0.15 },
+        base: "BRL"
+      });
+    }
+  });
+
   // Middleware para garantir que rotas /api que não existem retornem 404 JSON 
   // e não caiam no fallback do Vite (que retorna index.html com status 200)
   app.use("/api", (req, res) => {

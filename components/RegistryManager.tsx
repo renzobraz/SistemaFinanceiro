@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { Plus, Trash2, Edit2, Save, X, Upload, Download, Search, Tag, Loader2, Wand2, Sparkles, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Upload, Download, Search, Tag, Loader2, Wand2, Sparkles, ChevronUp, ChevronDown, ArrowUpDown, Archive, ArchiveRestore, Eye, EyeOff, Users } from 'lucide-react';
 import { BaseEntity, Currency, WalletType } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -11,6 +11,7 @@ interface RegistryManagerProps {
   onDelete: (id: string) => Promise<void>;
   onEdit: (id: string, name: string, extraData?: any) => Promise<void>;
   onImport: (names: string[]) => Promise<void>;
+  onToggleActive?: (id: string, active: boolean) => Promise<void>;
   onDeduplicate?: (onProgress?: (current: number, total: number) => void) => Promise<{ merged: number, deleted: number }>;
   onFindSimilar?: () => Promise<Array<{ master: any, duplicates: any[] }>>;
   onMerge?: (masterId: string, duplicateIds: string[]) => Promise<void>;
@@ -32,6 +33,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   onDelete,
   onEdit,
   onImport,
+  onToggleActive,
   onDeduplicate,
   onFindSimilar,
   onMerge,
@@ -54,6 +56,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [tempWalletType, setTempWalletType] = useState<WalletType>('CHECKING');
   const [tempTicker, setTempTicker] = useState('');
   const [tempCurrentPrice, setTempCurrentPrice] = useState<number>(0);
+  const [tempIsPartner, setTempIsPartner] = useState(false);
+  const [tempSharePercent, setTempSharePercent] = useState<number>(0);
+  const [tempCashSharePercent, setTempCashSharePercent] = useState<number>(0);
   const [tempForeignKey, setTempForeignKey] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [dedupProgress, setDedupProgress] = useState<{current: number, total: number} | null>(null);
@@ -63,6 +68,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [ignoredUnifications, setIgnoredUnifications] = useState<Array<{ id: string, name1: string, name2: string, pairId: string }>>([]);
   const [isShowingIgnored, setIsShowingIgnored] = useState(false);
   const [isSearchingSimilar, setIsSearchingSimilar] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'ARCHIVED'>('ACTIVE');
   const [isAutoFilling, setIsAutoFilling] = useState(false);
   const [nameFilter, setNameFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -81,6 +87,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
     setSectorFilter('');
     setTickerFilter('');
     setCurrencyFilter('');
+    setStatusFilter('ACTIVE');
     setIsAdding(false);
     setEditingId(null);
   }, [title]);
@@ -101,7 +108,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const isBankRegistry = title.toLowerCase().includes('banco');
   
   const gridClasses = isAssetRegistry 
-    ? 'grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_100px]' 
+    ? 'grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_280px]' 
     : 'grid grid-cols-[minmax(200px,1fr)_120px_100px]';
 
   const filteredItems = useMemo(() => {
@@ -119,7 +126,13 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
       const matchesCurrency = !currencyFilter || 
         (currencyFilter === 'EMPTY' ? !item.currency : (item.currency || '').toLowerCase().includes(currencyFilter.toLowerCase()));
       
-      return matchesName && matchesCategory && matchesSector && matchesTicker && matchesCurrency;
+      const matchesStatus = statusFilter === 'ALL' 
+        ? true 
+        : statusFilter === 'ACTIVE' 
+          ? item.active !== false 
+          : item.active === false;
+      
+      return matchesName && matchesCategory && matchesSector && matchesTicker && matchesCurrency && matchesStatus;
     });
 
     return filtered.sort((a, b) => {
@@ -130,7 +143,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
       if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [items, nameFilter, categoryFilter, sectorFilter, tickerFilter, currencyFilter, sortField, sortDirection]);
+  }, [items, nameFilter, categoryFilter, sectorFilter, tickerFilter, currencyFilter, sortField, sortDirection, statusFilter]);
 
   const toggleSort = (field: string) => {
     if (sortField === field) {
@@ -154,6 +167,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
     setTempWalletType('CHECKING');
     setTempTicker('');
     setTempCurrentPrice(0);
+    setTempIsPartner(false);
+    setTempSharePercent(0);
+    setTempCashSharePercent(0);
     setTempForeignKey('');
     setIsAdding(true);
   };
@@ -169,6 +185,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
           extra.ticker = tempTicker;
           extra.currency = tempCurrency;
           extra.currentPrice = tempCurrentPrice;
+          extra.isPartner = tempIsPartner;
+          extra.sharePercent = tempSharePercent;
+          extra.cashSharePercent = tempCashSharePercent;
         }
         if (title.toLowerCase().includes('banco')) {
           extra.currency = tempCurrency;
@@ -201,6 +220,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
     setTempWalletType(item.type || 'CHECKING');
     setTempTicker(item.ticker || '');
     setTempCurrentPrice(item.currentPrice || 0);
+    setTempIsPartner(item.isPartner || false);
+    setTempSharePercent(item.sharePercent || 0);
+    setTempCashSharePercent(item.cashSharePercent || 0);
     if (foreignKey && item[foreignKey]) {
         setTempForeignKey(item[foreignKey]);
     } else {
@@ -219,6 +241,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
           extra.ticker = tempTicker;
           extra.currency = tempCurrency;
           extra.currentPrice = tempCurrentPrice;
+          extra.isPartner = tempIsPartner;
+          extra.sharePercent = tempSharePercent;
+          extra.cashSharePercent = tempCashSharePercent;
         }
         if (title.toLowerCase().includes('banco')) {
           extra.currency = tempCurrency;
@@ -625,7 +650,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                   ) : <div></div>}
                 </>
               )}
-              <div className="text-center">Ações</div>
+              <div className="text-center font-bold text-slate-400">Status</div>
             </div>
 
             {/* Linha de Filtros */}
@@ -699,6 +724,20 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                 </>
               )}
 
+              <select 
+                value={statusFilter} 
+                onChange={e => setStatusFilter(e.target.value as any)}
+                className={`w-full font-bold p-1 border rounded bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-[10px] transition-all cursor-pointer ${
+                  statusFilter === 'ACTIVE' ? 'text-emerald-600 border-emerald-200 bg-emerald-50/30' : 
+                  statusFilter === 'ARCHIVED' ? 'text-amber-600 border-amber-200 bg-amber-50/30' : 
+                  'text-slate-500 border-slate-200'
+                }`}
+              >
+                <option value="ACTIVE">Exibir: Ativos</option>
+                <option value="ARCHIVED">Exibir: Arquivados</option>
+                <option value="ALL">Exibir: Todos</option>
+              </select>
+
               <div className="flex items-center justify-center">
                 {(nameFilter || categoryFilter || sectorFilter || tickerFilter || currencyFilter) && (
                   <button 
@@ -764,6 +803,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       <option value="">Tipo...</option>
                       {((assetTypes && assetTypes.length > 0) ? assetTypes : []).map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                     </select>
+                    
                     <select
                       disabled={isSaving}
                       value={tempSector}
@@ -791,6 +831,45 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       <option value="BRL">BRL</option>
                       <option value="USD">USD</option>
                     </select>
+                    
+                    <div className="flex items-center gap-2 min-w-[260px]">
+                      <div className="flex items-center gap-2 bg-white border border-blue-200 rounded-lg px-3 py-2 shadow-sm shrink-0 h-[38px]">
+                        <input 
+                          type="checkbox" 
+                          checked={tempIsPartner} 
+                          onChange={e => setTempIsPartner(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded cursor-pointer"
+                        />
+                        <span className="text-xs font-bold text-slate-600 whitespace-nowrap">Sócio?</span>
+                      </div>
+
+                      {tempIsPartner && (
+                        <div className="flex items-center gap-2 p-1.5 bg-slate-50 rounded-lg border border-slate-200 shadow-inner h-[38px]">
+                          <div className="relative w-20">
+                            <input
+                              type="number"
+                              value={tempSharePercent}
+                              onChange={e => setTempSharePercent(Number(e.target.value))}
+                              className="w-full bg-white border border-blue-200 rounded-md pl-1.5 pr-5 py-1 text-[11px] font-black text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                              placeholder="0"
+                              title="Participação Padrão (Contas Bancárias)"
+                            />
+                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-slate-400">P%</span>
+                          </div>
+                          <div className="relative w-20">
+                            <input
+                              type="number"
+                              value={tempCashSharePercent}
+                              onChange={e => setTempCashSharePercent(Number(e.target.value))}
+                              className="w-full bg-white border border-amber-100 rounded-md pl-1.5 pr-5 py-1 text-[11px] font-black text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none"
+                              placeholder="0"
+                              title="Participação sobre o Caixa (Dinheiro Espécie)"
+                            />
+                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-amber-400">C%</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                 </>
               ) : (
                 <div className="w-full"></div>
@@ -842,32 +921,73 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                           <option value="">Tipo...</option>
                           {((assetTypes && assetTypes.length > 0) ? assetTypes : []).map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                         </select>
-                        <select
-                          disabled={isSaving}
-                          value={tempSector}
-                          onChange={(e) => setTempSector(e.target.value)}
-                          className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
-                        >
-                          <option value="">Setor...</option>
-                          {((assetSectors && assetSectors.length > 0) ? assetSectors : []).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                          {(assetSectors && assetSectors.length > 0) ? null : uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                        <input
-                          type="text"
-                          disabled={isSaving}
-                          value={tempTicker}
-                          onChange={(e) => setTempTicker(e.target.value)}
-                          className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 uppercase shadow-sm"
-                        />
-                        <select
-                          disabled={isSaving}
-                          value={tempCurrency}
-                          onChange={(e) => setTempCurrency(e.target.value as Currency)}
-                          className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
-                        >
-                          <option value="BRL">BRL</option>
-                          <option value="USD">USD</option>
-                        </select>
+                        
+                          <select
+                            disabled={isSaving}
+                            value={tempSector}
+                            onChange={(e) => setTempSector(e.target.value)}
+                            className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                          >
+                            <option value="">Setor...</option>
+                            {((assetSectors && assetSectors.length > 0) ? assetSectors : []).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                            {(assetSectors && assetSectors.length > 0) ? null : uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          <input
+                            type="text"
+                            disabled={isSaving}
+                            value={tempTicker}
+                            onChange={(e) => setTempTicker(e.target.value)}
+                            className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 uppercase shadow-sm"
+                            placeholder="Ticker..."
+                          />
+                          <select
+                            disabled={isSaving}
+                            value={tempCurrency}
+                            onChange={(e) => setTempCurrency(e.target.value as Currency)}
+                            className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                          >
+                            <option value="BRL">BRL</option>
+                            <option value="USD">USD</option>
+                          </select>
+                        
+                        <div className="flex items-center gap-2 min-w-[230px]">
+                          <div className="flex items-center gap-2 bg-white border border-blue-300 rounded-lg px-2 py-1.5 shadow-sm shrink-0 h-[32px]">
+                            <input 
+                              type="checkbox" 
+                              checked={tempIsPartner} 
+                              onChange={e => setTempIsPartner(e.target.checked)}
+                              className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded cursor-pointer"
+                            />
+                            <span className="text-xs font-bold text-slate-600 whitespace-nowrap">Sócio?</span>
+                          </div>
+
+                          {tempIsPartner && (
+                            <div className="flex items-center gap-2 p-1 bg-slate-50 rounded-lg border border-slate-200 shadow-inner h-[32px]">
+                              <div className="relative w-16">
+                                <input
+                                  type="number"
+                                  value={tempSharePercent}
+                                  onChange={e => setTempSharePercent(Number(e.target.value))}
+                                  className="w-full bg-white border border-blue-300 rounded-md pl-1 pr-4 py-0.5 text-[10px] font-black text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                                  placeholder="0"
+                                  title="Participação Padrão (Contas Bancárias)"
+                                />
+                                <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-slate-400">P%</span>
+                              </div>
+                              <div className="relative w-16">
+                                <input
+                                  type="number"
+                                  value={tempCashSharePercent}
+                                  onChange={e => setTempCashSharePercent(Number(e.target.value))}
+                                  className="w-full bg-white border border-amber-100 rounded-md pl-1 pr-4 py-0.5 text-[10px] font-black text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none"
+                                  placeholder="0"
+                                  title="Participação sobre o Caixa (Dinheiro Espécie)"
+                                />
+                                <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-amber-400">C%</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </>
                     ) : isBankRegistry ? (
                       <div className="flex gap-2">
@@ -919,6 +1039,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                     <div className="flex flex-col min-w-0 pr-4">
                       <div className="flex items-center gap-2">
                         <span className="text-sm text-slate-700 font-bold truncate" title={item.name}>{item.name}</span>
+                        {item.active === false && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold uppercase ring-1 ring-amber-200">Arquivado</span>}
                       </div>
                       {foreignKey && item[foreignKey] && (
                         <span className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
@@ -930,19 +1051,36 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
 
                     {isAssetRegistry ? (
                       <>
-                        <div className="flex items-center">
+                        <div className="flex items-center gap-2">
                           {item.category && (
                             <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded-lg border border-blue-100 font-bold uppercase tracking-wider">
                               {item.category}
                             </span>
                           )}
+                          {item.isPartner && (
+                            <span className="text-[10px] bg-amber-50 text-amber-600 px-2 py-1 rounded-lg border border-amber-100 font-bold uppercase tracking-wider flex items-center gap-1">
+                              <Users className="w-3 h-3" /> Sócio
+                            </span>
+                          )}
                         </div>
-                        <div className="flex items-center">
+                        <div className="flex items-center gap-2">
                           {item.sector && (
                             <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded-lg border border-indigo-100 font-bold uppercase tracking-wider">
                               {item.sector}
                             </span>
                           )}
+                           {item.isPartner && (
+                             <div className="flex items-center gap-3 ml-2 border-l border-slate-100 pl-3">
+                               <div className="flex flex-col items-center">
+                                 <span className="text-[8px] text-slate-400 font-bold">PADRÃO</span>
+                                 <span className="text-[10px] font-black text-slate-700">{item.sharePercent}%</span>
+                               </div>
+                               <div className="flex flex-col items-center">
+                                 <span className="text-[8px] text-slate-400 font-bold">CAIXA</span>
+                                 <span className="text-[10px] font-black text-amber-600">{item.cashSharePercent}%</span>
+                               </div>
+                             </div>
+                           )}
                         </div>
                         <div className="flex items-center">
                           {item.ticker && (
@@ -972,12 +1110,27 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                     )}
 
                     <div className="flex items-center gap-1 justify-end">
-                      <button onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }} className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Editar">
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); requestDelete(item.id); }} className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Excluir">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                        {onToggleActive && (
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); onToggleActive(item.id, item.active === false); }} 
+                            className={`p-1.5 rounded-md transition-colors ${
+                              item.active === false 
+                                ? 'bg-amber-100 text-amber-600 hover:bg-amber-200 shadow-sm' 
+                                : 'text-slate-400 hover:text-blue-600 hover:bg-blue-100'
+                            }`}
+                            title={item.active === false ? "Restaurar (Ativar)" : "Arquivar (Desativar)"}
+                          >
+                            {item.active === false ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                        <button onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-100 rounded-md transition-colors" title="Editar">
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); requestDelete(item.id); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-100 rounded-md transition-colors" title="Excluir">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </>
                 )}
