@@ -291,17 +291,31 @@ export const geminiService = {
     }
 
     try {
-      // BUSCA REAL: Usa o nosso proxy no servidor para evitar bloqueios no cliente (CORS/Network)
+      // BUSCA REAL: Usa o nosso proxy no servidor para evitar bloqueios de CORS no cliente
       const response = await fetch(`/api/rates?_t=${Date.now()}`);
-      if (!response.ok) throw new Error("Falha ao buscar taxas de câmbio via servidor");
+      
+      const contentType = response.headers.get("content-type");
+      
+      // Validação de segurança: se a resposta falhar ou não retornar um JSON (por exemplo, retornar o HTML do Vite)
+      if (!response.ok || !contentType || !contentType.includes("application/json")) {
+        const text = (await response.text()).substring(0, 300);
+        
+        // Se identificarmos HTML, é um sinal de que o servidor está ligando ou caiu em rota SPA
+        if (text.includes("<!DOCTYPE html>") || text.includes("<!doctype html>")) {
+          console.warn("[Rates] O servidor respondeu com formato de página (SPA) em vez de dados JSON. Ativando fallbacks de segurança.");
+        } else {
+          console.warn(`[Rates] Resposta inesperada com status ${response.status} e tipo ${contentType}.`);
+        }
+        throw new Error("O servidor respondeu com dados que não estão em formato JSON válido.");
+      }
       
       const data = await response.json();
       const rates = data.rates;
       
       if (!rates || !rates.USD) throw new Error("Dados de câmbio inválidos recebidos");
 
-      // A API retorna quanto 1 Real vale em outras moedas (ex: USD: 0.19)
-      // Precisamos inverter para saber quanto 1 Moeda Estrangeira vale em Reais
+      // A API externa retorna quanto 1 Real vale em moedas estrangeiras (EX: USD: 0.19)
+      // Precisamos inverter esses valores para expressar a rota de conversão: quanto 1 Moeda Estrangeira vale em Reais
       const sanitizedRates: Record<string, number> = {
         BRL: 1,
         USD: Number((1 / rates.USD).toFixed(4)),
@@ -311,18 +325,23 @@ export const geminiService = {
 
       setCachedData(CACHE_KEYS.EXCHANGE_RATES, sanitizedRates);
       return { rates: sanitizedRates, timestamp: Date.now() };
-    } catch (error) {
-      console.error("Erro ao buscar taxas de câmbio reais:", error);
+    } catch (error: any) {
+      // Registrar um aviso amigável no log do console em vez de estourar exceções críticas
+      console.warn("Aviso ao obter taxas de câmbio online (usando cache local ou taxas fixas de segurança):", error.message || error);
       
+      // Tentar resgatar dados antigos do cache de localStorage como redundância
       const stale = localStorage.getItem(CACHE_KEYS.EXCHANGE_RATES);
       if (stale) {
         try { 
           const parsed = JSON.parse(stale);
-          return { rates: parsed.data, timestamp: parsed.timestamp }; 
+          if (parsed && parsed.data) {
+            return { rates: parsed.data, timestamp: parsed.timestamp || Date.now() }; 
+          }
         } catch(e) {}
       }
     }
 
+    // Se tudo falhar, retorna taxas fixas e estáveis como última solução preventiva
     return { rates: { BRL: 1, USD: 5.15, EUR: 5.60, GBP: 6.55 }, timestamp: Date.now() };
   },
 

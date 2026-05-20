@@ -527,8 +527,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
         const manualParticipant = registries.participants.find(p => String(p.id).trim() === String(asset.participantId).trim());
         const manualTarget = manualParticipant?.targetPrice;
         
-        // Determinar se é Renda Fixa ou se deve ignorar quantidades
-        const isRendaFixa = manualParticipant?.category?.toUpperCase().includes('RENDA FIXA');
+        // Determinar se é Renda Fixa ou se deve ignorar quantidades (Previdência, saldo)
+        const isRendaFixa = isBalanceBased(asset);
         
         if (marketData && !isRendaFixa) {
           asset.lastPrice = marketData.current || 0;
@@ -563,16 +563,25 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           } else {
             // Se for Renda Fixa ou não tem preço manual nem ticker, o valor de mercado é o fluxo financeiro líquido + acréscimos
             // Lógica Específica para Renda Fixa / Manuais (Solicitação do Usuário)
-            // 1. Valor Investido -> Total Compra
-            // 2. Total Atual -> Soma do capital + Rendimentos (interpretado como o saldo atual)
-            // 3. Resultado -> Valor dos Rendimentos (Acréscimos)
-            const netCost = asset.totalBoughtValue - asset.totalSold;
-            asset.totalInvested = netCost; 
-            asset.marketValue = netCost + totalAccruals;
-            asset.profit = totalAccruals; 
-            
+            // 1. Valor Investido -> Total Compra (Para fins de controle de saldo, o principal investido ativo é a diferença positiva entre Compra e Venda)
+            // 2. Total Atual -> Soma do capital aplicado líquido + Rendimentos (interpretado como o saldo atual)
+            // 3. Resultado -> Lucros reais de capital (Total resgates + Saldo mercado - Total aplicações)
+            const rawMarketValue = (asset.totalBoughtValue - asset.totalSold) + totalAccruals;
+            const isZerado = rawMarketValue <= 0.01;
+
+            if (isZerado) {
+              asset.marketValue = 0;
+              asset.totalInvested = 0;
+              asset.profit = asset.totalSold - asset.totalBoughtValue;
+            } else {
+              asset.marketValue = rawMarketValue;
+              asset.totalInvested = Math.max(0, asset.totalBoughtValue - asset.totalSold);
+              asset.profit = (asset.marketValue + asset.totalSold) - asset.totalBoughtValue;
+            }
+
             // Rentabilidade % solicitada
-            asset.rentability = asset.totalInvested !== 0 ? (asset.profit / Math.abs(asset.totalInvested)) * 100 : 0;
+            const baseForRentability = isZerado ? asset.totalBoughtValue : asset.totalInvested;
+            asset.rentability = baseForRentability > 0 ? (asset.profit / baseForRentability) * 100 : 0;
             asset.totalReturn = asset.rentability;
             
             asset.lastPrice = 1;
@@ -1250,7 +1259,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     }
 
     return data;
-  }, [performanceData, searchTerm, selectedTab, sortConfig, sectorFilter]);
+  }, [performanceData, searchTerm, selectedTab, sortConfig, sectorFilter, showClosedPositions]);
 
   const groupedData = useMemo(() => {
     const groups: Record<string, AssetPerformance[]> = {};
@@ -2421,7 +2430,12 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                           
                           <td className="p-3 text-xs text-blue-600 text-right font-mono border-l border-slate-100 group/pm relative">
                             {isBalanceBased(asset) ? (
-                              <span className="text-slate-300">---</span>
+                              <div className="flex flex-col items-end">
+                                <span className="text-[8px] text-slate-400 font-bold block leading-none mb-0.5">RESGATADO</span>
+                                <span className="text-slate-600 font-bold font-mono">
+                                  {formatValue((asset.totalSold * assetRate) / baseRate, 2)}
+                                </span>
+                              </div>
                             ) : (
                               <div className="flex flex-col items-end">
                                 <div className="flex items-center gap-1">
@@ -2532,7 +2546,12 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                           
                           <td className="p-3 text-right border-l border-slate-100">
                             {isBalanceBased(asset) ? (
-                              <span className="text-slate-300 italic text-[10px]">FLUXO FINANCEIRO</span>
+                              <div className="flex flex-col items-end">
+                                <span className="text-[8px] text-slate-400 font-bold block leading-none mb-0.5">RENDIMENTOS</span>
+                                <span className={`text-xs font-bold font-mono ${profitDisplay >= -0.005 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                  {profitDisplay >= 0 ? '+' : ''}{formatValue(profitDisplay, 2)}
+                                </span>
+                              </div>
                             ) : (asset.lastPrice !== undefined && asset.lastPrice !== null && asset.lastPrice > 0) ? (
                               <div className="flex flex-col items-end">
                                 <span className="text-xs font-bold text-slate-800 font-mono">{formatValue(lastPriceDisplay, 2)}</span>
@@ -2610,7 +2629,18 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                             )}
                           </td>
 
-                          <td className="p-3 text-xs text-blue-600 text-right font-mono border-l border-slate-100">{formatValue(totalInvestedDisplay, 2)}</td>
+                          <td className="p-3 text-xs text-blue-600 text-right font-mono border-l border-slate-100">
+                            {isBalanceBased(asset) ? (
+                              <div className="flex flex-col items-end">
+                                <span className="text-[8px] text-slate-400 font-bold block leading-none mb-0.5">COMPRA/APLICADO</span>
+                                <span className="text-blue-700 font-bold font-mono">
+                                  {formatValue((asset.totalBoughtValue * assetRate) / baseRate, 2)}
+                                </span>
+                              </div>
+                            ) : (
+                              formatValue(totalInvestedDisplay, 2)
+                            )}
+                          </td>
                           <td className="p-3 text-xs text-emerald-600 text-right font-mono flex items-center justify-end gap-2 pr-3 relative">
                             {isUpdatingBalanceId === asset.participantId ? (
                               <div className="flex items-center justify-end gap-1 bg-white p-0.5 rounded-lg border border-emerald-200 shadow-sm z-10">
@@ -2828,33 +2858,35 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
               </div>
 
               {/* Resumo Matemático Completo */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className={`grid grid-cols-2 ${isBalanceBased(detailAsset) ? 'md:grid-cols-3' : 'md:grid-cols-4'} gap-4`}>
                 {/* Quantidades / Resumo de Fluxo */}
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-3">
-                    {isBalanceBased(detailAsset) ? 'Fluxo de Capital' : 'Quantidades'}
-                  </span>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-slate-500">{isBalanceBased(detailAsset) ? 'Total Aplicado:' : 'T. Comprado:'}</span>
-                      <span className="font-bold text-slate-800 font-mono">
-                        {isBalanceBased(detailAsset) ? formatValue(detailAsset.totalBoughtQty, 2) : formatValue(detailAsset.totalBoughtQty, 2)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-slate-500">{isBalanceBased(detailAsset) ? 'Total Resgatado:' : 'T. Vendido:'}</span>
-                      <span className="font-semibold text-slate-500 font-mono">-{formatValue(detailAsset.totalSoldQty, 2)}</span>
-                    </div>
-                    <div className="pt-2 border-t border-slate-200 flex justify-between text-sm">
-                      <span className="text-slate-600 font-bold">
-                        {isBalanceBased(detailAsset) ? 'Custo Atual:' : 'Saldo Atual:'}
-                      </span>
-                      <span className="font-black text-blue-600 font-mono">
-                        {isBalanceBased(detailAsset) ? formatValue(detailAsset.totalBoughtValue - detailAsset.totalSold, 2) : formatValue(detailAsset.currentQuantity, 2)}
-                      </span>
+                {!isBalanceBased(detailAsset) && (
+                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-3">
+                      Quantidades
+                    </span>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">T. Comprado:</span>
+                        <span className="font-bold text-slate-800 font-mono">
+                          {formatValue(detailAsset.totalBoughtQty, 2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">T. Vendido:</span>
+                        <span className="font-semibold text-slate-500 font-mono">-{formatValue(detailAsset.totalSoldQty, 2)}</span>
+                      </div>
+                      <div className="pt-2 border-t border-slate-200 flex justify-between text-sm">
+                        <span className="text-slate-600 font-bold">
+                          Saldo Atual:
+                        </span>
+                        <span className="font-black text-blue-600 font-mono">
+                          {formatValue(detailAsset.currentQuantity, 2)}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
                 {/* Financeiro */}
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
