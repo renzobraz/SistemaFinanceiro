@@ -7,13 +7,21 @@ function getAi() {
   try {
     // Busca a chave de várias formas possíveis para garantir compatibilidade
     // @ts-ignore
-    const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    let apiKey = (import.meta.env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "").trim();
     
     if (!apiKey || apiKey === 'undefined' || apiKey === '') {
-      console.warn("GEMINI_API_KEY não definida no navegador. Alguns recursos (sugestões e parsing) podem falhar localmente.");
+      // @ts-ignore
+      if (!window._geminiWarned) {
+        console.warn("GEMINI_API_KEY não definida no navegador. Alguns recursos (sugestões e parsing) podem falhar localmente.");
+        // @ts-ignore
+        window._geminiWarned = true;
+      }
       return null;
     }
+    
     if (!aiInstance) {
+      const masked = apiKey.length > 8 ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : "***";
+      console.log(`[Gemini] Inicializando no cliente com chave ${masked}`);
       aiInstance = new GoogleGenAI({ 
         apiKey,
         httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }

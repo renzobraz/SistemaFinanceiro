@@ -122,14 +122,28 @@ async function startServer() {
   const app = express();
 
   // Inicialização do Gemini no Servidor
-  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  const rawKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  const geminiApiKey = (rawKey || "").trim();
+  
   let genAI: GoogleGenAI | null = null;
-  if (geminiApiKey) {
-    genAI = new GoogleGenAI({
-      apiKey: geminiApiKey,
-      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-    });
-    console.log("[Gemini] IA configurada no servidor para fallback de preços.");
+  if (geminiApiKey && geminiApiKey !== "undefined" && geminiApiKey !== "") {
+    // Log seguro para debug no Vercel/Logs
+    const maskedKey = geminiApiKey.length > 8 
+      ? `${geminiApiKey.substring(0, 4)}...${geminiApiKey.substring(geminiApiKey.length - 4)}`
+      : "***";
+    console.log(`[Gemini] Tentando configurar IA (Key: ${maskedKey}, Tamanho: ${geminiApiKey.length})`);
+
+    try {
+      genAI = new GoogleGenAI({
+        apiKey: geminiApiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
+      console.log("[Gemini] IA configurada no servidor para fallback de preços.");
+    } catch (err) {
+      console.error("[Gemini] Erro crítico ao instanciar genAI:", err);
+    }
+  } else {
+    console.warn("[Gemini] Chave de API não encontrada no servidor ou contém valor inválido.");
   }
 
   app.use(cors());
@@ -421,7 +435,7 @@ async function startServer() {
 
             const aiResult = await genAI.models.generateContent({
               model: "gemini-3.5-flash",
-              contents: [{ parts: [{ text: prompt }] }]
+              contents: prompt
             });
             
             const aiText = aiResult.text;
