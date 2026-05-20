@@ -300,18 +300,15 @@ const App: FC = () => {
         }
     }
 
-    // Carrega registros e transações
-    const registriesPromise = loadRegistries();
-    const transactionsPromise = loadTransactions();
+    // Carrega registros e transações de forma sequencial para garantir consistência
+    try {
+        await loadRegistries();
+        await loadTransactions();
+    } catch (e) {
+        console.error("Erro na carga inicial de dados", e);
+    }
 
     if (isInitialFetch) {
-        if (hasLocalData) {
-            // Se tem dados locais, esperamos apenas as transações (que são o dado principal)
-            await transactionsPromise;
-        } else {
-            // Se não tem nada local, esperamos tudo para não mostrar tela vazia
-            await Promise.all([registriesPromise, transactionsPromise]);
-        }
         setLoading(false);
     }
   };
@@ -348,9 +345,9 @@ const App: FC = () => {
     }
   }, [isConnected]);
 
-  // Recarrega transações quando os filtros mudam
+  // Proteção para não disparar busca de transações antes dos filtros serem aplicados
   useEffect(() => {
-    if (!loading) {
+    if (!loading && initialPrefsApplied.current) {
         loadTransactions();
     }
   }, [startDate, endDate, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter, activeTab, loadTransactions]);

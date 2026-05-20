@@ -6,6 +6,7 @@ import YahooFinance from "yahoo-finance2";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
 import { createServer as createViteServer } from "vite";
+import { GoogleGenAI } from "@google/genai";
 
 const yahoo = new YahooFinance();
 
@@ -119,6 +120,17 @@ async function robustChart(symbol: string, options: any) {
 async function startServer() {
   const PORT = 3000;
   const app = express();
+
+  // Inicialização do Gemini no Servidor
+  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  let genAI: GoogleGenAI | null = null;
+  if (geminiApiKey) {
+    genAI = new GoogleGenAI({
+      apiKey: geminiApiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+    });
+    console.log("[Gemini] IA configurada no servidor para fallback de preços.");
+  }
 
   app.use(cors());
   app.use(express.json());
@@ -377,9 +389,9 @@ async function startServer() {
             const key = process.env.HGBRASIL_API_KEY || "703816a7";
             const hgUrl = `https://api.hgbrasil.com/finance/stock_price?key=${key}&symbol=${hTickers}`;
             console.log(`[HG Brasil] Chamando URL: ${hgUrl.split('key=')[0]}key=***`);
-            const response = await fetch(hgUrl);
-            if (response.ok) {
-              const dataValue: any = await response.json();
+            const hgResponse = await fetch(hgUrl);
+            if (hgResponse.ok) {
+              const dataValue: any = await hgResponse.json();
               if (dataValue && dataValue.results) {
                 Object.keys(dataValue.results).forEach(sym => {
                   const r = dataValue.results[sym];
@@ -396,6 +408,37 @@ async function startServer() {
               }
             }
           } catch (e) {}
+        }
+
+        // --- BUSCA 4: GEMINI AI (ULTIMATE FALLBACK) ---
+        const persistentMissing = rawTickerList.filter(t => results[t].current === null);
+        if (genAI && persistentMissing.length > 0) {
+          console.log(`[Gemini] Tentando buscar preços para ativos persistentes: ${persistentMissing.join(", ")}`);
+          try {
+            const prompt = `Retorne o preço ATUAL de mercado (current price) e o preço alvo médio (target price) para os seguintes ativos financeiros. 
+            Responda APENAS um JSON no formato: {"TICKER": {"current": number, "target": number | null}}.
+            Ativos: ${persistentMissing.join(", ")}`;
+
+            const aiResult = await genAI.models.generateContent({
+              model: "gemini-3.5-flash",
+              contents: [{ parts: [{ text: prompt }] }]
+            });
+            
+            const aiText = aiResult.text;
+            const aiJson = JSON.parse(aiText.replace(/```json|```/g, "").trim());
+            
+            Object.entries(aiJson).forEach(([ticker, data]: [string, any]) => {
+              if (results[ticker] && data.current) {
+                results[ticker].current = data.current;
+                if (data.target && results[ticker].target === null) {
+                  results[ticker].target = data.target;
+                }
+                console.log(`[Gemini] Encontrado via IA: ${ticker} -> ${data.current}`);
+              }
+            });
+          } catch (aiErr) {
+            console.error("[Gemini] Erro no fallback de IA:", aiErr);
+          }
         }
         // --------------------------------------------------
 

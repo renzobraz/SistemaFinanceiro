@@ -577,6 +577,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             
             asset.lastPrice = 1;
             asset.currentQuantity = asset.marketValue; 
+            asset.variation = 0;
           }
         }
         result.push(asset);

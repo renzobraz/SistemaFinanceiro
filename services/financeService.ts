@@ -180,6 +180,23 @@ const KEYS = {
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * Função utilitária para tentar uma operação assíncrona várias vezes em caso de falha de rede.
+ */
+async function withRetry<T>(fn: () => Promise<T> | any, retries = 3, interval = 1500): Promise<T> {
+  try {
+    return await fn();
+  } catch (err: any) {
+    const isNetworkError = err.message?.includes('fetch') || err.message?.includes('Network') || err.name === 'TypeError';
+    if (retries > 0 && isNetworkError) {
+      console.warn(`[Supabase] Erro de rede. Tentando novamente em ${interval}ms... (${retries} restantes)`);
+      await delay(interval);
+      return withRetry(fn, retries - 1, interval * 1.5);
+    }
+    throw err;
+  }
+}
+
 // Cache em memória para evitar requisições repetidas ao Supabase
 const cache = {
   registries: {} as Record<string, { data: any[], timestamp: number }>,
@@ -787,7 +804,7 @@ export const financeService = {
 
     if (supabase) {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session } } = await withRetry<any>(() => supabase.auth.getSession());
         const userId = session?.user?.id;
         let query = supabase.from('transactions').select('*');
         
@@ -823,10 +840,10 @@ export const financeService = {
           if (filters?.status && filters.status !== 'ALL') query = query.eq('status', filters.status);
           if (filters?.docNumber && filters.docNumber.trim() !== '') query = query.eq('doc_number', filters.docNumber);
 
-          const { data, error } = await query
+          const { data, error } = await withRetry<any>(() => (query
             .order('date', { ascending: false })
             .order('created_at', { ascending: false })
-            .range(from, to);
+            .range(from, to) as any));
 
           if (error) {
             if (error.code === '42703' && serverSideFilteringActive) {
@@ -1243,7 +1260,7 @@ export const financeService = {
           return cached.data as T[];
         }
 
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session } } = await withRetry<any>(() => supabase.auth.getSession());
         const userId = session?.user?.id;
 
         let allData: any[] = [];
@@ -1265,10 +1282,10 @@ export const financeService = {
             }
           }
 
-          const { data, error } = await query
+          const { data, error } = await withRetry<any>(() => (query
             .order('name')
             .order('id')
-            .range(from, to);
+            .range(from, to) as any));
 
           if (error) {
             // Detecta erro 42703 (coluna indefinida - especificamente wallet_id)

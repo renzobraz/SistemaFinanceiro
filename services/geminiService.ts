@@ -5,15 +5,19 @@ let aiInstance: any = null;
 
 function getAi() {
   try {
-    // Segue estritamente a recomendação da Skill para React (Vite)
-    const apiKey = process.env.GEMINI_API_KEY;
+    // Busca a chave de várias formas possíveis para garantir compatibilidade
+    // @ts-ignore
+    const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     
     if (!apiKey || apiKey === 'undefined' || apiKey === '') {
-      console.warn("GEMINI_API_KEY não definida. Recursos de IA desativados.");
+      console.warn("GEMINI_API_KEY não definida no navegador. Alguns recursos (sugestões e parsing) podem falhar localmente.");
       return null;
     }
     if (!aiInstance) {
-      aiInstance = new GoogleGenAI({ apiKey });
+      aiInstance = new GoogleGenAI({ 
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
     }
     return aiInstance;
   } catch (e) {
@@ -232,8 +236,8 @@ export const geminiService = {
       // Para sugestões, o Gemini ainda é ótimo, mas agora usamos sem a ferramenta de busca 
       // para evitar o erro 403, já que os preços já são reais vindos do Yahoo
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+        model: "gemini-3.5-flash",
+        contents: [{ parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json",
           temperature: 0.1,
@@ -318,8 +322,8 @@ export const geminiService = {
     
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+        model: "gemini-3.5-flash",
+        contents: [{ parts: [{ text: prompt }] }],
         config: { responseMimeType: "application/json" }
       });
       return JSON.parse(response.text.replace(/```json|```/g, '').trim());
@@ -379,11 +383,13 @@ export const geminiService = {
 
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          { inlineData: { data: fileBase64, mimeType } },
-          prompt
-        ],
+        model: "gemini-3.5-flash",
+        contents: [{
+          parts: [
+            { inlineData: { data: fileBase64, mimeType } },
+            { text: prompt }
+          ]
+        }],
         config: { 
           responseMimeType: "application/json",
           temperature: 0.1
