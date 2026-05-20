@@ -7,12 +7,26 @@ function getAi() {
   try {
     // Busca a chave de várias formas possíveis para garantir compatibilidade
     // @ts-ignore
-    let apiKey = (import.meta.env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "").trim();
+    const keysToTry = [
+      import.meta.env?.VITE_GEMINI_API_KEY,
+      process.env.GEMINI_API_KEY,
+      process.env.VITE_GEMINI_API_KEY
+    ].map(k => (k || "").trim());
+
+    const isValidKey = (key: string) => {
+      if (!key) return false;
+      if (key.startsWith("AIzaSy")) return true;
+      if (key.length < 20) return false;
+      if (key.includes(" ") || key.includes("•") || key.includes("Sistema") || key.includes("Financeiro")) return false;
+      return true;
+    };
+
+    const apiKey = keysToTry.find(isValidKey) || "";
     
-    if (!apiKey || apiKey === 'undefined' || apiKey === '') {
+    if (!apiKey) {
       // @ts-ignore
       if (!window._geminiWarned) {
-        console.warn("GEMINI_API_KEY não definida no navegador. Alguns recursos (sugestões e parsing) podem falhar localmente.");
+        console.warn("GEMINI_API_KEY válida não definida no navegador. Alguns recursos (sugestões e parsing) podem falhar localmente.");
         // @ts-ignore
         window._geminiWarned = true;
       }
@@ -21,7 +35,7 @@ function getAi() {
     
     if (!aiInstance) {
       const masked = apiKey.length > 8 ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : "***";
-      console.log(`[Gemini] Inicializando no cliente com chave ${masked}`);
+      console.log(`[Gemini] Inicializando no cliente com chave válida ${masked}`);
       aiInstance = new GoogleGenAI({ 
         apiKey,
         httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }

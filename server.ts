@@ -122,11 +122,23 @@ async function startServer() {
   const app = express();
 
   // Inicialização do Gemini no Servidor
-  const rawKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-  const geminiApiKey = (rawKey || "").trim();
+  const keysToTry = [
+    process.env.GEMINI_API_KEY,
+    process.env.VITE_GEMINI_API_KEY
+  ].map(k => (k || "").trim());
+
+  const isValidGeminiKey = (key: string) => {
+    if (!key) return false;
+    if (key.startsWith("AIzaSy")) return true;
+    if (key.length < 20) return false;
+    if (key.includes(" ") || key.includes("•") || key.includes("Sistema") || key.includes("Financeiro")) return false;
+    return true;
+  };
+
+  const geminiApiKey = keysToTry.find(isValidGeminiKey) || "";
   
   let genAI: GoogleGenAI | null = null;
-  if (geminiApiKey && geminiApiKey !== "undefined" && geminiApiKey !== "") {
+  if (geminiApiKey) {
     // Log seguro para debug no Vercel/Logs
     const maskedKey = geminiApiKey.length > 8 
       ? `${geminiApiKey.substring(0, 4)}...${geminiApiKey.substring(geminiApiKey.length - 4)}`
@@ -143,7 +155,7 @@ async function startServer() {
       console.error("[Gemini] Erro crítico ao instanciar genAI:", err);
     }
   } else {
-    console.warn("[Gemini] Chave de API não encontrada no servidor ou contém valor inválido.");
+    console.warn("[Gemini] Chave de API não encontrada no servidor ou nenhuma chave válida (que comece com AIzaSy) foi configurada.");
   }
 
   app.use(cors());
