@@ -236,8 +236,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               }
             }
           });
-        } catch (aiErr) {
-          console.error("[Gemini Vercel] Erro no fallback de IA:", aiErr);
+        } catch (aiErr: any) {
+          const errMsg = aiErr?.message || String(aiErr);
+          if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("RESOURCE_EXHAUSTED")) {
+            console.warn("[Gemini Vercel] Limite de cota diária excedido (429/RESOURCE_EXHAUSTED). Prosseguindo com fallbacks convencionais e dados em cache...");
+          } else {
+            console.error("[Gemini Vercel] Erro no fallback de IA:", aiErr);
+          }
         }
       }
 

@@ -158,11 +158,102 @@ async function startServer() {
     console.warn("[Gemini] Chave de API não encontrada no servidor ou nenhuma chave válida (que comece com AIzaSy) foi configurada.");
   }
 
-  app.use(cors());
+  // CONFIGURAÇÃO RESTRIÇÃO CORS (C3)
+  // Permite localhost em desenvolvimento, a URL oficial no VITE_APP_URL e quaisquer previews da Vercel do usuário (*-renzobraz.vercel.app)
+  const allowedOrigins: string[] = [];
+  if (process.env.VITE_APP_URL) {
+    allowedOrigins.push(process.env.VITE_APP_URL.trim().replace(/\/$/, ""));
+  }
+
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Permitir requisições sem origem (ex: ferramentas locais, servidores, curl)
+      if (!origin) {
+        return callback(null, true);
+      }
+      
+      const parsedOrigin = origin.trim().replace(/\/$/, "");
+      
+      // Permitir conexões locais em ambiente de desenvolvimento
+      if (
+        /^https?:\/\/localhost(:\d+)?$/.test(parsedOrigin) || 
+        /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(parsedOrigin)
+      ) {
+        return callback(null, true);
+      }
+      
+      // Permitir a URL oficial configurada na variável de ambiente
+      if (allowedOrigins.includes(parsedOrigin)) {
+        return callback(null, true);
+      }
+      
+      // Restrição de CORS específico do usuário para previews no Vercel (ex: *-renzobraz.vercel.app)
+      if (parsedOrigin.endsWith("-renzobraz.vercel.app")) {
+        return callback(null, true);
+      }
+
+      // Permite o ambiente de execução temporário/preview do Google AI Studio (Cloud Run)
+      if (
+        parsedOrigin.endsWith(".run.app") ||
+        parsedOrigin.endsWith(".googleusercontent.com") ||
+        parsedOrigin.endsWith(".google.com")
+      ) {
+        return callback(null, true);
+      }
+      
+      // Se não corresponder, bloqueia com aviso de segurança
+      console.warn(`[CORS] Tentativa de conexão a partir de origem não autorizada: ${origin}`);
+      return callback(new Error("CORS: Origem não permitida por política de segurança"));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+  }));
+
   app.use(express.json());
 
-  // API para enviar convite por e-mail
-  app.post("/api/send-invite", async (req, res) => {
+  // MIDDLEWARE DE AUTENTICAÇÃO VIA JWT DO SUPABASE (C2)
+  const requireAuth = async (req: any, res: any, next: any) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "Acesso negado: Cabeçalho Authorization inválido ou ausente" });
+      }
+
+      const token = authHeader.split(" ")[1];
+      if (!token) {
+        return res.status(401).json({ error: "Acesso negado: Token de autorização não fornecido" });
+      }
+
+      const supabaseUrl = process.env.VITE_SUPABASE_URL;
+      const supabaseKey = process.env.VITE_SUPABASE_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        console.error("[RequireAuth] Supabase não está configurado nas variáveis de ambiente do servidor.");
+        return res.status(500).json({ error: "Configuração do banco de dados ausente no servidor" });
+      }
+
+      // Validação em tempo real do JWT diretamente no Supabase Auth (garante que não seja forjado nem revogado)
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+
+      if (error || !user) {
+        console.warn(`[RequireAuth] Falha ao comprovar autenticidade do token: ${error?.message || "Usuário não retornado"}`);
+        return res.status(401).json({ error: "Não autorizado: Token expirado ou inválido" });
+      }
+
+      // Adiciona as informações do usuário autenticado no objeto do Express para as próximas rotas
+      req.user = user;
+      req.token = token;
+      next();
+    } catch (err: any) {
+      console.error("[RequireAuth] Erro inesperado durante a validação da sessão:", err);
+      return res.status(500).json({ error: "Erro interno ao processar autenticação do usuário", details: err.message });
+    }
+  };
+
+  // API para enviar convite por e-mail - Protegida com requireAuth (C2)
+  app.post("/api/send-invite", requireAuth, async (req, res) => {
     try {
       const { email, invitedBy, ownerId, role } = req.body;
       
@@ -170,10 +261,14 @@ async function startServer() {
         return res.status(400).json({ error: "E-mail é obrigatório" });
       }
 
-      // Conecta ao Supabase para buscar configurações de SMTP do dono da conta
-      // Usaremos as chaves padrão se não houver no ambiente
-      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://uiekbavvgvrcsmbvoqtt.supabase.co";
-      const supabaseKey = process.env.VITE_SUPABASE_KEY || "sb_publishable_L3w_v81e9H5oz9fWt-DW2Q_bMtQjQsx";
+      // BUSCA REMOÇÃO DE FALLBACKS HARDCODED (C1)
+      const supabaseUrl = process.env.VITE_SUPABASE_URL;
+      const supabaseKey = process.env.VITE_SUPABASE_KEY;
+      
+      if (!supabaseUrl || !supabaseKey) {
+        return res.status(500).json({ error: "Servidor não configurado: Chaves do Supabase ausentes no ambiente." });
+      }
+      
       const supabase = createClient(supabaseUrl, supabaseKey);
 
       let smtpConfig: any = null;
@@ -228,14 +323,14 @@ async function startServer() {
             </div>
             
             <div style="text-align: center; margin: 32px 0;">
-              <a href="${appUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 32px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);">
-                Acessar e Aceitar Convite
-              </a>
+               <a href="${appUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 32px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);">
+                 Acessar e Aceitar Convite
+               </a>
             </div>
             
             <p style="font-size: 13px; color: #94a3b8; line-height: 1.5; margin-top: 32px; border-top: 1px solid #f1f5f9; padding-top: 16px;">
-              <strong>Instruções:</strong> Se você ainda não tem conta, cadastre-se no sistema usando o e-mail <strong>${email}</strong>. 
-              Após o login, vá na aba <strong>"Gerenciar Equipe"</strong> para aceitar este convite.
+               <strong>Instruções:</strong> Se você ainda não tem conta, cadastre-se no sistema usando o e-mail <strong>${email}</strong>. 
+               Após o login, vá na aba <strong>"Gerenciar Equipe"</strong> para aceitar este convite.
             </p>
           </div>
         `,
@@ -251,8 +346,8 @@ async function startServer() {
     }
   });
 
-  // API para testar SMTP
-  app.post("/api/test-email", async (req, res) => {
+  // API para testar SMTP - Protegida com requireAuth (C2)
+  app.post("/api/test-email", requireAuth, async (req, res) => {
     try {
       const { settings, testEmail } = req.body;
       
@@ -462,8 +557,13 @@ async function startServer() {
                 console.log(`[Gemini] Encontrado via IA: ${ticker} -> ${data.current}`);
               }
             });
-          } catch (aiErr) {
-            console.error("[Gemini] Erro no fallback de IA:", aiErr);
+          } catch (aiErr: any) {
+            const errMsg = aiErr?.message || String(aiErr);
+            if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("RESOURCE_EXHAUSTED")) {
+              console.warn("[Gemini] Limite de cota diária excedido (429/RESOURCE_EXHAUSTED). Prosseguindo com fallbacks convencionais e dados em cache...");
+            } else {
+              console.error("[Gemini] Erro no fallback de IA:", aiErr);
+            }
           }
         }
         // --------------------------------------------------

@@ -18,8 +18,9 @@ import {
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 export const DEFAULT_SUPABASE_CONFIG = {
-  url: "https://uiekbavvgvrcsmbvoqtt.supabase.co",
-  key: "sb_publishable_L3w_v81e9H5oz9fWt-DW2Q_bMtQjQsx"
+  // Substitui chaves fixadas pelas variáveis de ambiente do Vite
+  url: import.meta.env.VITE_SUPABASE_URL || "",
+  key: import.meta.env.VITE_SUPABASE_KEY || ""
 };
 
 const uuidv4 = () => {
@@ -570,7 +571,11 @@ export const financeService = {
     try {
       await fetch('/api/send-invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          // Envia o token de autenticação JWT do Supabase no cabeçalho
+          'Authorization': `Bearer ${session.access_token}`
+        },
         body: JSON.stringify({
           email: email.toLowerCase().trim(),
           invitedBy: session.user.email,

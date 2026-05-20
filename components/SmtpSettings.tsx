@@ -88,9 +88,21 @@ export const SmtpSettings: React.FC = () => {
     setTesting(true);
     setTestResult(null);
     try {
+      // Obtém o token de autenticação JWT do Supabase atual
+      const supabase = (financeService as any).getSupabase();
+      let token = '';
+      if (supabase) {
+        const { data: { session } } = await supabase.auth.getSession();
+        token = session?.access_token || '';
+      }
+
       const response = await fetch('/api/test-email', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          // Envia o JWT do Supabase para validação no backend
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
         body: JSON.stringify({ settings, testEmail })
       });
       

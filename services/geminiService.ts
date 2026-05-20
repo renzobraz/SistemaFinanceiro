@@ -272,8 +272,13 @@ export const geminiService = {
         const cleanedText = text.replace(/```json|```/g, '').trim();
         return JSON.parse(cleanedText);
       }
-    } catch (error) {
-      console.error("Erro ao buscar sugestões via Gemini:", error);
+    } catch (error: any) {
+      const errMsg = error?.message || String(error);
+      if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("RESOURCE_EXHAUSTED")) {
+        console.warn("[Gemini] Limite de cota diária excedido (429/RESOURCE_EXHAUSTED). Retornando sugestões offline...");
+      } else {
+        console.error("Erro ao buscar sugestões via Gemini:", error);
+      }
     }
 
     return assets.map(a => ({
