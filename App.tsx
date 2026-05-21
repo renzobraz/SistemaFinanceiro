@@ -403,14 +403,6 @@ const App: FC = () => {
                 await loadOrganizations();
                 console.log(`[Rastreamento] [loadAll] Passo 1 concluído. activeOrganizationId de financeService: ${financeService.activeOrganizationId}`);
             }
-
-            // Teste rápido de conexão
-            console.log("[Rastreamento] [loadAll] Efetuando teste de conexão rápida com a tabela 'banks'...");
-            const { error } = await supabase.from('banks').select('id').limit(1);
-            if (error && (error.message?.includes('fetch') || error.name === 'TypeError' || error.message?.includes('Network'))) {
-                console.warn("[Rastreamento] [loadAll] Conexão reportou falha rápida:", error.message);
-                setIsOffline(true);
-            }
         } catch (e: any) {
             console.warn("Supabase connection check failed:", e.message);
             if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message === 'Timeout' || e.message?.includes('Network')) {
