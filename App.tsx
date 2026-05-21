@@ -397,9 +397,9 @@ const App: FC = () => {
     if (supabase) {
         try {
             console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase...");
-            // Verifica sessão atual - timeout de 3 segundos para não travar o carregamento
+            // Verifica sessão atual - timeout de 8 segundos para evitar quedas prematuras na Vercel
             const sessionPromise = supabase.auth.getSession();
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000));
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000));
             
             const { data: { session } } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
             
@@ -416,7 +416,8 @@ const App: FC = () => {
             }
         } catch (e: any) {
             console.warn("Supabase connection check failed:", e.message);
-            if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message === 'Timeout' || e.message?.includes('Network')) {
+            // O modo offline só é ativado se houver erro real de rede (fetch ou network), ignorando timeouts puros
+            if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message?.includes('Network')) {
                 setIsOffline(true);
             }
         }
