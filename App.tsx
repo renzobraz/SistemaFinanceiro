@@ -230,6 +230,15 @@ const App: FC = () => {
   const loadRegistries = useCallback(async (forceRefresh = false, walletId?: string) => {
     const requestId = ++lastRegistryRequestIdRef.current;
     
+    const supabase = financeService.getSupabase();
+    console.log(`[Rastreamento] [loadRegistries] Iniciando carregamento do cadastro para '${activeRegistryTab}'. ForceRefresh: ${forceRefresh}, WalletId: ${walletId}. Modo Supabase: ${!!supabase}, Active Org ID: ${financeService.activeOrganizationId}`);
+    
+    // Proteção contra queries sem organization_id no Supabase
+    if (supabase && currentUserIdRef.current && !financeService.activeOrganizationId) {
+       console.warn("[Rastreamento] [loadRegistries] Bloqueando queries no Supabase porque o activeOrganizationId está nulo para evitar violação do RLS.");
+       return;
+    }
+
     // Se não quiser filtrar por carteira (ex: aba de carteiras em si), removemos o walletId
     const actualWalletId = (activeRegistryTab === 'wallets') ? undefined : (walletId === 'ALL' ? undefined : walletId);
     const cacheKey = `${actualWalletId || 'all'}_${activeRegistryTab}`;
@@ -238,6 +247,7 @@ const App: FC = () => {
       loadedRegistriesRef.current = {};
     } else if (loadedRegistriesRef.current[cacheKey]) {
       // Retorna imediatamente se os registros para essa combinação já foram carregados
+      console.log(`[Rastreamento] [loadRegistries] Registros para a chave '${cacheKey}' já foram carregados anteriormente.`);
       return;
     }
 
@@ -295,6 +305,17 @@ const App: FC = () => {
   // Carrega transações baseado nos filtros atuais (Database-side)
   const loadTransactions = useCallback(async () => {
     const requestId = ++lastRequestIdRef.current;
+    
+    const supabase = financeService.getSupabase();
+    console.log(`[Rastreamento] [loadTransactions] Iniciando carregamento das transações. Modo Supabase: ${!!supabase}, Active Org ID: ${financeService.activeOrganizationId}`);
+
+    // Proteção contra queries sem organization_id no Supabase
+    if (supabase && currentUserIdRef.current && !financeService.activeOrganizationId) {
+       console.warn("[Rastreamento] [loadTransactions] Bloqueando queries de transações no Supabase porque o activeOrganizationId está nulo.");
+       setRefreshing(false);
+       return;
+    }
+
     setRefreshing(true);
     
     try {
@@ -348,16 +369,23 @@ const App: FC = () => {
   }, [startDate, endDate, selectedBankId, selectedWalletId, statusFilter, activeTab]);
 
   const loadAll = async (isInitialFetch = false) => {
+    console.log(`[Rastreamento] [loadAll] Iniciando carregamento de tudo. isInitialFetch: ${isInitialFetch}`);
     if (isInitialFetch) setLoading(true);
     
     // Verifica conexão
     const supabase = financeService.getSupabase();
-    setIsConnected(!!supabase);
+    const isSupabaseConfigured = !!supabase;
+    setIsConnected(isSupabaseConfigured);
     setIsLocalMode(!supabase);
     setIsOffline(false);
 
+    console.log(`[Rastreamento] [loadAll] Conexão remota Supabase configurada: ${isSupabaseConfigured}`);
+
+    let loggedInUser = null;
+
     if (supabase) {
         try {
+            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase...");
             // Verifica sessão atual - timeout de 5 segundos para não travar o carregamento
             const sessionPromise = supabase.auth.getSession();
             const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000));
@@ -365,15 +393,22 @@ const App: FC = () => {
             const { data: { session } } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
             
             const sessionUser = session?.user || null;
+            loggedInUser = sessionUser;
             currentUserIdRef.current = sessionUser?.id || null;
             setUser(sessionUser);
+            
+            console.log(`[Rastreamento] [loadAll] Usuário ativo: ${sessionUser ? sessionUser.email : 'Nenhum'}`);
             if (sessionUser) {
+                console.log("[Rastreamento] [loadAll] Passo 1: Carregando organizações de forma assíncrona garantindo conclusão...");
                 await loadOrganizations();
+                console.log(`[Rastreamento] [loadAll] Passo 1 concluído. activeOrganizationId de financeService: ${financeService.activeOrganizationId}`);
             }
 
             // Teste rápido de conexão
+            console.log("[Rastreamento] [loadAll] Efetuando teste de conexão rápida com a tabela 'banks'...");
             const { error } = await supabase.from('banks').select('id').limit(1);
             if (error && (error.message?.includes('fetch') || error.name === 'TypeError' || error.message?.includes('Network'))) {
+                console.warn("[Rastreamento] [loadAll] Conexão reportou falha rápida:", error.message);
                 setIsOffline(true);
             }
         } catch (e: any) {
@@ -384,6 +419,18 @@ const App: FC = () => {
         }
     }
 
+    // Proteção contra chamadas sem organização ativa definida em modo Supabase remoto
+    const activeOrgId = financeService.activeOrganizationId;
+    console.log(`[Rastreamento] [loadAll] Verificando integridade das informações organizacionais. Supabase: ${isSupabaseConfigured}, Usuário ativo: ${!!loggedInUser}, ID da Orga Ativa: ${activeOrgId}`);
+
+    if (isSupabaseConfigured && loggedInUser && !activeOrgId) {
+        console.warn("[Rastreamento] [loadAll] Supabase ativo e usuário logado, mas activeOrganizationId continua nulo (fluxo de Onboarding ou carregamento). Cancelando carga sequencial subsequente de cadastros e transações.");
+        if (isInitialFetch) {
+            setLoading(false);
+        }
+        return;
+    }
+
     // Se já temos registros no localStorage, podemos liberar o loading mais cedo
     const keyMap: any = { banks: 'fincontrol_banks', categories: 'fincontrol_categories' };
     const hasLocalData = !!localStorage.getItem(keyMap.banks) || !!localStorage.getItem(keyMap.categories);
@@ -392,7 +439,9 @@ const App: FC = () => {
     // para que a busca de transações já use os filtros corretos
     if (!initialPrefsApplied.current) {
         try {
+            console.log("[Rastreamento] [loadAll] Buscando preferências de usuário...");
             const savedPrefs = await financeService.getUserSettings();
+            console.log("[Rastreamento] [loadAll] Preferências do usuário recuperadas:", savedPrefs);
             if (savedPrefs.defaultTab) setActiveTab(savedPrefs.defaultTab);
             if (savedPrefs.defaultWalletId) setSelectedWalletId(savedPrefs.defaultWalletId);
             if (savedPrefs.defaultBankId) setSelectedBankId(savedPrefs.defaultBankId);
@@ -412,8 +461,11 @@ const App: FC = () => {
 
     // Carrega registros e transações de forma sequencial para garantir consistência
     try {
+        console.log("[Rastreamento] [loadAll] Passo 2: Chamando loadRegistries()...");
         await loadRegistries();
+        console.log("[Rastreamento] [loadAll] Passo 3: Chamando loadTransactions()...");
         await loadTransactions();
+        console.log("[Rastreamento] [loadAll] Todos os passos concluídos com êxito.");
     } catch (e) {
         console.error("Erro na carga inicial de dados", e);
     }

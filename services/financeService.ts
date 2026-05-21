@@ -812,6 +812,11 @@ export const financeService = {
     let supabaseData: AssetAccrual[] = [];
 
     if (supabase) {
+      console.log(`[Rastreamento] [financeService.getAssetAccruals] Buscando acréscimos de ativos no Supabase. activeOrganizationId atual: ${this.activeOrganizationId}`);
+      if (!this.activeOrganizationId) {
+        console.warn("[Rastreamento] [financeService.getAssetAccruals] Bloqueando busca de acréscimos: activeOrganizationId nulo no Supabase. Retornando vazio.");
+        return [];
+      }
       try {
         let query = supabase.from('asset_accruals').select('*');
         if (assetId) query = query.eq('asset_id', assetId);
@@ -989,6 +994,11 @@ export const financeService = {
     const supabase = getSupabase();
 
     if (supabase) {
+      console.log(`[Rastreamento] [financeService.getTransactions] Iniciando consulta de transações no Supabase. activeOrganizationId atual: ${this.activeOrganizationId}`);
+      if (!this.activeOrganizationId) {
+        console.warn("[Rastreamento] [financeService.getTransactions] Bloqueando consulta: activeOrganizationId nulo no Supabase. Retornando array vazio.");
+        return [];
+      }
       try {
         const { data } = await withRetry<any>(() => supabase.auth.getSession());
         const session = data?.session;
@@ -1138,6 +1148,11 @@ export const financeService = {
     let rows: any[] = [];
 
     if (supabase) {
+      console.log(`[Rastreamento] [financeService.getBalancesBefore] Iniciando cálculo de saldo no Supabase. activeOrganizationId atual: ${this.activeOrganizationId}`);
+      if (!this.activeOrganizationId) {
+        console.warn("[Rastreamento] [financeService.getBalancesBefore] Bloqueando consulta de saldo anterior: activeOrganizationId nulo no Supabase. Retornando saldos zerados.");
+        return { total: 0, byBank: {} };
+      }
       try {
         // Verifica cache
         const cached = cache.balances[cacheKey];
@@ -1539,6 +1554,11 @@ export const financeService = {
     };
     
     if (supabase) {
+      console.log(`[Rastreamento] [financeService.getRegistry] Buscando cadastros do tipo '${type}' no Supabase. activeOrganizationId atual: ${this.activeOrganizationId}`);
+      if (!this.activeOrganizationId) {
+        console.warn(`[Rastreamento] [financeService.getRegistry] Bloqueando busca de cadastros para '${type}': activeOrganizationId nulo no Supabase. Retornando array vazio.`);
+        return [];
+      }
       try {
         // Invalida cache se mudar a carteira ou se for refresh forçado
         const currentCache = cache.registries[type];
@@ -1755,6 +1775,10 @@ export const financeService = {
     cache.registries = {};
 
     if (supabase) {
+      if (!this.activeOrganizationId) {
+        console.warn(`[Rastreamento] [financeService.saveRegistryItem] Bloqueando inserção remota de '${type}' no Supabase: activeOrganizationId nulo.`);
+        throw new Error("Não foi possível salvar os registros no Supabase porque nenhuma organização ativa foi definida para esta conta.");
+      }
       try {
         const payload: any = { 
           name: itemToSave.name, 
@@ -2511,6 +2535,11 @@ export const financeService = {
   },
 
   async syncAuxiliaryRegistries(): Promise<{ types: number, sectors: number, tickers: number }> {
+    const supabase = getSupabase();
+    if (supabase && !this.activeOrganizationId) {
+      console.warn("[Rastreamento] [financeService.syncAuxiliaryRegistries] Sincronização automática de tabelas auxiliares abortada pois activeOrganizationId é nulo.");
+      return { types: 0, sectors: 0, tickers: 0 };
+    }
     const participants = (await this.getRegistry('participants')) as Participant[];
     const stats = { types: 0, sectors: 0, tickers: 0 };
     
