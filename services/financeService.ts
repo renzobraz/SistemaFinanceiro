@@ -384,54 +384,23 @@ export const financeService = {
 
   async getMyOrganizations(): Promise<Organization[]> {
     const supabase = getSupabase();
-    if (!supabase) {
-      console.warn("[Rastreamento] [getMyOrganizations] Supabase não está configurado.");
-      return [];
-    }
+    if (!supabase) return [];
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const user = sessionData?.session?.user;
-      if (!user) {
-        console.warn("[Rastreamento] [getMyOrganizations] Nenhum usuário ativo encontrado na sessão.");
-        return [];
-      }
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return [];
 
-      console.log(`[Rastreamento] [getMyOrganizations] Iniciando chamada de organizações. user_id do usuário atual: ${user.id} | Email: ${user.email}`);
-
-      // Unifica a consulta usando o relacionamento definido no Supabase
       const { data, error } = await supabase
-        .from('organization_members')
-        .select(`
-          organization_id,
-          role,
-          organizations (
-            id,
-            name,
-            slug,
-            owner_id,
-            plan,
-            active,
-            created_at
-          )
-        `)
-        .eq('user_id', user.id);
-
-      console.log(`[Rastreamento] [getMyOrganizations] Resultado bruto retornado pelo Supabase (data):`, data);
+        .rpc('get_user_organizations', { p_user_id: user.id });
 
       if (error) {
-        console.error('[Rastreamento] [getMyOrganizations] Erro retornado pela consulta do Supabase:', error);
+        console.error('[getMyOrganizations] Erro RPC:', error);
         return [];
       }
 
-      const organizationsList = data
-        ?.map(m => m.organizations as unknown as Organization)
-        .filter(Boolean) ?? [];
-
-      console.log(`[Rastreamento] [getMyOrganizations] Lista de organizações extraída e filtrada:`, organizationsList);
-
-      return organizationsList;
+      console.log('[getMyOrganizations] Organizações encontradas:', data);
+      return data as Organization[] || [];
     } catch (e) {
-      console.error('[Rastreamento] [getMyOrganizations] Exceção capturada ao buscar organizações:', e);
+      console.error('[getMyOrganizations] Exception:', e);
       return [];
     }
   },
