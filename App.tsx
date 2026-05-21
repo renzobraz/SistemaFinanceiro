@@ -61,6 +61,7 @@ const App: FC = () => {
   const [isHeaderFiltersOpen, setIsHeaderFiltersOpen] = useState(false);
   const initialPrefsApplied = useRef(false);
   const loadedRegistriesRef = useRef<Record<string, boolean>>({});
+  const currentUserIdRef = useRef<string | null>(null);
   
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [activeOrg, setActiveOrg] = useState<Organization | null>(null);
@@ -83,12 +84,30 @@ const App: FC = () => {
 
   const loadOrganizations = useCallback(async (selectedOrgId?: string) => {
     try {
+      const supabase = financeService.getSupabase();
+      if (!supabase) {
+        console.log("[loadOrganizations] Supabase não configurado. Modo local.");
+        setIsOnboarding(false);
+        return;
+      }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const user = sessionData?.session?.user;
+      console.log("[loadOrganizations] Buscando organizações. Usuário atual:", user?.email || 'Nenhum');
+
+      if (!user) {
+        console.log("[loadOrganizations] Nenhum usuário logado. Cancelando verificação de onboarding.");
+        setIsOnboarding(false);
+        return;
+      }
+
       const orgs = await financeService.getMyOrganizations();
+      console.log("[loadOrganizations] Organizações retornadas do banco:", orgs);
       setOrganizations(orgs);
 
       // Se não houver nenhuma organização no banco de dados e temos um usuário logado remoto
-      const supabase = financeService.getSupabase();
-      if (orgs.length === 0 && supabase) {
+      if (orgs.length === 0) {
+        console.log("[loadOrganizations] Nenhuma organização encontrada para o usuário. Ativando Onboarding.");
         setIsOnboarding(true);
         setActiveTab('onboarding');
         setActiveOrg(null);
@@ -96,16 +115,19 @@ const App: FC = () => {
         return;
       }
 
+      console.log("[loadOrganizations] Organização(ões) encontrada(s). Desativando onboarding.");
       setIsOnboarding(false);
       // Carrega ID preferido armazenado localmente
       const savedOrgId = selectedOrgId || localStorage.getItem('fincontrol_active_org_id');
       const foundOrg = orgs.find(o => o.id === savedOrgId) || orgs[0];
       
       if (foundOrg) {
+        console.log("[loadOrganizations] Definindo organização ativa:", foundOrg.name, "ID:", foundOrg.id);
         setActiveOrg(foundOrg);
         financeService.setActiveOrganizationId(foundOrg.id);
         localStorage.setItem('fincontrol_active_org_id', foundOrg.id);
       } else {
+        console.log("[loadOrganizations] Nenhuma organização correspondente encontrada nos registros carregados.");
         setActiveOrg(null);
         financeService.setActiveOrganizationId(null);
       }
@@ -342,8 +364,10 @@ const App: FC = () => {
             
             const { data: { session } } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
             
-            setUser(session?.user || null);
-            if (session?.user) {
+            const sessionUser = session?.user || null;
+            currentUserIdRef.current = sessionUser?.id || null;
+            setUser(sessionUser);
+            if (sessionUser) {
                 await loadOrganizations();
             }
 
@@ -405,23 +429,34 @@ const App: FC = () => {
     // Listen for auth changes
     const supabase = financeService.getSupabase();
     if (supabase) {
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         const newUser = session?.user || null;
+        const newUserId = newUser?.id || null;
+        const prevUserId = currentUserIdRef.current;
         
-        // Evita recarregar se o usuário for o mesmo
-        setUser((prevUser: any) => {
-            if (prevUser?.id === newUser?.id) return prevUser;
+        console.log(`[onAuthStateChange] Evento de autenticação disparado: ${event}. ID Antigo: ${prevUserId}, ID Novo: ${newUserId}`);
+        
+        if (prevUserId !== newUserId) {
+            console.log(`[onAuthStateChange] Identificamos mudança de usuário (${prevUserId} -> ${newUserId}). Atualizando sessões.`);
+            currentUserIdRef.current = newUserId;
+            setUser(newUser);
             
             if (newUser) {
-                // Se o usuário mudou (de null para algo ou mudou conta), recarrega
                 if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
-                    loadOrganizations().then(() => {
-                        loadAll(false);
-                    });
+                    console.log("[onAuthStateChange] Carregando novas organizações para o usuário...");
+                    await loadOrganizations();
+                    await loadAll(false);
                 }
+            } else {
+                console.log("[onAuthStateChange] Sem usuário ativo. Limpando estados organizacionais.");
+                setOrganizations([]);
+                setActiveOrg(null);
+                financeService.setActiveOrganizationId(null);
+                setIsOnboarding(false);
             }
-            return newUser;
-        });
+        } else {
+            console.log("[onAuthStateChange] ID do usuário idêntico. Side-effects ignorados para evitar renders/onboarding falso.");
+        }
       });
 
       return () => {
