@@ -225,21 +225,38 @@ let supabaseInstance: SupabaseClient | null = null;
 let lastUrl = '';
 let lastKey = '';
 
+// Obtém e gerencia a instância do Supabase de forma dinâmica e segura contra variáveis de ambiente nulas no carregamento inicial
 const getSupabase = (): SupabaseClient | null => {
-  const url = DEFAULT_SUPABASE_CONFIG.url?.trim();
-  const key = DEFAULT_SUPABASE_CONFIG.key?.trim();
+  // Buscamos dinamicamente as variáveis de ambiente do Vite ou o fallback
+  const url = (import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_CONFIG.url)?.trim();
+  const key = (import.meta.env.VITE_SUPABASE_KEY || DEFAULT_SUPABASE_CONFIG.key)?.trim();
 
-  if (!url || !key) return null;
+  // Log de diagnóstico detalhado para verificar a disponibilidade das credenciais no frontend
+  console.log('[getSupabase] Verificação de credenciais:', {
+    hasUrl: !!url,
+    urlValue: url || 'Vazio',
+    hasKey: !!key,
+    keyTruncated: key ? `${key.substring(0, 10)}...` : 'Vazio'
+  });
 
-  if (supabaseInstance) {
+  if (!url || !key) {
+    console.warn('[getSupabase] Alerta: URL ou Anon Key do Supabase não configuradas no ambiente do cliente.');
+    return null;
+  }
+
+  // Se já existir uma instância do cliente configurada com a mesma URL e chave, nós a reaproveitamos
+  if (supabaseInstance && lastUrl === url && lastKey === key) {
     return supabaseInstance;
   }
 
   try {
+    console.log(`[getSupabase] Criando e guardando um novo cliente Supabase na memória. URL: "${url}"`);
     supabaseInstance = createClient(url, key);
+    lastUrl = url;
+    lastKey = key;
     return supabaseInstance;
   } catch (e) {
-    console.error("Error creating Supabase client", e);
+    console.error("[getSupabase] Falha grave ao construir o cliente Supabase pelo createClient:", e);
     return null;
   }
 };
