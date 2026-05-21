@@ -392,6 +392,10 @@ export const financeService = {
       const { data, error } = await supabase
         .rpc('get_user_organizations', { p_user_id: user.id });
 
+      console.log('[getMyOrganizations] user.id:', user.id);
+      console.log('[getMyOrganizations] data bruto:', JSON.stringify(data));
+      console.log('[getMyOrganizations] error:', error);
+
       if (error) {
         console.error('[getMyOrganizations] Erro RPC:', error);
         return [];
