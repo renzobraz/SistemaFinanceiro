@@ -397,9 +397,9 @@ const App: FC = () => {
     if (supabase) {
         try {
             console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase...");
-            // Verifica sessão atual - timeout de 5 segundos para não travar o carregamento
+            // Verifica sessão atual - timeout de 3 segundos para não travar o carregamento
             const sessionPromise = supabase.auth.getSession();
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000));
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000));
             
             const { data: { session } } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
             
@@ -420,6 +420,17 @@ const App: FC = () => {
                 setIsOffline(true);
             }
         }
+    }
+
+    // Se estiver em modo Supabase e o usuário não estiver logado (ou se ocorreu timeout / conexão falhou),
+    // interrompemos o loading imediatamente e exibimos a tela de login.
+    if (isSupabaseConfigured && !loggedInUser) {
+        console.warn("[Rastreamento] [loadAll] Supabase configurado, mas nenhum usuário ativo encontrado (sessão nula ou timeout de conexão). Encerrando carregamento de dados e forçando exibição da tela de login.");
+        setUser(null);
+        if (isInitialFetch) {
+            setLoading(false);
+        }
+        return;
     }
 
     // Proteção contra chamadas sem organização ativa definida em modo Supabase remoto
