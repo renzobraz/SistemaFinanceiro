@@ -384,11 +384,19 @@ export const financeService = {
 
   async getMyOrganizations(): Promise<Organization[]> {
     const supabase = getSupabase();
-    if (!supabase) return [];
+    if (!supabase) {
+      console.warn("[Rastreamento] [getMyOrganizations] Supabase não está configurado.");
+      return [];
+    }
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const user = sessionData?.session?.user;
-      if (!user) return [];
+      if (!user) {
+        console.warn("[Rastreamento] [getMyOrganizations] Nenhum usuário ativo encontrado na sessão.");
+        return [];
+      }
+
+      console.log(`[Rastreamento] [getMyOrganizations] Iniciando chamada de organizações. user_id do usuário atual: ${user.id} | Email: ${user.email}`);
 
       // Unifica a consulta usando o relacionamento definido no Supabase
       const { data, error } = await supabase
@@ -408,16 +416,22 @@ export const financeService = {
         `)
         .eq('user_id', user.id);
 
+      console.log(`[Rastreamento] [getMyOrganizations] Resultado bruto retornado pelo Supabase (data):`, data);
+
       if (error) {
-        console.error('getMyOrganizations error:', error);
+        console.error('[Rastreamento] [getMyOrganizations] Erro retornado pela consulta do Supabase:', error);
         return [];
       }
 
-      return data
+      const organizationsList = data
         ?.map(m => m.organizations as unknown as Organization)
         .filter(Boolean) ?? [];
+
+      console.log(`[Rastreamento] [getMyOrganizations] Lista de organizações extraída e filtrada:`, organizationsList);
+
+      return organizationsList;
     } catch (e) {
-      console.error('getMyOrganizations exception:', e);
+      console.error('[Rastreamento] [getMyOrganizations] Exceção capturada ao buscar organizações:', e);
       return [];
     }
   },
