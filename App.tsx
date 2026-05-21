@@ -15,7 +15,7 @@ import ReportsDashboard from './src/components/reports/ReportsDashboard';
 import { HelpManual } from './components/HelpManual';
 import { SettingsPage } from './components/SettingsPage';
 import { financeService, DEFAULT_SUPABASE_CONFIG } from './services/financeService';
-import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus, AssetType, AssetSector, AssetTicker } from './types';
+import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus, AssetType, AssetSector, AssetTicker, Organization } from './types';
 import { BrokerageImport } from './components/BrokerageImport';
 import { Auth } from './components/Auth';
 import { 
@@ -42,7 +42,9 @@ import {
   LogOut,
   User,
   History as HistoryIcon,
-  Scaling
+  Scaling,
+  Menu,
+  SlidersHorizontal
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 
@@ -55,7 +57,62 @@ const App: FC = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [isLocalMode, setIsLocalMode] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isHeaderFiltersOpen, setIsHeaderFiltersOpen] = useState(false);
   const initialPrefsApplied = useRef(false);
+  const loadedRegistriesRef = useRef<Record<string, boolean>>({});
+  
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [activeOrg, setActiveOrg] = useState<Organization | null>(null);
+  const [isOnboarding, setIsOnboarding] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(1);
+
+  // ESTADOS LOCAIS PARA O FLUXO DE ONBOARDING
+  const [newOrgName, setNewOrgName] = useState('');
+  const [newOrgSlug, setNewOrgSlug] = useState('');
+  const [newBankName, setNewBankName] = useState('');
+  const [newBankType, setNewBankType] = useState('CHECKING');
+  const [newWalletName, setNewWalletName] = useState('');
+  const [newTxDescription, setNewTxDescription] = useState('Saldo Inicial');
+  const [newTxValue, setNewTxValue] = useState('1000.00');
+  const [newTxType, setNewTxType] = useState<'CREDIT' | 'DEBIT'>('CREDIT');
+  const [newTxDate, setNewTxDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [onboardingLoading, setOnboardingLoading] = useState(false);
+  const [createdBankId, setCreatedBankId] = useState('');
+  const [createdWalletId, setCreatedWalletId] = useState('');
+
+  const loadOrganizations = useCallback(async (selectedOrgId?: string) => {
+    try {
+      const orgs = await financeService.getMyOrganizations();
+      setOrganizations(orgs);
+
+      // Se não houver nenhuma organização no banco de dados e temos um usuário logado remoto
+      const supabase = financeService.getSupabase();
+      if (orgs.length === 0 && supabase) {
+        setIsOnboarding(true);
+        setActiveTab('onboarding');
+        setActiveOrg(null);
+        financeService.setActiveOrganizationId(null);
+        return;
+      }
+
+      setIsOnboarding(false);
+      // Carrega ID preferido armazenado localmente
+      const savedOrgId = selectedOrgId || localStorage.getItem('fincontrol_active_org_id');
+      const foundOrg = orgs.find(o => o.id === savedOrgId) || orgs[0];
+      
+      if (foundOrg) {
+        setActiveOrg(foundOrg);
+        financeService.setActiveOrganizationId(foundOrg.id);
+        localStorage.setItem('fincontrol_active_org_id', foundOrg.id);
+      } else {
+        setActiveOrg(null);
+        financeService.setActiveOrganizationId(null);
+      }
+    } catch (e) {
+      console.error("Erro ao carregar organizações no App:", e);
+    }
+  }, []);
   
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   // Armazena o saldo acumulado ANTES da data de início do filtro
@@ -99,6 +156,24 @@ const App: FC = () => {
       defaultStatus: statusFilter
     });
   }, [selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter]);
+
+  // Fechar barra de filtros mobile ao mudar de aba
+  useEffect(() => {
+    setIsHeaderFiltersOpen(false);
+  }, [activeTab]);
+
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (['dashboard', 'cashflow', 'expenses-analysis', 'payables', 'bank-transactions', 'brokerage-notes'].includes(activeTab)) {
+      if (statusFilter !== 'ALL') count++;
+      if (selectedBankId) count++;
+      if (selectedWalletId) count++;
+    } else if (activeTab === 'investments') {
+      if (performanceBankId !== 'ALL') count++;
+      if (performanceWalletId !== 'ALL') count++;
+    }
+    return count;
+  }, [activeTab, statusFilter, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId]);
   
   const [startDate, setStartDate] = useState<string>(() => financeService.getDateRangeFromPreference(financeService.getUserPreferences().defaultDateRange).start);
   const [endDate, setEndDate] = useState<string>(() => financeService.getDateRangeFromPreference(financeService.getUserPreferences().defaultDateRange).end);
@@ -132,10 +207,19 @@ const App: FC = () => {
   // Carrega apenas os cadastros (uma única vez ou quando conectar)
   const loadRegistries = useCallback(async (forceRefresh = false, walletId?: string) => {
     const requestId = ++lastRegistryRequestIdRef.current;
-    try {
-      // Se não quiser filtrar por carteira (ex: aba de carteiras em si), removemos o walletId
-      const actualWalletId = (activeRegistryTab === 'wallets') ? undefined : (walletId === 'ALL' ? undefined : walletId);
+    
+    // Se não quiser filtrar por carteira (ex: aba de carteiras em si), removemos o walletId
+    const actualWalletId = (activeRegistryTab === 'wallets') ? undefined : (walletId === 'ALL' ? undefined : walletId);
+    const cacheKey = `${actualWalletId || 'all'}_${activeRegistryTab}`;
 
+    if (forceRefresh) {
+      loadedRegistriesRef.current = {};
+    } else if (loadedRegistriesRef.current[cacheKey]) {
+      // Retorna imediatamente se os registros para essa combinação já foram carregados
+      return;
+    }
+
+    try {
       const [bk, cat, cc, pt, wa, at, as, atk] = await Promise.all([
         financeService.getRegistry<Bank>('banks', forceRefresh, actualWalletId),
         financeService.getRegistry<Category>('categories', forceRefresh, actualWalletId),
@@ -158,6 +242,8 @@ const App: FC = () => {
           assetSectors: as,
           assetTickers: atk
         });
+
+        loadedRegistriesRef.current[cacheKey] = true;
 
         // Sincroniza tabelas auxiliares se necessário (especialmente importante se sumiram)
         if (at.length === 0 || as.length === 0) {
@@ -258,7 +344,7 @@ const App: FC = () => {
             
             setUser(session?.user || null);
             if (session?.user) {
-                localStorage.setItem('supabase_user_id', session.user.id);
+                await loadOrganizations();
             }
 
             // Teste rápido de conexão
@@ -327,13 +413,12 @@ const App: FC = () => {
             if (prevUser?.id === newUser?.id) return prevUser;
             
             if (newUser) {
-                localStorage.setItem('supabase_user_id', newUser.id);
                 // Se o usuário mudou (de null para algo ou mudou conta), recarrega
                 if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
-                    loadAll(false);
+                    loadOrganizations().then(() => {
+                        loadAll(false);
+                    });
                 }
-            } else {
-                localStorage.removeItem('supabase_user_id');
             }
             return newUser;
         });
@@ -345,12 +430,18 @@ const App: FC = () => {
     }
   }, [isConnected]);
 
-  // Proteção para não disparar busca de transações antes dos filtros serem aplicados
+  // Proteção e Debounce de 300ms para evitar requisições consecutivas ao trocar filtros
   useEffect(() => {
-    if (!loading && initialPrefsApplied.current) {
+    if (loading || !initialPrefsApplied.current) return;
+
+    const timer = setTimeout(() => {
         loadTransactions();
-    }
-  }, [startDate, endDate, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter, activeTab, loadTransactions]);
+    }, 300);
+
+    return () => {
+        clearTimeout(timer);
+    };
+  }, [startDate, endDate, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter, activeTab, loadTransactions, loading]);
 
   useEffect(() => {
     // Carrega registros para quase todas as abas que usam o formulário ou exibem nomes
@@ -401,50 +492,110 @@ const App: FC = () => {
   }, [transactions, previousBalances, selectedBankId]);
 
   const handleSaveTransaction = async (t: Transaction | Transaction[]) => {
+    const previousTransactions = [...transactions];
     try {
         if (Array.isArray(t)) {
-            await financeService.createManyTransactions(t);
+            // Disparar criação remota
+            const created = await financeService.createManyTransactions(t);
+            // Atualizar estado e re-ordenar localmente
+            setTransactions(prev => {
+              const updated = [...created, ...prev];
+              return updated.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            });
         } else {
-            await financeService.saveTransaction(t);
+            const isEditing = !!t.id;
+            if (isEditing) {
+                // Atualização Otimista imediata para edição
+                setTransactions(prev => prev.map(item => item.id === t.id ? t : item));
+                
+                // Grava remotamente
+                const saved = await financeService.saveTransaction(t);
+                
+                // Atualiza com os valores finais retornados
+                setTransactions(prev => prev.map(item => item.id === t.id ? saved : item));
+            } else {
+                // Gravação remota imediata (pois precisa de ID gerado)
+                const saved = await financeService.saveTransaction(t);
+                
+                // Concatena no estado e re-ordena por data decrescente
+                setTransactions(prev => {
+                  const updated = [saved, ...prev];
+                  return updated.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                });
+            }
         }
-        await loadTransactions(); 
     } catch (e: any) {
-       showAlert('Erro ao Salvar', e);
+        // Rollback
+        setTransactions(previousTransactions);
+        showAlert('Erro ao Salvar', e);
     }
   };
 
   const handleDeleteTransactions = async (ids: string[]) => {
+    const previousTransactions = [...transactions];
+    
+    // Atualização Otimista imediata: remove localmente as transações
+    setTransactions(prev => prev.filter(item => !ids.includes(item.id)));
+    
     try {
         await financeService.deleteTransactions(ids);
-        await loadTransactions();
     } catch (e: any) {
+        // Rollback em caso de erro
+        setTransactions(previousTransactions);
         showAlert('Erro ao Excluir', e);
     }
   };
   
   const handleUpdateTransactionsStatus = async (ids: string[], status: 'PAID' | 'PENDING') => {
+    const previousTransactions = [...transactions];
+    
+    // Atualização Otimista imediata: altera o status localmente
+    setTransactions(prev => prev.map(item => 
+      ids.includes(item.id) ? { ...item, status } : item
+    ));
+    
     try {
         await financeService.updateTransactionsStatus(ids, status);
-        await loadTransactions();
     } catch (e: any) {
+        // Rollback em caso de erro
+        setTransactions(previousTransactions);
         showAlert('Erro ao Atualizar Status', e);
     }
   };
 
   const handleUpdateTransactionsDate = async (ids: string[], date: string) => {
+    const previousTransactions = [...transactions];
+    
+    // Atualização Otimista imediata: altera a data localmente e re-ordena por data decrescente
+    setTransactions(prev => {
+      const updated = prev.map(item => 
+        ids.includes(item.id) ? { ...item, date } : item
+      );
+      return updated.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    });
+    
     try {
         await financeService.updateTransactionsDate(ids, date);
-        await loadTransactions();
     } catch (e: any) {
+        // Rollback em caso de erro
+        setTransactions(previousTransactions);
         showAlert('Erro ao Atualizar Data', e);
     }
   };
 
   const handleUpdateTransactionsValue = async (ids: string[], value: number) => {
+    const previousTransactions = [...transactions];
+    
+    // Atualização Otimista imediata: altera o valor localmente
+    setTransactions(prev => prev.map(item => 
+      ids.includes(item.id) ? { ...item, value } : item
+    ));
+    
     try {
         await financeService.updateTransactionsValue(ids, value);
-        await loadTransactions();
     } catch (e: any) {
+        // Rollback em caso de erro
+        setTransactions(previousTransactions);
         showAlert('Erro ao Atualizar Valor', e);
     }
   };
@@ -486,13 +637,362 @@ const App: FC = () => {
     return <Auth onLogin={loadAll} />;
   }
 
+  // --- FLUXO DE ONBOARDING SAAS MULTI-TENANT ---
+  const handleOnboardingCreateOrg = async () => {
+    if (!newOrgName.trim() || !newOrgSlug.trim()) {
+      showAlert('Preencha os dados', 'O nome e o identificador amigável da empresa são obrigatórios.');
+      return;
+    }
+    setOnboardingLoading(true);
+    try {
+      const org = await financeService.createOrganization(newOrgName.trim());
+      financeService.setActiveOrganizationId(org.id);
+      setActiveOrg(org);
+      setOrganizations([org]);
+      setOnboardingStep(2);
+    } catch (e: any) {
+      showAlert('Erro ao criar organização', e);
+    } finally {
+      setOnboardingLoading(false);
+    }
+  };
+
+  const handleOnboardingCreateBank = async () => {
+    if (!newBankName.trim()) {
+      showAlert('Preencha o nome do banco', 'O nome do banco é obrigatório.');
+      return;
+    }
+    setOnboardingLoading(true);
+    try {
+      const bank = await financeService.saveRegistryItem<Bank>('banks', {
+        id: '',
+        name: newBankName.trim(),
+        type: newBankType as any,
+        currency: 'BRL',
+        active: true
+      });
+      setCreatedBankId(bank.id);
+      setRegistries(prev => ({ ...prev, banks: [bank] }));
+      setOnboardingStep(3);
+    } catch (e: any) {
+      showAlert('Erro ao criar banco', e);
+    } finally {
+      setOnboardingLoading(false);
+    }
+  };
+
+  const handleOnboardingCreateWallet = async () => {
+    if (!newWalletName.trim()) {
+      showAlert('Preencha o nome do portfólio', 'O nome do portfólio é obrigatório.');
+      return;
+    }
+    setOnboardingLoading(true);
+    try {
+      const wallet = await financeService.saveRegistryItem<Wallet>('wallets', {
+        id: '',
+        name: newWalletName.trim(),
+        active: true,
+        bankId: createdBankId
+      } as any);
+      setCreatedWalletId(wallet.id);
+      setRegistries(prev => ({ ...prev, wallets: [wallet] }));
+      setOnboardingStep(4);
+    } catch (e: any) {
+      showAlert('Erro ao criar portfólio', e);
+    } finally {
+      setOnboardingLoading(false);
+    }
+  };
+
+  const handleOnboardingFinish = async () => {
+    setOnboardingLoading(true);
+    try {
+      const val = parseFloat(newTxValue);
+      if (val > 0) {
+        const cats = await financeService.getRegistry<Category>('categories');
+        let initialCat = cats.find(c => c.name.toLowerCase() === 'saldo inicial');
+        if (!initialCat) {
+          initialCat = await financeService.saveRegistryItem('categories', {
+            id: '',
+            name: 'Saldo Inicial',
+            active: true
+          });
+        }
+        
+        await financeService.saveTransaction({
+          id: '',
+          description: newTxDescription.trim(),
+          value: val,
+          type: newTxType,
+          date: newTxDate,
+          status: 'PAID',
+          bankId: createdBankId,
+          walletId: createdWalletId,
+          categoryId: initialCat.id,
+          createdAt: new Date().toISOString()
+        } as any);
+      }
+      
+      await loadOrganizations();
+      await loadAll(true);
+      setIsOnboarding(false);
+      setActiveTab('dashboard');
+    } catch (e: any) {
+      showAlert('Erro ao finalizar onboarding', e);
+    } finally {
+      setOnboardingLoading(false);
+    }
+  };
+
+  // Preenche slug automaticamente baseando-se no nome da empresa digitado
+  const autoFillSlug = (name: string) => {
+    setNewOrgName(name);
+    const slug = name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // remove acentos
+      .replace(/[^a-z0-9\s-]/g, '') // remove especiais
+      .trim()
+      .replace(/\s+/g, '-'); // espacos por -
+    setNewOrgSlug(slug);
+  };
+
+  if (isOnboarding && user) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
+        <div className="sm:mx-auto sm:w-full sm:max-w-md">
+          <div className="flex justify-center">
+            <div className="bg-blue-600 p-3 rounded-2xl shadow-lg shadow-blue-250">
+              <Database className="w-8 h-8 text-white animate-pulse" />
+            </div>
+          </div>
+          <h2 className="mt-6 text-center text-3xl font-black text-slate-800 tracking-tight">
+            Configurar FinControl Pro
+          </h2>
+          <p className="mt-2 text-center text-sm text-slate-500">
+            Seja bem-vindo! Vamos preparar o seu workspace em 4 passos rápidos.
+          </p>
+        </div>
+
+        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-lg">
+          <div className="bg-white py-8 px-4 shadow-xl rounded-2xl sm:px-10 border border-slate-100">
+            {/* Indicador de passos */}
+            <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-100">
+              {[1, 2, 3, 4].map((step) => (
+                <div key={step} className="flex items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-colors ${onboardingStep === step ? 'bg-blue-600 text-white ring-4 ring-blue-100' : onboardingStep > step ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                    {onboardingStep > step ? '✓' : step}
+                  </div>
+                  {step < 4 && <div className={`w-12 h-1 bg-slate-150 mx-2 rounded ${onboardingStep > step ? 'bg-emerald-300' : 'bg-slate-100'}`} />}
+                </div>
+              ))}
+            </div>
+
+            {/* PASSO 1: EMPRESA */}
+            {onboardingStep === 1 && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Passo 1: Crie a sua Organização</h3>
+                  <p className="text-xs text-slate-400 mt-1">SaaS Multi-tenant: seus dados são totalmente isolados e seguros por empresa.</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Nome do Grupo Familiar ou Empresa</label>
+                  <input
+                    type="text"
+                    value={newOrgName}
+                    onChange={(e) => autoFillSlug(e.target.value)}
+                    placeholder="Ex: Grupo Líder Financial, Família Almeida"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-semibold text-slate-800"
+                    disabled={onboardingLoading}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Slug Único do Sistema (Auto-gerado)</label>
+                  <input
+                    type="text"
+                    value={newOrgSlug}
+                    placeholder="grupo-lider-financial"
+                    className="w-full bg-slate-100 border border-slate-205 rounded-xl px-4 py-3 text-sm outline-none font-mono text-slate-600 text-xs"
+                    disabled={true}
+                  />
+                </div>
+                <button
+                  onClick={handleOnboardingCreateOrg}
+                  disabled={onboardingLoading || !newOrgName.trim()}
+                  className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {onboardingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Criar Empresa e Continuar'}
+                </button>
+              </div>
+            )}
+
+            {/* PASSO 2: BANCO */}
+            {onboardingStep === 2 && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Passo 2: Configure o primeiro Banco</h3>
+                  <p className="text-xs text-slate-400 mt-1">Configure onde suas contas correntes ou investimentos estão hospedados.</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Nome da Instituição</label>
+                  <input
+                    type="text"
+                    value={newBankName}
+                    onChange={(e) => setNewBankName(e.target.value)}
+                    placeholder="Ex: Itaú, XP Corretora, Warren"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-semibold text-slate-800"
+                    disabled={onboardingLoading}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Tipo de Conta</label>
+                  <select
+                    value={newBankType}
+                    onChange={(e) => setNewBankType(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-semibold text-slate-705"
+                    disabled={onboardingLoading}
+                  >
+                    <option value="CHECKING">Conta Corrente</option>
+                    <option value="SAVINGS">Poupança</option>
+                    <option value="INVESTMENT">Corretora de Investimentos</option>
+                    <option value="CASH">Dinheiro / Caixa</option>
+                  </select>
+                </div>
+                <button
+                  onClick={handleOnboardingCreateBank}
+                  disabled={onboardingLoading || !newBankName.trim()}
+                  className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {onboardingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Criar Banco e Continuar'}
+                </button>
+              </div>
+            )}
+
+            {/* PASSO 3: CARTEIRA */}
+            {onboardingStep === 3 && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Passo 3: Primeiro Portfólio/Carteira</h3>
+                  <p className="text-xs text-slate-400 mt-1">O portfólio serve para agrupar as compras visando metas específicas.</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Nome do Portfólio</label>
+                  <input
+                    type="text"
+                    value={newWalletName}
+                    onChange={(e) => setNewWalletName(e.target.value)}
+                    placeholder="Ex: Minha Carteira de Ações, Liquidez Imediata"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-semibold text-slate-800"
+                    disabled={onboardingLoading}
+                  />
+                </div>
+                <button
+                  onClick={handleOnboardingCreateWallet}
+                  disabled={onboardingLoading || !newWalletName.trim()}
+                  className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {onboardingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Criar Portfólio e Continuar'}
+                </button>
+              </div>
+            )}
+
+            {/* PASSO 4: REGISTRO DE SALDO */}
+            {onboardingStep === 4 && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Passo 4: Lançamento Inicial (Opcional)</h3>
+                  <p className="text-xs text-slate-400 mt-1">Deseja injetar saldo inicial neste portfólio para ver os relatórios preenchidos?</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Descrição do Lançamento</label>
+                  <input
+                    type="text"
+                    value={newTxDescription}
+                    onChange={(e) => setNewTxDescription(e.target.value)}
+                    placeholder="Ex: Aporte Inicial de Caixa"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-semibold text-slate-800"
+                    disabled={onboardingLoading}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Valor R$</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={newTxValue}
+                      onChange={(e) => setNewTxValue(e.target.value)}
+                      placeholder="1000.00"
+                      className="w-full bg-slate-50 border border-slate-205 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-semibold text-slate-850"
+                      disabled={onboardingLoading}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Tipo de Fluxo</label>
+                    <select
+                      value={newTxType}
+                      onChange={(e) => setNewTxType(e.target.value as any)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-semibold text-slate-700"
+                      disabled={onboardingLoading}
+                    >
+                      <option value="CREDIT">Crédito (+)</option>
+                      <option value="DEBIT">Débito (-)</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Data do Lançamento</label>
+                  <input
+                    type="date"
+                    value={newTxDate}
+                    onChange={(e) => setNewTxDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all"
+                    disabled={onboardingLoading}
+                  />
+                </div>
+                <div className="pt-2">
+                  <button
+                    onClick={handleOnboardingFinish}
+                    disabled={onboardingLoading}
+                    className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all text-sm flex items-center justify-center gap-2"
+                  >
+                    {onboardingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Finalizar Configuração e Entrar'}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setNewTxValue('0');
+                      await handleOnboardingFinish();
+                    }}
+                    disabled={onboardingLoading}
+                    className="w-full text-slate-400 font-bold py-2 mt-2 hover:text-slate-600 text-xs transition-colors"
+                  >
+                    Ignorar lançamento e salvar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
       
       <main className="flex-1 flex flex-col overflow-hidden relative">
         <header className="py-2.5 bg-white border-b border-gray-200 flex flex-wrap items-center justify-between px-6 flex-shrink-0 z-10 gap-3 shadow-sm">
           <div className="flex items-center gap-4">
+              {/* Botão Hambúrguer Mobile/Tablet */}
+              <button 
+                onClick={() => setIsSidebarOpen(true)}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 lg:hidden focus:outline-none transition-colors"
+                title="Abrir menu"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+
               <h1 className="text-lg font-black text-slate-800 whitespace-nowrap tracking-tight">
                   {activeTab === 'dashboard' && 'Dashboard'}
                   {activeTab === 'reports' && 'Relatórios'}
@@ -506,6 +1006,33 @@ const App: FC = () => {
                   {activeTab === 'settings' && 'Ajustes'}
                   {activeTab === 'manual' && 'Ajuda'}
               </h1>
+
+              {organizations.length > 0 && (
+                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 hover:bg-slate-100 transition-colors shadow-sm">
+                  <Building2 className="w-3.5 h-3.5 text-blue-500" />
+                  <select
+                    value={activeOrg?.id || ''}
+                    onChange={(e) => {
+                      const newOrgId = e.target.value;
+                      const o = organizations.find(org => org.id === newOrgId);
+                      if (o) {
+                        setActiveOrg(o);
+                        financeService.setActiveOrganizationId(o.id);
+                        localStorage.setItem('fincontrol_active_org_id', o.id);
+                        // Limpa caches de registros e saldos e recarrega tudo
+                        loadRegistries(true).then(() => {
+                          loadTransactions();
+                        });
+                      }
+                    }}
+                    className="bg-transparent border-none text-xs font-bold text-slate-700 outline-none cursor-pointer pr-1"
+                  >
+                    {organizations.map(org => (
+                      <option key={org.id} value={org.id}>{org.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="flex items-center gap-2">
                 {user && (
@@ -531,9 +1058,10 @@ const App: FC = () => {
               </div>
           </div>
           
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
+            {/* Filtros em Desktop (Inalterados, ocultos em mobile) */}
             {['dashboard', 'cashflow', 'expenses-analysis', 'payables', 'bank-transactions', 'brokerage-notes', 'investments'].includes(activeTab) && activeTab !== 'reports' && (
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="hidden md:flex flex-wrap items-center gap-2">
                     {activeTab !== 'investments' && (
                       <div className="flex items-center gap-1 bg-white border border-gray-300 rounded-lg px-2 py-1.5 shadow-sm h-[34px] group hover:border-blue-300 transition-colors">
                           <Calendar className="w-3 h-3 text-gray-400 group-hover:text-blue-500" />
@@ -624,10 +1152,65 @@ const App: FC = () => {
                 </div>
             )}
 
+            {/* Controle Compacto de Filtros em Mobile/Tablet (Visível apenas em telas menores) */}
+            {['dashboard', 'cashflow', 'expenses-analysis', 'payables', 'bank-transactions', 'brokerage-notes', 'investments'].includes(activeTab) && activeTab !== 'reports' && (
+                <div className="flex md:hidden items-center gap-1.5">
+                    <button
+                      onClick={() => setIsHeaderFiltersOpen(!isHeaderFiltersOpen)}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center gap-1.5 h-[34px] ${
+                        isHeaderFiltersOpen
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200'
+                          : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                      <span>Filtros</span>
+                      {activeFiltersCount > 0 && (
+                        <span className={`inline-flex items-center justify-center w-4 h-4 text-[9px] font-black rounded-full ${
+                          isHeaderFiltersOpen ? 'bg-white text-blue-600' : 'bg-blue-600 text-white'
+                        }`}>
+                          {activeFiltersCount}
+                        </span>
+                      )}
+                    </button>
+
+                    {activeTab === 'investments' && (
+                      <div className="flex items-center gap-1">
+                        <button 
+                          onClick={() => manualAdjustFn.current?.()} 
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1.5 rounded-lg text-[10px] font-bold h-[34px]"
+                          title="Ajuste Manual"
+                        >
+                          <Plus className="w-3" />
+                        </button>
+                        <button 
+                          onClick={() => accrualHistoryFn.current?.()} 
+                          className="p-2 bg-slate-50 text-slate-500 rounded-lg border border-gray-200 h-[34px]"
+                          title="Histórico de Ajustes"
+                        >
+                          <HistoryIcon className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
+                    <button onClick={() => loadTransactions()} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg border border-gray-200 h-[34px]" title="Sincronizar">
+                      <RefreshCcw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-blue-500' : ''}`} />
+                    </button>
+
+                    <button 
+                      onClick={() => financeService.signOut()}
+                      className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg border border-gray-200 h-[34px]"
+                      title="Sair"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+            )}
+
             {activeTab === 'registries' && (
                 <div className="flex items-center gap-2">
                     <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-lg px-3 py-1.5 shadow-sm h-[38px] group hover:border-blue-400 transition-all">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-slate-200 pr-3 mr-1">Selecione sua carteira</span>
+                        <span className="hidden sm:inline text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-slate-200 pr-3 mr-1">Selecione sua carteira</span>
                         <select 
                           value={selectedWalletId} 
                           onChange={(e) => setSelectedWalletId(e.target.value)}
@@ -647,22 +1230,119 @@ const App: FC = () => {
             )}
 
             {!['registries', 'settings', 'manual'].includes(activeTab) && (
-              <div className="flex gap-2">
+              <div className="flex gap-1.5 sm:gap-2">
                 {(activeTab === 'investments' || activeTab === 'bank-transactions' || activeTab === 'brokerage-notes') && (
                   <button 
                     onClick={() => setIsImportOpen(true)} 
-                    className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors h-[38px] shadow-sm"
+                    className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors h-[38px] shadow-sm"
                   >
-                    <FileUp className="w-4 h-4 text-blue-600" /> <span>Incluir nota</span>
+                    <FileUp className="w-4 h-4 text-blue-600" /> <span className="hidden sm:inline">Incluir nota</span>
                   </button>
                 )}
-                <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
-                    <Plus className="w-4 h-4" /> <span>Lançar</span>
+                <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
+                    <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Lançar</span>
                 </button>
               </div>
             )}
           </div>
         </header>
+
+        {/* Painel colapsável de filtros no Mobile (Etapa 4) */}
+        {['dashboard', 'cashflow', 'expenses-analysis', 'payables', 'bank-transactions', 'brokerage-notes', 'investments'].includes(activeTab) && activeTab !== 'reports' && isHeaderFiltersOpen && (
+          <div className="md:hidden bg-white border-b border-gray-200 px-6 py-4 space-y-4 animate-fade-in flex-shrink-0 shadow-inner z-10 transition-all">
+            <div className="grid grid-cols-2 gap-3">
+              {activeTab !== 'investments' && (
+                <div className="col-span-2 space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Período de Análise</label>
+                  <div className="flex items-center gap-2 bg-slate-50 border border-gray-300 rounded-lg px-3 py-2 group hover:border-blue-300 focus-within:border-blue-500 transition-colors h-11">
+                    <Calendar className="w-4 h-4 text-gray-400 group-hover:text-blue-500 flex-shrink-0" />
+                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="bg-transparent border-none text-xs outline-none font-bold text-slate-800 w-full" title="Início" />
+                    <span className="text-gray-300 font-bold">-</span>
+                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="bg-transparent border-none text-xs outline-none font-bold text-slate-800 w-full" title="Fim" />
+                  </div>
+                </div>
+              )}
+
+              {activeTab !== 'investments' && (
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Status</label>
+                  <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)} className="w-full bg-slate-50 border border-gray-300 rounded-lg px-3 text-xs font-bold text-slate-800 h-11 focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                    <option value="ALL">Status (Todos)</option>
+                    <option value="PAID">Pagas</option>
+                    <option value="PENDING">Pendentes</option>
+                  </select>
+                </div>
+              )}
+
+              <div className={activeTab === 'investments' ? "col-span-1 space-y-1" : "space-y-1"}>
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Banco</label>
+                <select 
+                  value={activeTab === 'investments' ? performanceBankId : selectedBankId} 
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (activeTab === 'investments') {
+                      setPerformanceBankId(val);
+                    } else {
+                      setSelectedBankId(val);
+                    }
+                  }} 
+                  className="w-full bg-slate-50 border border-gray-300 rounded-lg px-3 text-xs font-bold text-slate-800 h-11 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                >
+                  <option value={activeTab === 'investments' ? 'ALL' : ''}>{activeTab === 'investments' ? 'Todos Bancos' : 'Todos Bancos'}</option>
+                  {registries.banks
+                    .filter(b => b.active !== false || b.id === (activeTab === 'investments' ? performanceBankId : selectedBankId))
+                    .map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                </select>
+              </div>
+
+              <div className={activeTab === 'investments' ? "col-span-1 space-y-1" : "col-span-2 space-y-1"}>
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Carteira</label>
+                <select 
+                  value={activeTab === 'investments' ? performanceWalletId : selectedWalletId} 
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (activeTab === 'investments') {
+                      setPerformanceWalletId(val);
+                    } else {
+                      setSelectedWalletId(val);
+                    }
+                  }} 
+                  className="w-full bg-slate-50 border border-gray-300 rounded-lg px-3 text-xs font-bold text-slate-800 h-11 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                >
+                  <option value={activeTab === 'investments' ? 'ALL' : ''}>{activeTab === 'investments' ? 'Todas Carteiras' : 'Todas Carteiras'}</option>
+                  {registries.wallets
+                    .filter(w => w.active !== false || w.id === (activeTab === 'investments' ? performanceWalletId : selectedWalletId))
+                    .map(w => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                </select>
+              </div>
+            </div>
+            
+            {activeTab === 'investments' && (
+              <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                <button 
+                  type="button"
+                  onClick={() => excelExportFn.current?.()} 
+                  className="flex-1 h-10 px-3 bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-all active:bg-emerald-100"
+                >
+                  <FileUp className="w-4 h-4" />
+                  <span>Excel</span>
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => pdfExportFn.current?.()} 
+                  className="flex-1 h-10 px-3 bg-red-50 text-red-700 border border-red-200 font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-all active:bg-red-100"
+                >
+                  <FileUp className="w-4 h-4" />
+                  <span>PDF</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex-1 flex flex-col overflow-hidden relative">
           {isOffline && (
@@ -838,11 +1518,11 @@ const App: FC = () => {
                         title={registryTabs.find(t => t.id === activeRegistryTab)?.label || ''} 
                         items={registries[activeRegistryTab as keyof typeof registries]} 
                         // @ts-ignore
-                        onAdd={(name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id:'', name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(false, selectedWalletId))}
-                        onDelete={(id) => financeService.deleteRegistryItem(activeRegistryTab, id).then(() => loadRegistries(false, selectedWalletId))}
+                        onAdd={(name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id:'', name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(true, selectedWalletId))}
+                        onDelete={(id) => financeService.deleteRegistryItem(activeRegistryTab, id).then(() => loadRegistries(true, selectedWalletId))}
                         // @ts-ignore
-                        onEdit={(id, name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id, name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(false, selectedWalletId))}
-                        onToggleActive={(id, active) => financeService.toggleRegistryItemActive(activeRegistryTab, id, active).then(() => loadRegistries(false, selectedWalletId))}
+                        onEdit={(id, name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id, name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(true, selectedWalletId))}
+                        onToggleActive={(id, active) => financeService.toggleRegistryItemActive(activeRegistryTab, id, active).then(() => loadRegistries(true, selectedWalletId))}
                         onImport={async (data) => {
                             try {
                                 const newItems = [];
@@ -877,7 +1557,7 @@ const App: FC = () => {
                                     const newItem = await financeService.saveRegistryItem(activeRegistryTab, { id: idToUse, name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra });
                                     newItems.push(newItem);
                                 }
-                                await loadRegistries(false, selectedWalletId);
+                                await loadRegistries(true, selectedWalletId);
                                 showAlert('Importação Concluída', `${newItems.length} itens processados com sucesso.`);
                             } catch (e: any) {
                                 showAlert('Erro na Importação', e);
@@ -885,7 +1565,7 @@ const App: FC = () => {
                         }}
                         onDeduplicate={async (onProgress) => {
                             const res = await financeService.deduplicateRegistry(activeRegistryTab, onProgress);
-                            await loadRegistries(false, selectedWalletId);
+                            await loadRegistries(true, selectedWalletId);
                             await loadTransactions();
                             return res;
                         }}
@@ -895,12 +1575,12 @@ const App: FC = () => {
                         onRemoveIgnored={(pairId) => financeService.removeIgnoredUnification(activeRegistryTab, pairId)}
                         onMerge={async (masterId, duplicateIds) => {
                             await financeService.mergeItems(activeRegistryTab, masterId, duplicateIds);
-                            await loadRegistries(false, selectedWalletId);
+                            await loadRegistries(true, selectedWalletId);
                             await loadTransactions();
                         }}
                         onAutoFillTickers={activeRegistryTab === 'participants' ? async () => {
                             const count = await financeService.autoFillTickers();
-                            await loadRegistries(false, selectedWalletId);
+                            await loadRegistries(true, selectedWalletId);
                             return count;
                         } : undefined}
                         foreignItems={activeRegistryTab === 'wallets' ? registries.banks : undefined}

@@ -18,7 +18,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig, onSave
   const [key, setKey] = useState('');
   const [status, setStatus] = useState<'IDLE' | 'TESTING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [errorMessage, setErrorMessage] = useState('');
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [tableCheck, setTableCheck] = useState<{checked: boolean, exists: boolean, details: string}>({checked: false, exists: false, details: ''});
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -46,17 +45,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig, onSave
   };
 
   useEffect(() => {
-    const savedUrl = localStorage.getItem('supabase_url');
-    const savedKey = localStorage.getItem('supabase_key');
-    if (savedUrl && savedKey) {
-        setUrl(savedUrl);
-        setKey(savedKey);
-        setStatus('SUCCESS');
-    } else if (DEFAULT_SUPABASE_CONFIG.url && DEFAULT_SUPABASE_CONFIG.key) {
-        // Use default config if nothing is saved
+    // Purga chaves do localStorage para manter conformidade com o Supabase Fixo
+    localStorage.removeItem('supabase_url');
+    localStorage.removeItem('supabase_key');
+    
+    if (DEFAULT_SUPABASE_CONFIG.url && DEFAULT_SUPABASE_CONFIG.key) {
         setUrl(DEFAULT_SUPABASE_CONFIG.url);
         setKey(DEFAULT_SUPABASE_CONFIG.key);
         setStatus('SUCCESS');
+    } else {
+        setStatus('IDLE');
     }
   }, []);
 
@@ -80,55 +78,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSaveConfig, onSave
       } catch (e: any) {
           setTableCheck({checked: true, exists: false, details: `Erro na verificação: ${e.message}`});
       }
-  };
-
-  const handleConnect = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setStatus('TESTING');
-    setErrorMessage('');
-    const cleanUrl = url.trim();
-    const cleanKey = key.trim();
-    try {
-      if (!cleanUrl || !cleanKey) throw new Error("URL e Chave são obrigatórios.");
-      const client = createClient(cleanUrl, cleanKey);
-      
-      const { error } = await client.from('banks').select('id').limit(1);
-      
-      // Ignora erro de permissão ou tabela inexistente durante conexão inicial, 
-      // pois o usuário pode ainda não ter rodado o SQL.
-      if (error && (error.code === '42P01' || error.code === '42501')) {
-          localStorage.setItem('supabase_url', cleanUrl);
-          localStorage.setItem('supabase_key', cleanKey);
-          setStatus('SUCCESS');
-          onSaveConfig(cleanUrl, cleanKey);
-          return;
-      }
-      
-      if (error && error.message.includes('Failed to fetch')) throw error;
-      
-      localStorage.setItem('supabase_url', cleanUrl);
-      localStorage.setItem('supabase_key', cleanKey);
-      setStatus('SUCCESS');
-      onSaveConfig(cleanUrl, cleanKey);
-    } catch (err: any) {
-      setStatus('ERROR');
-      setErrorMessage(err.message || "Falha ao conectar.");
-    }
-  };
-
-  const confirmDisconnect = () => {
-    localStorage.removeItem('supabase_url');
-    localStorage.removeItem('supabase_key');
-    // Don't clear fields if they match default, but reset status
-    if (url === DEFAULT_SUPABASE_CONFIG.url) {
-        setStatus('IDLE');
-    } else {
-        setUrl('');
-        setKey('');
-        setStatus('IDLE');
-    }
-    setTableCheck({checked: false, exists: false, details: ''});
-    onSaveConfig('', '');
   };
 
   const sqlFullSchema = `-- 1. Configuração de Schema e Extensões
@@ -389,46 +338,36 @@ create policy "Allow all operations" on public.asset_tickers for all using (true
               </div>
               <div>
                 <h2 className="text-xl font-bold text-slate-800 tracking-tight">Conexão com Banco de Dados</h2>
-                <p className="text-sm text-slate-500">Conecte sua conta do Supabase para salvar os dados na nuvem.</p>
+                <p className="text-sm text-slate-500">O banco de dados é configurado centralmente no servidor.</p>
               </div>
           </div>
         </div>
 
         <div className="p-8">
-          <form onSubmit={handleConnect} className="space-y-8">
-            <div className="grid grid-cols-1 gap-6">
+          <div className="space-y-6">
+            <div className="p-5 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-start gap-4 animate-fade-in">
+              <div className="p-2 bg-emerald-500 rounded-lg text-white">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-emerald-900 leading-tight">Conexão Estática Ativa</h4>
+                <p className="text-xs text-emerald-800/80 leading-relaxed mt-1.5">
+                  Este aplicativo está integrado diretamente com o banco de dados Supabase da organização, configurado através de variáveis de ambiente seguras. A edição manual de credenciais foi removida para blindar a segurança e integridade do sistema.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                     <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Supabase URL</label>
-                    <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://vosso-projeto.supabase.co" className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all bg-slate-50/50" />
+                    <input type="text" value={url} readOnly={true} className="w-full px-5 py-3 border border-slate-200 rounded-xl bg-slate-50 text-slate-400 outline-none select-all font-medium cursor-not-allowed" />
                 </div>
                 <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Anon Key (API Key)</label>
-                    <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="vossa-chave-api-secreta" className="w-full px-5 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all bg-slate-50/50" />
+                     <label className="text-xs font-black text-slate-500 uppercase tracking-widest">Token de Acesso (Anon Key)</label>
+                     <input type="password" value="****************************************" readOnly={true} className="w-full px-5 py-3 border border-slate-200 rounded-xl bg-slate-50 text-slate-400 outline-none cursor-not-allowed" />
                 </div>
             </div>
-            
-            {status === 'ERROR' && (
-                <div className="text-red-600 text-sm font-medium bg-red-50 p-4 rounded-xl flex items-start gap-3 border border-red-100 animate-fade-in">
-                    <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                    <div>
-                        <p className="font-bold">Falha Crítica</p>
-                        <p className="opacity-80">{errorMessage}</p>
-                    </div>
-                </div>
-            )}
-            
-            <div className="flex items-center gap-4">
-                <button type="submit" className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 flex items-center gap-2 transform active:scale-95">
-                    {status === 'TESTING' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                    {status === 'SUCCESS' ? 'Atualizar Conexão' : 'Conectar Agora'}
-                </button>
-                {status === 'SUCCESS' && (
-                    <button type="button" onClick={() => setIsConfirmOpen(true)} className="text-slate-400 text-sm font-bold hover:text-red-600 flex items-center gap-2 transition-colors px-4 py-2 rounded-lg hover:bg-red-50">
-                        <Unplug className="w-5 h-5" /> Desconectar
-                    </button>
-                )}
-            </div>
-          </form>
+          </div>
         </div>
       </div>
 
@@ -527,8 +466,6 @@ create policy "Allow all operations" on public.asset_tickers for all using (true
             </div>
           </div>
       )}
-      
-      <ConfirmModal isOpen={isConfirmOpen} onClose={() => setIsConfirmOpen(false)} onConfirm={confirmDisconnect} title="Desconectar Supabase?" message="Você voltará ao modo offline e usará o banco de dados do seu navegador. Seus dados no Supabase continuarão seguros lá." isDestructive={true} />
     </div>
   );
 };

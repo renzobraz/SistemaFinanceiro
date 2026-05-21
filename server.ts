@@ -7,8 +7,82 @@ import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import { rateLimit } from "express-rate-limit";
+import crypto from "crypto";
+import helmet from "helmet";
 
 const yahoo = new YahooFinance();
+
+// =========================================================================
+// I5 — FUNÇÃO DE MASCARAMENTO DE E-MAIL PARA LGPD
+// =========================================================================
+function maskEmail(email: string): string {
+  if (!email || typeof email !== "string") return "";
+  const parts = email.split("@");
+  if (parts.length !== 2) return email;
+  const [local, domain] = parts;
+  if (!local) return email;
+  return `${local[0]}***@${domain}`;
+}
+
+// =========================================================================
+// M4 — FUNÇÕES DE CRIPTOGRAFIA PARA SENHA SMTP (PROTEÇÃO DE CREDENCIAIS)
+// =========================================================================
+const encryptionAlgorithm = "aes-256-gcm";
+
+function encrypt(text: string, keyString: string): string {
+  let key = Buffer.from(keyString, "hex");
+  if (key.length !== 32) {
+    key = Buffer.from(keyString, "base64");
+  }
+  if (key.length !== 32) {
+    key = Buffer.from(keyString, "utf-8");
+  }
+  if (key.length !== 32) {
+    throw new Error("A chave SMTP_ENCRYPTION_KEY deve ter exatamente 32 bytes (64 caracteres hex ou 32 caracteres brutos)");
+  }
+
+  const iv = crypto.randomBytes(12); // GCM usa IV de 12 bytes
+  const cipher = crypto.createCipheriv(encryptionAlgorithm, key, iv);
+  
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  const tag = cipher.getAuthTag().toString("hex");
+  
+  // Retorna com formato iv:tag:conteudo para fácil identificação e parsing posterior
+  return `${iv.toString("hex")}:${tag}:${encrypted}`;
+}
+
+function decrypt(encryptedText: string, keyString: string): string {
+  const parts = encryptedText.split(":");
+  if (parts.length !== 3) {
+    // Se o formato não for iv:tag:conteudo, consideramos compatibilidade reversa (texto puro)
+    return encryptedText;
+  }
+
+  let key = Buffer.from(keyString, "hex");
+  if (key.length !== 32) {
+    key = Buffer.from(keyString, "base64");
+  }
+  if (key.length !== 32) {
+    key = Buffer.from(keyString, "utf-8");
+  }
+  if (key.length !== 32) {
+    throw new Error("A chave SMTP_ENCRYPTION_KEY deve ter exatamente 32 bytes (64 caracteres hex ou 32 caracteres brutos)");
+  }
+
+  const [ivHex, tagHex, encryptedHex] = parts;
+  const iv = Buffer.from(ivHex, "hex");
+  const tag = Buffer.from(tagHex, "hex");
+  const encrypted = Buffer.from(encryptedHex, "hex");
+
+  const decipher = crypto.createDecipheriv(encryptionAlgorithm, key, iv);
+  decipher.setAuthTag(tag);
+  
+  let decrypted = decipher.update(encrypted, undefined as any, "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
 
 // Configuração simplificada para reduzir logs de validação
 try {
@@ -121,6 +195,42 @@ async function startServer() {
   const PORT = 3000;
   const app = express();
 
+  // Helmet para cabeçalhos de segurança HTTP (I4)
+  if (process.env.NODE_ENV === "production") {
+    app.use(helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          imgSrc: ["'self'", "data:", "https://*", "http://*"],
+          connectSrc: ["'self'", "https://api.exchangerate-api.com", "https://*", "wss://*"],
+          frameAncestors: ["'self'"]
+        }
+      },
+      frameguard: {
+        action: "sameorigin"
+      }
+    }));
+  } else {
+    // Flexibilização em desenvolvimento para permitir que o preview do AI Studio funcione dentro do iframe
+    app.use(helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          imgSrc: ["'self'", "data:", "https://*", "http://*"],
+          connectSrc: ["'self'", "https://api.exchangerate-api.com", "https://*", "wss://*", "http://localhost:*", "ws://localhost:*"],
+          frameAncestors: ["'self'", "https://*.google.com", "https://*.googleusercontent.com", "https://*.run.app"]
+        }
+      },
+      frameguard: false
+    }));
+  }
+
   // Inicialização do Gemini no Servidor
   const keysToTry = [
     process.env.GEMINI_API_KEY,
@@ -212,6 +322,30 @@ async function startServer() {
 
   app.use(express.json());
 
+  // =========================================================================
+  // M1 — CONFIGURAÇÃO DE RATE LIMITING (LIMITADORES DE TAXA POR IP)
+  // =========================================================================
+  
+  // Limitação para o envio de convites: máximo de 10 convites a cada 15 minutos por IP.
+  // Evita abusos de envio massivo de e-mails para terceiros (spam).
+  const inviteRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // Janela de 15 minutos
+    max: 10, // Limite de 10 requisições
+    message: { error: "Muitos convites foram enviados recentemente a partir deste IP. Por segurança, aguarde alguns minutos antes de tentar novamente." },
+    standardHeaders: true, // Retorna os cabeçalhos padrão de limite RateLimit-*
+    legacyHeaders: false, // Desabilita os cabeçalhos legados desnecessários
+  });
+
+  // Limitação para teste de e-mail SMTP: máximo de 5 testes a cada 10 minutos por IP.
+  // Impede que as configurações SMTP de teste sejam bombardeadas.
+  const emailTestRateLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000, // Janela de 10 minutos
+    max: 5, // Limite de 5 testes
+    message: { error: "Muitos testes de e-mail foram efetuados recentemente a partir deste IP. Por segurança, aguarde alguns minutos antes de tentar novamente." },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   // MIDDLEWARE DE AUTENTICAÇÃO VIA JWT DO SUPABASE (C2)
   const requireAuth = async (req: any, res: any, next: any) => {
     try {
@@ -252,13 +386,30 @@ async function startServer() {
     }
   };
 
-  // API para enviar convite por e-mail - Protegida com requireAuth (C2)
-  app.post("/api/send-invite", requireAuth, async (req, res) => {
+  // API para enviar convite por e-mail - Protegida com requireAuth (C2) e inviteRateLimiter (M1)
+  app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req, res) => {
     try {
       const { email, invitedBy, ownerId, role } = req.body;
       
-      if (!email) {
-        return res.status(400).json({ error: "E-mail é obrigatório" });
+      // =========================================================================
+      // M2 — VALIDAÇÃO RIGOROSA DE ENTRADA NO SERVIDOR (PREVENÇÃO DE VULNERABILIDADES)
+      // =========================================================================
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (!email || typeof email !== "string" || !emailRegex.test(email.toLowerCase().trim())) {
+        return res.status(400).json({ error: "E-mail de destino é inválido ou está ausente." });
+      }
+
+      if (!role || typeof role !== "string" || !["viewer", "editor", "admin"].includes(role)) {
+        return res.status(400).json({ error: "Nível de acesso (role) inválido. Permitidos: viewer, editor ou admin." });
+      }
+
+      if (!invitedBy || typeof invitedBy !== "string" || !emailRegex.test(invitedBy.toLowerCase().trim())) {
+        return res.status(400).json({ error: "E-mail do remetente convidador (invitedBy) é inválido ou está ausente." });
+      }
+
+      if (!ownerId || typeof ownerId !== "string" || ownerId.trim().length === 0) {
+        return res.status(400).json({ error: "O ID do proprietário (ownerId) é obrigatório e deve ser uma string válida." });
       }
 
       // BUSCA REMOÇÃO DE FALLBACKS HARDCODED (C1)
@@ -283,6 +434,17 @@ async function startServer() {
         if (!error && data) {
           smtpConfig = data;
           console.log(`[SMTP] Usando configurações personalizadas encontradas para o usuário ${ownerId}`);
+          
+          // Decriptografa a senha SMTP usando a chave de segurança configurada
+          const encryptionKey = process.env.SMTP_ENCRYPTION_KEY;
+          if (encryptionKey && smtpConfig.pass) {
+            try {
+              smtpConfig.pass = decrypt(smtpConfig.pass, encryptionKey);
+              console.log("[SMTP] Senha de e-mail personalizada decriptografada com sucesso.");
+            } catch (decError: any) {
+              console.error("[SMTP] Erro ao decriptografar a senha do SMTP para envio de e-mail:", decError.message);
+            }
+          }
         }
       }
 
@@ -301,7 +463,7 @@ async function startServer() {
       
       const mailOptions = {
         from: smtpConfig ? `"${smtpConfig.from_name}" <${smtpConfig.from_email}>` : `"FinControl" <no-reply@fincontrol.com>`,
-        to: email,
+        to: email.toLowerCase().trim(),
         subject: `Você foi convidado para a equipe do FinControl`,
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
@@ -336,9 +498,9 @@ async function startServer() {
         `,
       };
 
-      console.log(`[SMTP] Tentando enviar e-mail para ${email}...`);
+      console.log(`[SMTP] Tentando enviar e-mail para ${maskEmail(email)}...`);
       await transporter.sendMail(mailOptions);
-      console.log(`[SMTP] E-mail enviado com sucesso para ${email}`);
+      console.log(`[SMTP] E-mail enviado com sucesso para ${maskEmail(email)}`);
       res.json({ success: true });
     } catch (error: any) {
       console.error("[SMTP] Erro ao enviar e-mail:", error);
@@ -346,30 +508,66 @@ async function startServer() {
     }
   });
 
-  // API para testar SMTP - Protegida com requireAuth (C2)
-  app.post("/api/test-email", requireAuth, async (req, res) => {
+  // API para testar SMTP - Protegida com requireAuth (C2) e emailTestRateLimiter (M1)
+  app.post("/api/test-email", requireAuth, emailTestRateLimiter, async (req, res) => {
     try {
       const { settings, testEmail } = req.body;
       
-      if (!testEmail) {
-        return res.status(400).json({ error: "E-mail de teste é obrigatório" });
+      // =========================================================================
+      // M2 — VALIDAÇÃO RIGOROSA DE ENTRADA NO SERVIDOR (PREVENÇÃO DE VULNERABILIDADES)
+      // =========================================================================
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (!testEmail || typeof testEmail !== "string" || !emailRegex.test(testEmail.toLowerCase().trim())) {
+        return res.status(400).json({ error: "E-mail de teste inválido ou ausente." });
+      }
+
+      if (!settings || typeof settings !== "object") {
+        return res.status(400).json({ error: "Configurações SMTP inválidas ou ausentes." });
+      }
+
+      const { host, port, user, pass, from_name, from_email } = settings;
+
+      if (!host || typeof host !== "string" || host.trim().length === 0) {
+        return res.status(400).json({ error: "O host do servidor SMTP é obrigatório." });
+      }
+
+      const parsedPort = parseInt(port);
+      if (isNaN(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+        return res.status(400).json({ error: "A porta do SMTP deve ser um número inteiro válido (ex: 465, 587)." });
+      }
+
+      if (!user || typeof user !== "string" || user.trim().length === 0) {
+        return res.status(400).json({ error: "O usuário do SMTP é obrigatório." });
+      }
+
+      if (!pass || typeof pass !== "string" || pass.trim().length === 0) {
+        return res.status(400).json({ error: "A senha do SMTP é obrigatória." });
+      }
+
+      if (!from_name || typeof from_name !== "string" || from_name.trim().length === 0) {
+        return res.status(400).json({ error: "O nome do remetente é obrigatório." });
+      }
+
+      if (!from_email || typeof from_email !== "string" || !emailRegex.test(from_email.toLowerCase().trim())) {
+        return res.status(400).json({ error: "O e-mail do remetente é inválido ou ausente." });
       }
 
       const transporter = nodemailer.createTransport({
-        host: settings.host,
-        port: parseInt(settings.port),
-        secure: String(settings.port) === "465",
+        host,
+        port: parsedPort,
+        secure: parsedPort === 465,
         auth: {
-          user: settings.user,
-          pass: settings.pass,
+          user,
+          pass,
         },
         connectionTimeout: 10000,
         greetingTimeout: 10000,
       });
 
       const mailOptions = {
-        from: `"${settings.from_name}" <${settings.from_email}>`,
-        to: testEmail,
+        from: `"${from_name}" <${from_email}>`,
+        to: testEmail.toLowerCase().trim(),
         subject: "FinControl - Teste de Configuração SMTP",
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 2px solid #2563eb; border-radius: 20px; background-color: #ffffff;">
@@ -377,20 +575,139 @@ async function startServer() {
             <p style="font-size: 16px; color: #1e293b;">Esta é uma mensagem automática para confirmar que suas configurações de SMTP no <strong>FinControl</strong> estão corretas.</p>
             <div style="background-color: #f8fafc; padding: 15px; border-radius: 10px; margin: 20px 0; border: 1px solid #e2e8f0;">
               <p style="margin: 0; font-size: 14px; color: #64748b;"><strong>Horário do teste:</strong> ${new Date().toLocaleString('pt-BR')}</p>
-              <p style="margin: 5px 0 0 0; font-size: 14px; color: #64748b;"><strong>Servidor:</strong> ${settings.host}:${settings.port}</p>
+              <p style="margin: 5px 0 0 0; font-size: 14px; color: #64748b;"><strong>Servidor:</strong> ${host}:${parsedPort}</p>
             </div>
             <p style="font-size: 14px; color: #94a3b8;">Agora você pode convidar sua equipe com tranquilidade.</p>
           </div>
         `,
       };
 
-      console.log(`[SMTP-TEST] Tentando enviar e-mail de teste para ${testEmail}...`);
+      console.log(`[SMTP-TEST] Tentando enviar e-mail de teste para ${maskEmail(testEmail)}...`);
       await transporter.sendMail(mailOptions);
       console.log(`[SMTP-TEST] E-mail de teste enviado com sucesso!`);
       res.json({ success: true });
     } catch (error: any) {
       console.error("[SMTP-TEST] Erro no teste:", error);
       res.status(500).json({ error: "Falha no teste de e-mail", details: error.message });
+    }
+  });
+
+  // API para obter configurações de SMTP próprias decriptografadas (M4)
+  app.get("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
+    try {
+      const userId = req.user.id;
+      const supabaseUrl = process.env.VITE_SUPABASE_URL;
+      const supabaseKey = process.env.VITE_SUPABASE_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        return res.status(500).json({ error: "Configuração do banco de dados ausente no servidor" });
+      }
+
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      
+      const { data, error } = await supabase
+        .from('smtp_settings')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+        // Se a senha estiver salva e criptografada, decriptografa para o usuário ver/ajustar
+        const encryptionKey = process.env.SMTP_ENCRYPTION_KEY;
+        if (encryptionKey && data.pass) {
+          try {
+            data.pass = decrypt(data.pass, encryptionKey);
+          } catch (decError: any) {
+            console.error("[SMTP-GET] Falha ao decriptografar a senha:", decError.message);
+          }
+        }
+        return res.json(data);
+      }
+
+      return res.json(null);
+    } catch (err: any) {
+      console.error("[SMTP-GET] Erro ao obter configurações de SMTP:", err);
+      return res.status(500).json({ error: "Falha ao obter configurações de SMTP", details: err.message });
+    }
+  });
+
+  // API para salvar/upsert configurações de SMTP próprias criptografadas (M4)
+  app.post("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
+    try {
+      const userId = req.user.id;
+      const settings = req.body;
+
+      if (!settings || typeof settings !== "object") {
+        return res.status(400).json({ error: "Dados de entrada SMTP inválidos." });
+      }
+
+      const { host, port, user, pass, from_name, from_email } = settings;
+
+      // Validação rápida de campos obrigatórios
+      if (!host || !port || !user || !pass || !from_name || !from_email) {
+        return res.status(400).json({ error: "Todos os campos do SMTP são obrigatórios para salvamento." });
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(from_email.toLowerCase().trim())) {
+        return res.status(400).json({ error: "E-mail do remetente é inválido." });
+      }
+
+      const parsedPort = parseInt(port);
+      if (isNaN(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+        return res.status(400).json({ error: "Porta SMTP inválida." });
+      }
+
+      // Criptografar a senha antes de salvar se a chave estiver configurada
+      const encryptionKey = process.env.SMTP_ENCRYPTION_KEY;
+      if (!encryptionKey) {
+        return res.status(500).json({ error: "Por segurança, não é possível salvar as configurações de e-mail pois a chave SMTP_ENCRYPTION_KEY não está configurada no servidor." });
+      }
+
+      let encryptedPass = pass;
+      try {
+        encryptedPass = encrypt(pass, encryptionKey);
+      } catch (encError: any) {
+        console.error("[SMTP-SAVE] Erro na criptografia da senha:", encError.message);
+        return res.status(500).json({ error: "Falha ao criptografar dados de segurança.", details: encError.message });
+      }
+
+      const supabaseUrl = process.env.VITE_SUPABASE_URL;
+      const supabaseKey = process.env.VITE_SUPABASE_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        return res.status(500).json({ error: "Configuração do banco de dados ausente no servidor" });
+      }
+
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const payload = {
+        host,
+        port: parsedPort,
+        user,
+        pass: encryptedPass,
+        from_name,
+        from_email: from_email.toLowerCase().trim(),
+        user_id: userId,
+        updated_at: new Date().toISOString()
+      };
+
+      const { error } = await supabase
+        .from('smtp_settings')
+        .upsert(payload, { onConflict: 'user_id' });
+
+      if (error) {
+        throw error;
+      }
+
+      return res.json({ success: true, message: "Configurações de SMTP salvas e protegidas com sucesso." });
+    } catch (err: any) {
+      console.error("[SMTP-SAVE] Erro ao salvar configurações de SMTP:", err);
+      return res.status(500).json({ error: "Falha ao salvar configurações de SMTP", details: err.message });
     }
   });
 

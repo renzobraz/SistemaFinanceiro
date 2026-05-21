@@ -1,18 +1,43 @@
+// types.ts - Definições de tipos globais do FinControl Pro adaptado para Multi-Tenant
 
 export type TransactionType = 'CREDIT' | 'DEBIT';
 export type TransactionStatus = 'PAID' | 'PENDING';
 
+// Interface das organizações (empresas) do sistema
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string; // Identificador amigável na URL, ex: "empresa-abc"
+  owner_id: string; // ID do criador/dono da organização que referencia auth.users
+  plan: 'free' | 'basic' | 'premium' | string;
+  active: boolean;
+  created_at: string;
+}
+
+// Interface dos membros vinculados a cada organização
+export interface OrganizationMember {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  role: 'owner' | 'admin' | 'editor' | 'viewer';
+  invited_by?: string | null;
+  created_at: string;
+}
+
+// Entidade base com suporte a multi-tenant (organization_id)
 export interface BaseEntity {
   id: string;
   name: string;
   active?: boolean;
   walletId?: string;
+  organization_id?: string; // Isolamento multi-tenant
 }
 
 export interface Bank extends BaseEntity {
   currency: Currency;
   type: WalletType;
 }
+
 export interface Category extends BaseEntity {}
 export interface CostCenter extends BaseEntity {}
 export interface AssetType extends BaseEntity {}
@@ -20,6 +45,7 @@ export interface AssetSector extends BaseEntity {}
 export interface AssetTicker extends BaseEntity {
   ticker: string;
 }
+
 export interface Participant extends BaseEntity {
   category?: string; // Ex: 'Ação', 'FII', 'ETF', 'Cripto'
   sector?: string;   // Ex: 'Tecnologia', 'Financeiro', 'Energia'
@@ -32,6 +58,7 @@ export interface Participant extends BaseEntity {
   sharePercent?: number; // % de participação padrão
   cashSharePercent?: number; // % de participação específica para Caixa
 }
+
 export type Currency = 'BRL' | 'USD' | 'EUR' | 'GBP' | 'JPY' | 'CHF' | 'CAD' | 'AUD' | 'CNY';
 
 export type WalletType = 'CHECKING' | 'INVESTMENT';
@@ -49,6 +76,9 @@ export interface Transaction {
   type: TransactionType;
   status: TransactionStatus;
   
+  // Isolamento multi-tenant
+  organization_id?: string;
+
   // Exchange fields (for transfers between different currencies)
   exchangeRate?: number; // Cotação comercial
   spread?: number;       // Margem do banco (%)
@@ -78,6 +108,7 @@ export interface AssetAccrual {
   value: number;
   description: string;
   createdAt?: string;
+  organization_id?: string; // Isolamento multi-tenant
 }
 
 export type DateRangeOption = 'CURRENT_MONTH' | 'CURRENT_WEEK' | 'LAST_3_DAYS' | 'TODAY' | 'LAST_30_DAYS' | 'PREVIOUS_MONTH' | 'ALL';
@@ -90,6 +121,7 @@ export interface UserPreferences {
   defaultPerformanceBankId?: string;
   defaultPerformanceWalletId?: string;
   defaultTab?: string;
+  organization_id?: string; // Isolamento multi-tenant nas preferências
 }
 
 export interface FinancialSummary {
@@ -107,6 +139,7 @@ export interface UserPermission {
   status: 'pending' | 'active';
   role: 'viewer' | 'editor' | 'admin';
   created_at: string;
+  organization_id?: string; // Isolamento multi-tenant
 }
 
 export interface SmtpSettings {
@@ -118,6 +151,7 @@ export interface SmtpSettings {
   pass: string;
   from_name: string;
   from_email: string;
+  organization_id?: string; // Isolamento multi-tenant
 }
 
 export interface BrokerageTrade {

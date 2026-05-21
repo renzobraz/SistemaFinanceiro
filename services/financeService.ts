@@ -13,7 +13,9 @@ import {
   UserPermission,
   SmtpSettings,
   UserPreferences,
-  AssetAccrual
+  AssetAccrual,
+  Organization,
+  OrganizationMember
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -224,22 +226,32 @@ let lastUrl = '';
 let lastKey = '';
 
 const getSupabase = (): SupabaseClient | null => {
-  const url = localStorage.getItem('supabase_url')?.trim() || DEFAULT_SUPABASE_CONFIG.url;
-  const key = localStorage.getItem('supabase_key')?.trim() || DEFAULT_SUPABASE_CONFIG.key;
+  const url = DEFAULT_SUPABASE_CONFIG.url?.trim();
+  const key = DEFAULT_SUPABASE_CONFIG.key?.trim();
 
   if (!url || !key) return null;
 
-  if (supabaseInstance && url === lastUrl && key === lastKey) {
+  if (supabaseInstance) {
     return supabaseInstance;
   }
 
   try {
     supabaseInstance = createClient(url, key);
-    lastUrl = url;
-    lastKey = key;
     return supabaseInstance;
   } catch (e) {
     console.error("Error creating Supabase client", e);
+    return null;
+  }
+};
+
+const getSupabaseUserId = async (): Promise<string | null> => {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.user?.id || null;
+  } catch (e) {
+    console.warn("Falha ao obter sessão do Supabase:", e);
     return null;
   }
 };
@@ -263,6 +275,29 @@ const formatSupabaseError = (error: any): string => {
     }
 
     return message + code;
+};
+
+const isFallbackError = (e: any): boolean => {
+  if (!e) return true;
+  const msg = String(e.message || e).toLowerCase();
+  const code = String(e.code || '');
+  return (
+    e.name === 'TypeError' ||
+    msg.includes('fetch') ||
+    msg.includes('network') ||
+    msg.includes('permission denied') ||
+    msg.includes('permissão negada') ||
+    msg.includes('refresh token') ||
+    msg.includes('jwt') ||
+    msg.includes('policy') ||
+    code === '42501' ||
+    code === 'PGRST301' ||
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    msg.includes('42501') ||
+    msg.includes('42p01') ||
+    msg.includes('pgrst205')
+  );
 };
 
 const mapTransactionFromDb = (db: any): Transaction => ({
@@ -290,7 +325,7 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   originalCurrency: db.original_currency || undefined
 });
 
-const mapTransactionToDb = (t: Transaction) => {
+const mapTransactionToDb = (t: Transaction, userId?: string | null, orgId?: string | null) => {
   const payload: any = {
     date: t.date,
     description: t.description,
@@ -317,8 +352,10 @@ const mapTransactionToDb = (t: Transaction) => {
   if (t.originalCurrency) payload.original_currency = t.originalCurrency;
 
   // Garantir que o user_id seja enviado se disponível
-  const storedUserId = localStorage.getItem('supabase_user_id');
-  if (storedUserId) payload.user_id = storedUserId;
+  if (userId) payload.user_id = userId;
+  
+  // Injeta a organização se ativa para isolamento de dados
+  if (orgId) payload.organization_id = orgId;
 
   if (t.id && t.id.trim() !== '') {
     payload.id = t.id;
@@ -336,6 +373,95 @@ export interface TransactionFilters {
 }
 
 export const financeService = {
+  activeOrganizationId: null as string | null,
+
+  setActiveOrganizationId(id: string | null): void {
+    this.activeOrganizationId = id;
+    // Invalida caches para forçar a recarga dos dados da nova organização ativa
+    cache.registries = {};
+    cache.balances = {};
+  },
+
+  async getMyOrganizations(): Promise<Organization[]> {
+    const supabase = getSupabase();
+    if (!supabase) return [];
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const user = sessionData?.session?.user;
+      if (!user) return [];
+
+      // Primeiro, buscamos as participações de membros na tabela organization_members de forma segura
+      const { data: memberRows, error: memberError } = await supabase
+        .from('organization_members')
+        .select('organization_id')
+        .eq('user_id', user.id);
+
+      if (memberError) throw memberError;
+      if (!memberRows || memberRows.length === 0) return [];
+
+      const orgIds = memberRows.map(m => m.organization_id);
+
+      // Agora buscamos as organizações correspondentes
+      const { data: orgs, error: orgsError } = await supabase
+        .from('organizations')
+        .select('*')
+        .in('id', orgIds);
+
+      if (orgsError) throw orgsError;
+      return orgs || [];
+    } catch (e) {
+      console.error("Erro ao carregar organizações do usuário:", e);
+      return [];
+    }
+  },
+
+  async createOrganization(name: string): Promise<Organization> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData?.session?.user;
+    if (!user) throw new Error("Usuário não autenticado");
+
+    const slug = name.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)+/g, '');
+
+    const orgId = uuidv4();
+
+    // 1. Cria o registro da organização
+    const { data: org, error: orgError } = await supabase
+      .from('organizations')
+      .insert({
+        id: orgId,
+        name,
+        slug,
+        owner_id: user.id,
+        plan: 'free',
+        active: true
+      })
+      .select()
+      .single();
+
+    if (orgError) throw orgError;
+
+    // 2. Associa o usuário atual como criador/membro 'owner' na organização
+    const { error: memberError } = await supabase
+      .from('organization_members')
+      .insert({
+        id: uuidv4(),
+        organization_id: orgId,
+        user_id: user.id,
+        role: 'owner'
+      });
+
+    if (memberError) {
+      console.error("Erro ao criar membro da organização:", memberError);
+    }
+
+    return org;
+  },
+
   getUserPreferences(): any {
     const saved = localStorage.getItem(KEYS.PREFERENCES);
     if (saved) {
@@ -373,24 +499,30 @@ export const financeService = {
     const supabase = getSupabase();
     if (supabase) {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data } = await supabase.auth.getSession();
+        const session = data?.session;
         if (session?.user) {
-          const { data, error } = await supabase
+          let query = supabase
             .from('user_settings')
             .select('*')
-            .eq('user_id', session.user.id)
-            .maybeSingle();
+            .eq('user_id', session.user.id);
+
+          if (this.activeOrganizationId) {
+            query = query.eq('organization_id', this.activeOrganizationId);
+          }
+
+          const { data: settingsData, error } = await query.maybeSingle();
 
           if (error) throw error;
-          if (data) {
+          if (settingsData) {
             return {
-              defaultDateRange: (data.default_period as any) || defaultPrefs.defaultDateRange,
-              defaultStatus: (data.default_status as any) || defaultPrefs.defaultStatus,
-              defaultBankId: data.default_bank_id || '',
-              defaultWalletId: data.default_wallet_id || '',
-              defaultPerformanceBankId: data.default_performance_bank_id || 'ALL',
-              defaultPerformanceWalletId: data.default_performance_wallet_id || 'ALL',
-              defaultTab: data.default_tab || 'dashboard'
+              defaultDateRange: (settingsData.default_period as any) || defaultPrefs.defaultDateRange,
+              defaultStatus: (settingsData.default_status as any) || defaultPrefs.defaultStatus,
+              defaultBankId: settingsData.default_bank_id || '',
+              defaultWalletId: settingsData.default_wallet_id || '',
+              defaultPerformanceBankId: settingsData.default_performance_bank_id || 'ALL',
+              defaultPerformanceWalletId: settingsData.default_performance_wallet_id || 'ALL',
+              defaultTab: settingsData.default_tab || 'dashboard'
             };
           }
         }
@@ -417,9 +549,10 @@ export const financeService = {
     const supabase = getSupabase();
     if (supabase) {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data } = await supabase.auth.getSession();
+        const session = data?.session;
         if (session?.user) {
-          const payload = {
+          const payload: any = {
             user_id: session.user.id,
             default_period: prefs.defaultDateRange,
             default_status: prefs.defaultStatus,
@@ -430,6 +563,10 @@ export const financeService = {
             default_tab: prefs.defaultTab || 'dashboard',
             updated_at: new Date().toISOString()
           };
+
+          if (this.activeOrganizationId) {
+            payload.organization_id = this.activeOrganizationId;
+          }
 
           const { error } = await supabase
             .from('user_settings')
@@ -503,7 +640,11 @@ export const financeService = {
   async getTransactionsByLinkedId(linkedId: string): Promise<Transaction[]> {
     const supabase = getSupabase();
     if (supabase) {
-      const { data, error } = await supabase.from('transactions').select('*').eq('linked_id', linkedId);
+      let query = supabase.from('transactions').select('*').eq('linked_id', linkedId);
+      if (this.activeOrganizationId) {
+        query = query.eq('organization_id', this.activeOrganizationId);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return (data || []).map(mapTransactionFromDb);
     } else {
@@ -519,7 +660,6 @@ export const financeService = {
     if (password) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      localStorage.setItem('supabase_user_id', data.user?.id || '');
       return data;
     } else {
       // Login via link mágico ou similar se preferir, mas aqui usaremos senha por padrão
@@ -540,11 +680,24 @@ export const financeService = {
     }
   },
 
+  async resetPassword(email: string): Promise<any> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+    
+    // Obter URL de redirecionamento correspondente ao applet (seja dev ou produção)
+    const redirectTo = window.location.origin;
+    
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
+    });
+    if (error) throw error;
+    return data;
+  },
+
   async signOut(): Promise<void> {
     const supabase = getSupabase();
     if (supabase) {
       await supabase.auth.signOut();
-      localStorage.removeItem('supabase_user_id');
       // Limpa caches
       cache.registries = {};
       cache.balances = {};
@@ -555,7 +708,8 @@ export const financeService = {
     const supabase = getSupabase();
     if (!supabase) throw new Error("Supabase não configurado");
     
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data } = await supabase.auth.getSession();
+    const session = data?.session;
     if (!session?.user) throw new Error("Usuário não autenticado");
 
     const { error } = await supabase.from('user_permissions').insert({
@@ -592,32 +746,34 @@ export const financeService = {
     const supabase = getSupabase();
     if (!supabase) return [];
     
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data } = await supabase.auth.getSession();
+    const session = data?.session;
     if (!session?.user) return [];
 
-    const { data, error } = await supabase
+    const { data: permissionsData, error } = await supabase
       .from('user_permissions')
       .select('*')
       .eq('owner_id', session.user.id);
 
     if (error) throw error;
-    return data || [];
+    return permissionsData || [];
   },
 
   async getInvitationsSentToMe(): Promise<UserPermission[]> {
     const supabase = getSupabase();
     if (!supabase) return [];
     
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data } = await supabase.auth.getSession();
+    const session = data?.session;
     if (!session?.user?.email) return [];
 
-    const { data, error } = await supabase
+    const { data: permissionsDataSent, error } = await supabase
       .from('user_permissions')
       .select('*')
       .eq('invited_email', session.user.email.toLowerCase());
 
     if (error) throw error;
-    return data || [];
+    return permissionsDataSent || [];
   },
 
   async acceptInvitation(invitationId: string): Promise<void> {
@@ -652,6 +808,9 @@ export const financeService = {
       try {
         let query = supabase.from('asset_accruals').select('*');
         if (assetId) query = query.eq('asset_id', assetId);
+        if (this.activeOrganizationId) {
+          query = query.eq('organization_id', this.activeOrganizationId);
+        }
         const { data, error } = await query.order('date', { ascending: false });
         if (error) {
           if (error.code === 'PGRST204' || error.code === '42P01') {
@@ -723,10 +882,11 @@ export const financeService = {
           date: itemToSave.date,
           value: itemToSave.value,
           description: itemToSave.description,
-          created_at: itemToSave.createdAt
+          created_at: itemToSave.createdAt,
+          organization_id: this.activeOrganizationId || undefined
         };
-        const storedUserId = localStorage.getItem('supabase_user_id');
-        if (storedUserId) (payload as any).user_id = storedUserId;
+        const userId = await getSupabaseUserId();
+        if (userId) (payload as any).user_id = userId;
 
         const { error } = await supabase.from('asset_accruals').upsert(payload);
         if (error) {
@@ -755,7 +915,11 @@ export const financeService = {
   async deleteAssetAccrual(id: string): Promise<void> {
     const supabase = getSupabase();
     if (supabase) {
-      const { error } = await supabase.from('asset_accruals').delete().eq('id', id);
+      let query = supabase.from('asset_accruals').delete().eq('id', id);
+      if (this.activeOrganizationId) {
+        query = query.eq('organization_id', this.activeOrganizationId);
+      }
+      const { error } = await query;
       if (error) {
         console.error("Erro ao excluir acréscimo no Supabase:", error);
         throw new Error(formatSupabaseError(error));
@@ -771,37 +935,47 @@ export const financeService = {
     const supabase = getSupabase();
     if (!supabase) return null;
 
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data } = await supabase.auth.getSession();
+    const session = data?.session;
     if (!session?.user) return null;
 
-    const { data, error } = await supabase
-      .from('smtp_settings')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .maybeSingle();
+    const response = await fetch('/api/smtp-settings', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      }
+    });
 
-    if (error) throw error;
-    return data;
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || `Erro do servidor (${response.status}) ao buscar SMTP_SETTINGS.`);
+    }
+
+    return response.json();
   },
 
   async saveSmtpSettings(settings: Omit<SmtpSettings, 'id' | 'user_id'>): Promise<void> {
     const supabase = getSupabase();
     if (!supabase) throw new Error("Supabase não configurado");
 
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data } = await supabase.auth.getSession();
+    const session = data?.session;
     if (!session?.user) throw new Error("Usuário não autenticado");
 
-    const payload = {
-      ...settings,
-      user_id: session.user.id,
-      updated_at: new Date().toISOString()
-    };
+    const response = await fetch('/api/smtp-settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify(settings)
+    });
 
-    const { error } = await supabase
-      .from('smtp_settings')
-      .upsert(payload, { onConflict: 'user_id' });
-
-    if (error) throw error;
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || `Erro do servidor (${response.status}) ao salvar SMTP_SETTINGS.`);
+    }
   },
 
   async getTransactions(filters?: TransactionFilters): Promise<Transaction[]> {
@@ -809,7 +983,8 @@ export const financeService = {
 
     if (supabase) {
       try {
-        const { data: { session } } = await withRetry<any>(() => supabase.auth.getSession());
+        const { data } = await withRetry<any>(() => supabase.auth.getSession());
+        const session = data?.session;
         const userId = session?.user?.id;
         let query = supabase.from('transactions').select('*');
         
@@ -829,6 +1004,10 @@ export const financeService = {
         while (!finished) {
           // Range é aplicado sobre a query já filtrada
           let query = supabase.from('transactions').select('*');
+          
+          if (this.activeOrganizationId) {
+            query = query.eq('organization_id', this.activeOrganizationId);
+          }
           
           if (filters?.startDate && filters.startDate.trim() !== '') query = query.gte('date', filters.startDate);
           if (filters?.endDate && filters.endDate.trim() !== '') query = query.lte('date', filters.endDate);
@@ -887,7 +1066,19 @@ export const financeService = {
         // Silencia o erro para aviso, pois o fallback local é o comportamento padrão sem configuração
         console.warn("Dica: Supabase não conectado (usando dados locais). Isso é normal se você ainda não configurou as chaves do banco de dados.");
         
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+        const isFallback = 
+          !e || 
+          e.name === 'TypeError' || 
+          e.message?.includes('fetch') || 
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
           // Fall through to local fallback
         } else {
           throw e;
@@ -959,6 +1150,10 @@ export const financeService = {
                 .eq('status', 'PAID')
                 .lt('date', dateLimit);
 
+            if (this.activeOrganizationId) {
+                query = query.eq('organization_id', this.activeOrganizationId);
+            }
+
             if (bankId) query = query.eq('bank_id', bankId);
             if (walletId && walletId !== 'ALL' && serverSideFilteringActive) {
               if (walletId === 'GLOBAL') {
@@ -1000,8 +1195,19 @@ export const financeService = {
       } catch (e: any) {
         console.error("Supabase balance fetch failed", e);
         
-        const isFetchError = e.message?.includes('fetch') || e.name === 'TypeError';
-        if (isFetchError) {
+        const isFallback = 
+          !e || 
+          e.name === 'TypeError' || 
+          e.message?.includes('fetch') || 
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
           // Fallback logic below
           const local = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
           rows = local.filter(t => 
@@ -1056,14 +1262,27 @@ export const financeService = {
 
     if (supabase) {
       try {
-        const payload = mapTransactionToDb(transactionToSave);
+        const userId = await getSupabaseUserId();
+        const payload = mapTransactionToDb(transactionToSave, userId, this.activeOrganizationId);
         const { data, error } = await supabase.from('transactions').upsert(payload).select().single();
         if (error) throw new Error(formatSupabaseError(error));
         return mapTransactionFromDb(data);
       } catch (e: any) {
         console.error("Supabase save failed, falling back to local data", e);
         
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+        const isFallback = 
+          !e || 
+          e.name === 'TypeError' || 
+          e.message?.includes('fetch') || 
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
           // Fall through to local fallback
         } else {
           throw e;
@@ -1090,14 +1309,27 @@ export const financeService = {
 
     if (supabase) {
       try {
-        const payloads = transactionsWithIds.map(mapTransactionToDb);
+        const userId = await getSupabaseUserId();
+        const payloads = transactionsWithIds.map(t => mapTransactionToDb(t, userId, this.activeOrganizationId));
         const { data, error } = await supabase.from('transactions').upsert(payloads).select();
         if (error) throw new Error(formatSupabaseError(error));
         return (data || []).map(mapTransactionFromDb);
       } catch (e: any) {
         console.error("Supabase bulk save failed, falling back to local data", e);
         
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+        const isFallback = 
+          !e || 
+          e.name === 'TypeError' || 
+          e.message?.includes('fetch') || 
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
           // Fall through to local fallback
         } else {
           throw e;
@@ -1119,13 +1351,29 @@ export const financeService = {
 
     if (supabase) {
       try {
-        const { error } = await supabase.from('transactions').delete().in('id', ids);
+        let query = supabase.from('transactions').delete().in('id', ids);
+        if (this.activeOrganizationId) {
+          query = query.eq('organization_id', this.activeOrganizationId);
+        }
+        const { error } = await query;
         if (error) throw new Error(formatSupabaseError(error));
         return;
       } catch (e: any) {
         console.error("Supabase delete failed, falling back to local data", e);
         
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+        const isFallback = 
+          !e || 
+          e.name === 'TypeError' || 
+          e.message?.includes('fetch') || 
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
           // Fall through to local fallback
         } else {
           throw e;
@@ -1156,7 +1404,19 @@ export const financeService = {
       } catch (e: any) {
         console.error("Supabase update status failed, falling back to local data", e);
         
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+        const isFallback = 
+          !e || 
+          e.name === 'TypeError' || 
+          e.message?.includes('fetch') || 
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
           // Fall through to local fallback
         } else {
           throw e;
@@ -1188,7 +1448,19 @@ export const financeService = {
       } catch (e: any) {
         console.error("Supabase update date failed, falling back to local data", e);
         
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+        const isFallback = 
+          !e || 
+          e.name === 'TypeError' || 
+          e.message?.includes('fetch') || 
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
           // Fall through to local fallback
         } else {
           throw e;
@@ -1220,7 +1492,19 @@ export const financeService = {
       } catch (e: any) {
         console.error("Supabase update value failed, falling back to local data", e);
         
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
+        const isFallback = 
+          !e || 
+          e.name === 'TypeError' || 
+          e.message?.includes('fetch') || 
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
           // Fall through to local fallback
         } else {
           throw e;
@@ -1265,7 +1549,8 @@ export const financeService = {
           return cached.data as T[];
         }
 
-        const { data: { session } } = await withRetry<any>(() => supabase.auth.getSession());
+        const { data } = await withRetry<any>(() => supabase.auth.getSession());
+        const session = data?.session;
         const userId = session?.user?.id;
 
         let allData: any[] = [];
@@ -1278,6 +1563,10 @@ export const financeService = {
           let query = supabase
             .from(tableMap[type])
             .select('*');
+          
+          if (this.activeOrganizationId) {
+            query = query.eq('organization_id', this.activeOrganizationId);
+          }
           
           if (walletId && walletId !== 'ALL' && type !== 'wallets' && serverSideFilteringActive) {
             if (walletId === 'GLOBAL') {
@@ -1400,17 +1689,10 @@ export const financeService = {
 
         return result;
       } catch (e: any) {
-        const isMissingTable = e.code === 'PGRST205' || e.code === '42P01' || e.message?.includes('PGRST205') || e.message?.includes('42P01');
-        
-        if (isMissingTable) {
-          console.warn(`Tabela ${type} não encontrada no Supabase. Usando dados locais.`);
+        if (isFallbackError(e)) {
+          console.warn(`Supabase registry fetch failed for ${type} (falling back to local data):`, e.message || e);
         } else {
-          console.error(`Supabase registry fetch failed for ${type}, falling back to local data`, e);
-        }
-
-        if (e.message?.includes('fetch') || e.name === 'TypeError' || isMissingTable) {
-          // Fall through to local fallback
-        } else {
+          console.error(`Supabase registry fetch failed for ${type}`, e);
           throw e;
         }
       }
@@ -1473,6 +1755,9 @@ export const financeService = {
           active: itemToSave.active !== false,
           wallet_id: ((item as any).walletId && (item as any).walletId !== 'ALL') ? (item as any).walletId : null
         };
+        if (this.activeOrganizationId) {
+          payload.organization_id = this.activeOrganizationId;
+        }
         if (type === 'banks') {
             payload.type = (item as any).type || 'CHECKING';
             payload.currency = (item as any).currency || 'BRL';
@@ -1493,8 +1778,8 @@ export const financeService = {
             payload.ticker = (item as any).ticker || '';
         }
         
-        const storedUserId = localStorage.getItem('supabase_user_id');
-        if (storedUserId) payload.user_id = storedUserId;
+        const userId = await getSupabaseUserId();
+        if (userId) payload.user_id = userId;
 
         let { data, error } = await supabase.from(tableMap[type]).upsert(payload).select().single();
         
@@ -1607,11 +1892,10 @@ export const financeService = {
 
         return result;
       } catch (e: any) {
-        console.error(`Supabase registry save failed for ${type}, falling back to local data`, e);
-
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
-          // Fall through to local fallback
+        if (isFallbackError(e)) {
+          console.warn(`Supabase registry save failed for ${type} (falling back to local data):`, e.message || e);
         } else {
+          console.error(`Supabase registry save failed for ${type}`, e);
           throw e;
         }
       }
@@ -1699,7 +1983,11 @@ export const financeService = {
         // Bloqueio de exclusão com vínculo (Supabase)
         const fkName = fkMap[type];
         if (fkName) {
-          const { count, error: checkError } = await supabase.from('transactions').select('*', { count: 'exact', head: true }).eq(fkName, id);
+          let checkQuery = supabase.from('transactions').select('*', { count: 'exact', head: true }).eq(fkName, id);
+          if (this.activeOrganizationId) {
+            checkQuery = checkQuery.eq('organization_id', this.activeOrganizationId);
+          }
+          const { count, error: checkError } = await checkQuery;
           if (checkError) throw checkError;
           if (count && count > 0) {
             throw new Error(`Não é possível excluir este registro pois ele possui ${count} lançamentos vinculados.`);
@@ -1707,7 +1995,11 @@ export const financeService = {
         }
 
         if (type === 'banks') {
-          const { count, error: checkError } = await supabase.from('wallets').select('*', { count: 'exact', head: true }).eq('bank_id', id);
+          let checkQuery = supabase.from('wallets').select('*', { count: 'exact', head: true }).eq('bank_id', id);
+          if (this.activeOrganizationId) {
+            checkQuery = checkQuery.eq('organization_id', this.activeOrganizationId);
+          }
+          const { count, error: checkError } = await checkQuery;
           if (checkError) throw checkError;
           if (count && count > 0) {
             throw new Error(`Não é possível excluir este banco pois ele possui ${count} carteiras/portfólios vinculados.`);
@@ -1720,7 +2012,11 @@ export const financeService = {
           const item = currentList.find(i => i.id === id);
           if (item) {
             const column = type === 'assetTypes' ? 'category' : 'sector';
-            const { count, error: checkError } = await supabase.from('participants').select('*', { count: 'exact', head: true }).eq(column, item.name);
+            let checkQuery = supabase.from('participants').select('*', { count: 'exact', head: true }).eq(column, item.name);
+            if (this.activeOrganizationId) {
+              checkQuery = checkQuery.eq('organization_id', this.activeOrganizationId);
+            }
+            const { count, error: checkError } = await checkQuery;
             if (checkError) throw checkError;
             if (count && count > 0) {
               throw new Error(`Não é possível excluir este ${type === 'assetTypes' ? 'tipo' : 'setor'} pois ele está sendo usado em ${count} participantes.`);
@@ -1728,7 +2024,11 @@ export const financeService = {
           }
         }
 
-        const { error } = await supabase.from(tableMap[type]).delete().eq('id', id);
+        let deleteQuery = supabase.from(tableMap[type]).delete().eq('id', id);
+        if (this.activeOrganizationId) {
+          deleteQuery = deleteQuery.eq('organization_id', this.activeOrganizationId);
+        }
+        const { error } = await deleteQuery;
         if (error) throw new Error(formatSupabaseError(error));
         
         // Sincroniza com localStorage para evitar que loadRegistries leia dados obsoletos
@@ -1748,11 +2048,10 @@ export const financeService = {
 
         return;
       } catch (e: any) {
-        console.error(`Supabase registry delete failed for ${type}, falling back to local data`, e);
-        
-        if (e.message?.includes('fetch') || e.name === 'TypeError') {
-          // Fall through to local fallback
+        if (isFallbackError(e)) {
+          console.warn(`Supabase registry delete failed for ${type} (falling back to local data):`, e.message || e);
         } else {
+          console.error(`Supabase registry delete failed for ${type}`, e);
           throw e; // Lança o erro de bloqueio para que o usuário veja
         }
       }

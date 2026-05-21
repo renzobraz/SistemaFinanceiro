@@ -696,13 +696,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   };
 
   const inputClass =
-    "w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 disabled:bg-gray-50 disabled:text-gray-400";
+    "w-full px-4 py-3 md:py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 disabled:bg-gray-50 disabled:text-gray-400 text-base md:text-sm min-h-[44px] md:min-h-0 transition-all";
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex flex-col md:items-center md:justify-center bg-slate-900/40 md:bg-black/50 md:backdrop-blur-sm md:p-4 animate-fade-in">
+      <div className="bg-white w-full max-w-3xl overflow-hidden h-full md:h-auto md:max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col">
         <div className="flex flex-col border-b border-gray-100 bg-gray-50">
           <div className="flex justify-between items-center p-6 pb-2">
             <h2 className="text-xl font-bold text-slate-800">
@@ -1397,12 +1397,12 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           )}
         </div>
 
-        <div className="p-6 border-t border-gray-100 bg-gray-50 flex flex-wrap justify-end gap-3">
+        <div className="p-4 md:p-6 border-t border-gray-100 bg-gray-50 flex items-center justify-end gap-2 md:gap-3 flex-shrink-0">
           <button
             type="button"
             onClick={onClose}
             disabled={isSaving}
-            className="px-6 py-2 text-gray-600 font-medium hover:bg-gray-200 rounded-lg disabled:opacity-50"
+            className="flex-1 md:flex-initial h-11 md:h-10 px-4 md:px-6 text-gray-600 font-bold md:font-medium hover:bg-gray-200 rounded-lg text-sm transition-all flex items-center justify-center min-h-[44px]"
           >
             Cancelar
           </button>
@@ -1412,11 +1412,11 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               type="button"
               disabled={isSaving || discountValue <= 0}
               onClick={(e) => handleSubmit(e, true)}
-              className="px-6 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium rounded-lg hover:bg-emerald-100 flex items-center gap-2 transition-colors disabled:opacity-50"
+              className="flex-1 md:flex-initial h-11 md:h-10 px-3 md:px-6 bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold md:font-medium rounded-lg hover:bg-emerald-100 flex items-center justify-center gap-2 transition-all disabled:opacity-50 text-xs md:text-sm min-h-[44px]"
               title={discountValue > 0 ? `Salva as alterações e cria um desconto de R$ ${discountValue.toFixed(2)}` : "Digite um valor de desconto para usar esta opção"}
             >
-              <RotateCcw className="w-4 h-4" />
-              Salvar + Desconto
+              <RotateCcw className="w-4 h-4 shrink-0" />
+              <span>+ Desconto</span>
             </button>
           )}
 
@@ -1424,16 +1424,18 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             type="submit"
             disabled={isSaving}
             onClick={(e) => handleSubmit(e, false)}
-            className="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 flex items-center gap-2 shadow-lg shadow-blue-200 disabled:bg-blue-400"
+            className="flex-2 md:flex-initial h-11 md:h-10 px-4 md:px-6 bg-blue-600 text-white font-bold md:font-medium rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 shadow-lg shadow-blue-200 disabled:bg-blue-400 text-sm min-h-[44px]"
           >
             {isSaving ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
             ) : (
-              <Save className="w-4 h-4" />
+              <Save className="w-4 h-4 shrink-0" />
             )}
-            {isSaving
-              ? "Salvando..."
-              : `Salvar ${isRecurrent && !id ? "Lançamentos" : "Lançamento"}`}
+            <span className="truncate">
+              {isSaving
+                ? "Salvando..."
+                : `Salvar ${isRecurrent && !id ? "Lançamentos" : "Lançamento"}`}
+            </span>
           </button>
         </div>
       </div>

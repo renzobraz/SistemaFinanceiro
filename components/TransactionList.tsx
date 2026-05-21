@@ -347,7 +347,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     className={`p-2 rounded-lg border transition-colors flex items-center gap-2 text-sm font-medium ${showColumnFilters ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
                 >
                     <Search className="w-4 h-4" />
-                    <span className="hidden lg:inline">{showColumnFilters ? 'Fechar Filtros' : 'Mais Filtros'}</span>
+                    <span className="hidden sm:inline">{showColumnFilters ? 'Ocultar Filtros' : 'Filtros'}</span>
                 </button>
 
                 {hasActiveFilters && (
@@ -421,8 +421,72 @@ export const TransactionList: React.FC<TransactionListProps> = ({
             )}
         </div>
 
+        {/* Mobile Filter Panel (< 768px) */}
+        {showColumnFilters && (
+          <div className="block md:hidden p-4 bg-slate-50 border-b border-slate-200 space-y-3 animate-fade-in flex-shrink-0">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Banco</label>
+                <select value={columnFilters.bankId} onChange={e => setColumnFilters(f => ({...f, bankId: e.target.value}))} className={filterInputClass}>
+                  <option value="">Todos</option>
+                  {registries.banks.sort((a,b) => a.name.localeCompare(b.name)).map(b => (
+                    <option key={b.id} value={b.id}>{b.name} {b.currency && b.currency !== 'BRL' ? `(${b.currency})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Carteira</label>
+                <select value={columnFilters.walletId} onChange={e => setColumnFilters(f => ({...f, walletId: e.target.value}))} className={filterInputClass}>
+                  <option value="">Todas</option>
+                  {registries.wallets?.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Categoria</label>
+                <select value={columnFilters.categoryId} onChange={e => setColumnFilters(f => ({...f, categoryId: e.target.value}))} className={filterInputClass}>
+                  <option value="">Todas</option>
+                  {registries.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Participante</label>
+                <select value={columnFilters.participantId} onChange={e => setColumnFilters(f => ({...f, participantId: e.target.value}))} className={filterInputClass}>
+                  <option value="">Todos</option>
+                  {registries.participants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">C. Custo</label>
+                <select value={columnFilters.costCenterId} onChange={e => setColumnFilters(f => ({...f, costCenterId: e.target.value}))} className={filterInputClass}>
+                  <option value="">Todos</option>
+                  {registries.costCenters.map(cc => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Descrição</label>
+                <input type="text" placeholder="Filtrar descrição..." value={columnFilters.description} onChange={e => setColumnFilters(f => ({...f, description: e.target.value}))} className={filterInputClass} />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">V. Débito</label>
+                <input type="text" placeholder="Busca valor..." value={columnFilters.debit} onChange={e => setColumnFilters(f => ({...f, debit: e.target.value}))} className={filterInputClass} />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">V. Crédito</label>
+                <input type="text" placeholder="Busca valor..." value={columnFilters.credit} onChange={e => setColumnFilters(f => ({...f, credit: e.target.value}))} className={filterInputClass} />
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="overflow-auto flex-1 border-b border-slate-200 relative">
-            <table className="w-full text-left border-collapse min-w-[1300px]">
+            <table className="hidden md:table w-full text-left border-collapse min-w-[1300px]">
             <thead className="sticky top-0 z-10 bg-slate-50 shadow-sm">
                 <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest border-b border-slate-200">
                 <th className="p-3 w-10 text-center bg-slate-50">
@@ -569,6 +633,147 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 ))}
             </tbody>
             </table>
+
+            {/* Mobile / Tablet List Component - Card Layout (< 768px) */}
+            <div className="block md:hidden divide-y divide-slate-100 bg-white">
+                {currentTransactions.map((t) => {
+                    const isCredit = t.type === 'CREDIT';
+                    const isPaid = t.status === 'PAID';
+                    const hasExchange = t.exchangeRate && t.exchangeRate > 0;
+                    const participant = registries.participants.find(p => p.id === t.participantId);
+                    
+                    return (
+                        <div key={t.id} className="p-4 flex flex-col gap-3 hover:bg-slate-50/50 transition-all relative">
+                            <div className="flex items-start justify-between gap-3">
+                                {/* Checkbox and Left Bar indicating side */}
+                                <div className="flex items-center gap-3">
+                                    <button 
+                                        type="button"
+                                        onClick={() => toggleSelect(t.id)} 
+                                        className={`w-11 h-11 flex items-center justify-center rounded-lg transition-colors flex-shrink-0 ${
+                                            selectedIds.includes(t.id) ? 'text-blue-600 bg-blue-50' : 'text-gray-300 hover:text-gray-400 bg-slate-50'
+                                        }`}
+                                        title="Selecionar Transação"
+                                    >
+                                        {selectedIds.includes(t.id) ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+                                    </button>
+                                    
+                                    {/* Visual Indicator of Credit/Debit Bar */}
+                                    <div className={`w-1.5 h-10 rounded-full ${isCredit ? 'bg-green-500' : 'bg-red-500'}`} />
+                                    
+                                    {/* Date and Status Badge */}
+                                    <div className="flex flex-col">
+                                        <span className="text-xs font-bold text-slate-500">{formatDateDisplay(t.date)}</span>
+                                        <span className={`inline-flex items-center px-2 py-0.5 mt-1 rounded-full text-[9px] font-black uppercase tracking-wider w-max ${
+                                            isPaid ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                                        }`}>
+                                            {isPaid ? 'Pago' : 'Pendente'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* Value */}
+                                <div className="text-right flex flex-col items-end">
+                                    <span className={`text-sm font-black px-2 py-1 rounded-lg ${
+                                        isCredit ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'
+                                    }`}>
+                                        {isCredit ? '+' : '-'} R$ {formatMoney(t.value)}
+                                    </span>
+                                    {hasExchange && (
+                                        <span className="text-[9px] text-blue-500 font-bold mt-1">
+                                            Câmbio: {t.exchangeRate!.toFixed(4)}
+                                        </span>
+                                    )}
+                                    <span className="text-[10px] text-slate-400 font-medium font-mono mt-1" title="Saldo Acumulado">
+                                        Saldo: {balanceMap[t.id] !== undefined ? `R$ ${formatMoney(balanceMap[t.id])}` : '(Pendente)'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Description & Doc */}
+                            <div className="space-y-1">
+                                <h4 className="text-sm font-bold text-slate-800 leading-snug">{t.description}</h4>
+                                {t.docNumber && (
+                                    <span className="text-[10px] text-slate-400 font-medium block">Nº Doc: {t.docNumber}</span>
+                                )}
+                            </div>
+
+                            {/* Dynamic Badges / Labels */}
+                            <div className="flex flex-wrap gap-1.5 mt-1">
+                                {/* Banco Badge */}
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 transition-colors rounded-lg text-[10px] font-black text-slate-600">
+                                    {getName(registries.banks, t.bankId)}
+                                    {(() => {
+                                        const b = registries.banks?.find(bank => String(bank.id).trim() === String(t.bankId).trim());
+                                        return b?.currency && b.currency !== 'BRL' ? (
+                                            <span className="px-1 py-0.2 bg-blue-100 text-blue-700 text-[8px] font-black rounded uppercase ml-1">
+                                                {b.currency}
+                                            </span>
+                                        ) : null;
+                                    })()}
+                                </span>
+
+                                {/* Carteira Badge */}
+                                {t.walletId && (
+                                    <span className="inline-flex items-center px-2.5 py-1 bg-slate-100 rounded-lg text-[10px] font-bold text-slate-500">
+                                        {getName(registries.wallets, t.walletId)}
+                                    </span>
+                                )}
+
+                                {/* Categoria Badge */}
+                                <span className="inline-flex items-center px-2.5 py-1 bg-blue-50 rounded-lg text-[10px] font-bold text-blue-700">
+                                    {getName(registries.categories, t.categoryId)}
+                                </span>
+
+                                {/* Participante Badge */}
+                                {t.participantId && (
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-50 rounded-lg text-[10px] font-bold text-purple-700 max-w-full truncate">
+                                        <span className="truncate">{getName(registries.participants, t.participantId)}</span>
+                                        {participant?.ticker && (
+                                            <span className="bg-purple-100 px-1 py-0.2 rounded text-[8px] font-black font-mono">
+                                                {participant.ticker}
+                                            </span>
+                                        )}
+                                    </span>
+                                )}
+
+                                {/* Centro de Custo Badge */}
+                                {t.costCenterId && (
+                                    <span className="inline-flex items-center px-2.5 py-1 bg-amber-50 rounded-lg text-[10px] font-medium text-amber-700">
+                                        {getName(registries.costCenters, t.costCenterId)}
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Action Buttons with 44px min touch target */}
+                            <div className="flex items-center justify-end gap-1.5 border-t border-slate-100 pt-2.5 mt-2">
+                                <button 
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); onEdit(t); }} 
+                                    className="w-11 h-11 flex items-center justify-center text-blue-600 hover:bg-blue-50 active:bg-blue-100 rounded-xl transition-colors"
+                                    title="Editar Transação"
+                                >
+                                    <Edit2 className="w-5 h-5" />
+                                </button>
+                                <button 
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setConfirmModal({isOpen: true, ids: [t.id], type: 'DELETE', message: 'Deseja excluir este lançamento definitivamente?'}); }} 
+                                    className="w-11 h-11 flex items-center justify-center text-red-600 hover:bg-red-50 active:bg-red-100 rounded-xl transition-colors"
+                                    title="Excluir Transação"
+                                >
+                                    <Trash2 className="w-5 h-5" />
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })}
+                
+                {currentTransactions.length === 0 && (
+                    <div className="p-8 text-center text-slate-400 font-medium text-sm">
+                        Nenhum lançamento encontrado
+                    </div>
+                )}
+            </div>
         </div>
         
         <div className="bg-slate-50 p-4 flex flex-col sm:flex-row justify-between items-center flex-shrink-0 border-t border-slate-200 gap-4">
