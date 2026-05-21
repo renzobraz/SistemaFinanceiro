@@ -112,6 +112,7 @@ const App: FC = () => {
         setActiveTab('onboarding');
         setActiveOrg(null);
         financeService.setActiveOrganizationId(null);
+        loadedRegistriesRef.current = {}; // Limpar cache
         return;
       }
 
@@ -126,10 +127,13 @@ const App: FC = () => {
         setActiveOrg(foundOrg);
         financeService.setActiveOrganizationId(foundOrg.id);
         localStorage.setItem('fincontrol_active_org_id', foundOrg.id);
+        loadedRegistriesRef.current = {}; // Limpar cache de registros ao definir organização ativa
+        console.log("[loadOrganizations] Cache de cadastros loadedRegistriesRef limpo ao definir a organização ativa.");
       } else {
         console.log("[loadOrganizations] Nenhuma organização correspondente encontrada nos registros carregados.");
         setActiveOrg(null);
         financeService.setActiveOrganizationId(null);
+        loadedRegistriesRef.current = {}; // Limpar cache se não encontrar organização ativa
       }
     } catch (e) {
       console.error("Erro ao carregar organizações no App:", e);
@@ -275,7 +279,14 @@ const App: FC = () => {
           assetTickers: atk
         });
 
-        loadedRegistriesRef.current[cacheKey] = true;
+        // Só marca o cache como carregado se possuir dados reais (impedindo congelar array vazio devido a consultas prematuras)
+        const hasData = bk.length > 0 || cat.length > 0 || pt.length > 0 || wa.length > 0 || cc.length > 0 || at.length > 0 || as.length > 0 || atk.length > 0;
+        if (hasData) {
+          loadedRegistriesRef.current[cacheKey] = true;
+          console.log(`[Rastreamento] [loadRegistries] Registros para a chave '${cacheKey}' carregados com dados. Cache marcado como ativo.`);
+        } else {
+          console.log(`[Rastreamento] [loadRegistries] Registros para a chave '${cacheKey}' retornaram vazios. Cache NÃO será mantido para forçar recarga limpa posterior.`);
+        }
 
         // Sincroniza tabelas auxiliares se necessário (especialmente importante se sumiram)
         if (at.length === 0 || as.length === 0) {
