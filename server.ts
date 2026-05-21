@@ -205,7 +205,16 @@ async function startServer() {
           styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           imgSrc: ["'self'", "data:", "https://*", "http://*"],
-          connectSrc: ["'self'", "https://api.exchangerate-api.com", "https://*", "wss://*"],
+          // Permitir conexões de redes do Supabase explícitas (co/in/wss/etc.) para evitar bloqueios de CSP
+          connectSrc: [
+            "'self'",
+            "https://*.supabase.co",
+            "https://*.supabase.in", 
+            "wss://*.supabase.co",
+            "https://api.exchangerate-api.com",
+            "https://*",
+            "wss://*"
+          ],
           frameAncestors: ["'self'"]
         }
       },
@@ -223,7 +232,18 @@ async function startServer() {
           styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           imgSrc: ["'self'", "data:", "https://*", "http://*"],
-          connectSrc: ["'self'", "https://api.exchangerate-api.com", "https://*", "wss://*", "http://localhost:*", "ws://localhost:*"],
+          // Permite conexões do Supabase inclusive em desenvolvimento e localhost
+          connectSrc: [
+            "'self'",
+            "https://*.supabase.co",
+            "https://*.supabase.in", 
+            "wss://*.supabase.co",
+            "https://api.exchangerate-api.com",
+            "https://*",
+            "wss://*",
+            "http://localhost:*",
+            "ws://localhost:*"
+          ],
           frameAncestors: ["'self'", "https://*.google.com", "https://*.googleusercontent.com", "https://*.run.app"]
         }
       },
