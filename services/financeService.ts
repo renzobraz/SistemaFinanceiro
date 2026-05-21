@@ -389,6 +389,21 @@ export interface TransactionFilters {
     docNumber?: string;
 }
 
+// Helper utilitário para limpar metadados de convites antes de renderizar no frontend
+function cleanPermissionObject(p: any): any {
+  if (!p) return p;
+  const cleaned = { ...p };
+  if (cleaned.role && cleaned.role.includes(':')) {
+    cleaned.role = cleaned.role.split(':')[0];
+  }
+  if (cleaned.invited_email && cleaned.invited_email.includes('+wperms_')) {
+    const parts = cleaned.invited_email.split('+wperms_');
+    const domain = cleaned.invited_email.split('@')[1];
+    cleaned.invited_email = `${parts[0]}@${domain}`;
+  }
+  return cleaned;
+}
+
 export const financeService = {
   activeOrganizationId: null as string | null,
 
@@ -715,7 +730,7 @@ export const financeService = {
     }
   },
 
-  async inviteUser(email: string, role: 'viewer' | 'editor' | 'admin' = 'viewer'): Promise<void> {
+  async inviteUser(email: string, role: 'viewer' | 'editor' | 'admin' = 'viewer', walletProfiles?: Record<string, string>): Promise<void> {
     const supabase = getSupabase();
     if (!supabase) throw new Error("Supabase não configurado");
     
@@ -723,12 +738,43 @@ export const financeService = {
     const session = data?.session;
     if (!session?.user) throw new Error("Usuário não autenticado");
 
-    const { error } = await supabase.from('user_permissions').insert({
+    const mappingString = walletProfiles && Object.keys(walletProfiles).length > 0 ? JSON.stringify(walletProfiles) : null;
+    
+    let inviteRole: string = role;
+    let inviteEmail: string = email.toLowerCase().trim();
+    
+    if (mappingString) {
+      inviteRole = `${role}:${mappingString}`;
+    }
+
+    let { error } = await supabase.from('user_permissions').insert({
       owner_id: session.user.id,
-      invited_email: email.toLowerCase().trim(),
-      role: role,
+      invited_email: inviteEmail,
+      role: inviteRole,
       status: 'pending'
     });
+
+    // Se falhar por erro de check constraint de permissão (ex: restrição no campo role), fallback para plus-addressing
+    if (error && (error.code === '23514' || error.message?.includes('check constraint') || error.message?.toLowerCase().includes('viola'))) {
+      console.warn("Retrying invitation using email plus-address fallback due to role CHECK constraint.");
+      
+      inviteRole = role; // Volta para o role padrão
+      
+      if (mappingString) {
+        // Codifica o mapeamento em base64 (sem caracteres especiais)
+        const base64Mapping = btoa(unescape(encodeURIComponent(mappingString))).replace(/=/g, '');
+        const [localPart, domainPart] = email.split('@');
+        inviteEmail = `${localPart.toLowerCase().trim()}+wperms_${base64Mapping}@${domainPart.trim()}`;
+      }
+
+      const retryRes = await supabase.from('user_permissions').insert({
+        owner_id: session.user.id,
+        invited_email: inviteEmail,
+        role: inviteRole,
+        status: 'pending'
+      });
+      error = retryRes.error;
+    }
 
     if (error) throw error;
 
@@ -767,7 +813,7 @@ export const financeService = {
       .eq('owner_id', session.user.id);
 
     if (error) throw error;
-    return permissionsData || [];
+    return (permissionsData || []).map(p => cleanPermissionObject(p));
   },
 
   async getInvitationsSentToMe(): Promise<UserPermission[]> {
@@ -778,25 +824,102 @@ export const financeService = {
     const session = data?.session;
     if (!session?.user?.email) return [];
 
+    const emailToSearch = session.user.email.toLowerCase().trim();
+    const [local, domain] = emailToSearch.split('@');
+
+    // Busca convites diretos para o email, ou convites plus-addressed com metadados codificados
     const { data: permissionsDataSent, error } = await supabase
       .from('user_permissions')
       .select('*')
-      .eq('invited_email', session.user.email.toLowerCase());
+      .or(`invited_email.eq.${emailToSearch},invited_email.ilike.${local}+wperms_%@${domain}`);
 
     if (error) throw error;
-    return permissionsDataSent || [];
+    return (permissionsDataSent || []).map(p => cleanPermissionObject(p));
   },
 
   async acceptInvitation(invitationId: string): Promise<void> {
     const supabase = getSupabase();
     if (!supabase) throw new Error("Supabase não configurado");
 
+    const { data: sessionData } = await supabase.auth.getSession();
+    const session = sessionData?.session;
+    if (!session?.user) throw new Error("Usuário não autenticado");
+
+    // 1. Busca as informações originais do convite antes de aceitar
+    const { data: invitation, error: getErr } = await supabase
+      .from('user_permissions')
+      .select('*')
+      .eq('id', invitationId)
+      .single();
+
+    if (getErr || !invitation) {
+      throw new Error("Convite não encontrado ou sem permissão de acesso");
+    }
+
+    // 2. Tenta fazer o parse do mapeamento {wallet_id: profile_id}
+    let walletProfiles: Record<string, string> = {};
+    
+    if (invitation.role && invitation.role.includes(':')) {
+      try {
+        const jsonPart = invitation.role.substring(invitation.role.indexOf(':') + 1);
+        walletProfiles = JSON.parse(jsonPart);
+      } catch (err) {
+        console.warn("Falha no parse do mapeamento de carteiras no role:", err);
+      }
+    } else if (invitation.invited_email && invitation.invited_email.includes('+wperms_')) {
+      try {
+        const start = invitation.invited_email.indexOf('+wperms_') + 8;
+        const end = invitation.invited_email.indexOf('@');
+        const encoded = invitation.invited_email.substring(start, end);
+        const jsonStr = decodeURIComponent(escape(atob(encoded)));
+        walletProfiles = JSON.parse(jsonStr);
+      } catch (err) {
+        console.warn("Falha no parse do mapeamento de carteiras no email:", err);
+      }
+    }
+
+    // 3. Atualiza status no user_permissions para ativo
     const { error } = await supabase
       .from('user_permissions')
       .update({ status: 'active' })
       .eq('id', invitationId);
 
     if (error) throw error;
+
+    // 4. Se houver mapeamentos de carteiras com perfis, insere em user_wallet_permissions
+    if (walletProfiles && Object.keys(walletProfiles).length > 0) {
+      const firstProfileId = Object.values(walletProfiles)[0];
+      let orgId = this.activeOrganizationId || '';
+
+      // Tenta recuperar orgId consultando a tabela organization_profiles para o primeiro profile_id mapeado
+      if (firstProfileId && !orgId) {
+        const { data: profileObj } = await supabase
+          .from('organization_profiles')
+          .select('organization_id')
+          .eq('id', firstProfileId)
+          .maybeSingle();
+        if (profileObj?.organization_id) {
+          orgId = profileObj.organization_id;
+        }
+      }
+
+      if (orgId) {
+        const inserts = Object.entries(walletProfiles).map(([walletId, profileId]) => ({
+          organization_id: orgId,
+          user_id: session.user.id,
+          wallet_id: walletId,
+          profile_id: profileId
+        }));
+
+        const { error: insertErr } = await supabase
+          .from('user_wallet_permissions')
+          .insert(inserts);
+
+        if (insertErr) {
+          console.error("Erro ao salvar vínculos em user_wallet_permissions:", insertErr);
+        }
+      }
+    }
   },
 
   async deletePermission(id: string): Promise<void> {

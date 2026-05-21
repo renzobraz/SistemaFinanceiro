@@ -40,6 +40,8 @@ export const TeamManagement: React.FC = () => {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'viewer' | 'editor' | 'admin'>('viewer');
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [wallets, setWallets] = useState<any[]>([]);
+  const [selectedWallets, setSelectedWallets] = useState<Record<string, string>>({});
 
   // --- ESTADOS DA NOVA ABA DE PERFIS ---
   const [activeTab, setActiveTab] = useState<'team' | 'profiles'>('team');
@@ -88,6 +90,21 @@ export const TeamManagement: React.FC = () => {
             // Fallback caso seja o criador ou não tenha registro explícito
             setMyRole('owner');
           }
+
+          // Busca os perfis criados para a seleção no convite
+          const { data: profilesData } = await supabase
+            .from('organization_profiles')
+            .select('*')
+            .eq('organization_id', orgId)
+            .order('name', { ascending: true });
+          
+          if (profilesData) {
+            setProfiles(profilesData);
+          }
+
+          // Busca as carteiras da organização para gerenciar o vínculo
+          const walletsData = await financeService.getRegistry<any>('wallets').catch(() => []);
+          setWallets(walletsData || []);
         } else {
           setMyRole('owner');
         }
@@ -201,14 +218,71 @@ export const TeamManagement: React.FC = () => {
   }, [selectedProfile?.id]);
 
   // --- INTERAÇÕES DA ABA EQUIPE ---
+  const handleWalletToggle = (walletId: string) => {
+    setSelectedWallets(prev => {
+      const copy = { ...prev };
+      if (walletId in copy) {
+        delete copy[walletId];
+      } else {
+        const defaultProfile = profiles.find(p => p.is_default) || profiles[0];
+        copy[walletId] = defaultProfile ? defaultProfile.id : '';
+      }
+      return copy;
+    });
+  };
+
+  const handleWalletProfileChange = (walletId: string, profileId: string) => {
+    setSelectedWallets(prev => ({
+      ...prev,
+      [walletId]: profileId
+    }));
+  };
+
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (profiles.length === 0) {
+      setMessage({
+        type: 'error',
+        text: 'Atenção: Você precisa criar pelo menos um perfil de permissões na aba Perfis antes de convidar novos usuários.'
+      });
+      return;
+    }
+
+    if (wallets.length === 0) {
+      setMessage({
+        type: 'error',
+        text: 'Atenção: Não há carteiras cadastradas nesta organização. Crie uma carteira primeiro.'
+      });
+      return;
+    }
+
+    const selectedEntries = Object.entries(selectedWallets);
+    if (selectedEntries.length === 0) {
+      setMessage({
+        type: 'error',
+        text: 'Selecione pelo menos uma carteira para vincular a este convite.'
+      });
+      return;
+    }
+
+    for (const [walletId, profileId] of selectedEntries) {
+      if (!profileId) {
+        setMessage({
+          type: 'error',
+          text: 'Selecione um perfil de permissões para cada carteira marcada.'
+        });
+        return;
+      }
+    }
+
     setInviting(true);
     setMessage(null);
     try {
-      await financeService.inviteUser(email, role);
+      await financeService.inviteUser(email, role, selectedWallets);
       setMessage({ type: 'success', text: 'Convite enviado com sucesso!' });
       setEmail('');
+      setSelectedWallets({});
       loadData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Erro ao enviar convite' });
@@ -507,6 +581,57 @@ export const TeamManagement: React.FC = () => {
                       </div>
                     </button>
                   </div>
+                </div>
+
+                {/* Seleção de Carteiras e Perfis (Fase 2) */}
+                <div className="space-y-3 border-t border-slate-100 pt-4">
+                  <label className="block text-xs font-black text-slate-500 uppercase tracking-wider px-1">
+                    Permissões por Carteira
+                  </label>
+                  
+                  {profiles.length === 0 ? (
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-700 font-semibold leading-relaxed">
+                      Atenção: Você precisa criar pelo menos um perfil de acesso na aba <strong>Perfis de Acesso</strong> para configurar as permissões de carteira antes de convidar.
+                    </div>
+                  ) : wallets.length === 0 ? (
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-500">
+                      Não há carteiras cadastradas nesta organização. Crie uma carteira primeiro para estruturar os acessos.
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                      {wallets.map(wallet => {
+                        const isChecked = wallet.id in selectedWallets;
+                        const currentProfileId = selectedWallets[wallet.id] || '';
+                        
+                        return (
+                          <div key={wallet.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3 transition-colors hover:bg-slate-100/50">
+                            <label className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => handleWalletToggle(wallet.id)}
+                                className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 border-slate-300"
+                              />
+                              <span className="text-xs font-bold text-slate-700 truncate">{wallet.name}</span>
+                            </label>
+                            
+                            {isChecked && (
+                              <select
+                                value={currentProfileId}
+                                onChange={(e) => handleWalletProfileChange(wallet.id, e.target.value)}
+                                className="bg-white border border-slate-200 rounded-lg text-[11px] font-bold py-1.5 px-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-600 max-w-[120px]"
+                              >
+                                <option value="" disabled>Perfil...</option>
+                                {profiles.map(p => (
+                                  <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {message && (
