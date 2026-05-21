@@ -406,22 +406,22 @@ export const financeService = {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return [];
 
-      const { data, error } = await supabase
-        .rpc('get_user_organizations', { p_user_id: user.id });
+      console.log('[getMyOrganizations] Chamando RPC com user.id:', user.id);
 
-      console.log('[getMyOrganizations] user.id:', user.id);
-      console.log('[getMyOrganizations] data bruto:', JSON.stringify(data));
+      const rpcPromise = supabase.rpc('get_user_organizations', { p_user_id: user.id });
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('RPC Timeout')), 5000)
+      );
+
+      const { data, error } = await Promise.race([rpcPromise, timeoutPromise]) as any;
+
+      console.log('[getMyOrganizations] data:', JSON.stringify(data));
       console.log('[getMyOrganizations] error:', error);
 
-      if (error) {
-        console.error('[getMyOrganizations] Erro RPC:', error);
-        return [];
-      }
-
-      console.log('[getMyOrganizations] Organizações encontradas:', data);
+      if (error) return [];
       return data as Organization[] || [];
-    } catch (e) {
-      console.error('[getMyOrganizations] Exception:', e);
+    } catch (e: any) {
+      console.error('[getMyOrganizations] Exception:', e.message);
       return [];
     }
   },
