@@ -390,27 +390,34 @@ export const financeService = {
       const user = sessionData?.session?.user;
       if (!user) return [];
 
-      // Primeiro, buscamos as participações de membros na tabela organization_members de forma segura
-      const { data: memberRows, error: memberError } = await supabase
+      // Unifica a consulta usando o relacionamento definido no Supabase
+      const { data, error } = await supabase
         .from('organization_members')
-        .select('organization_id')
+        .select(`
+          organization_id,
+          role,
+          organizations (
+            id,
+            name,
+            slug,
+            owner_id,
+            plan,
+            active,
+            created_at
+          )
+        `)
         .eq('user_id', user.id);
 
-      if (memberError) throw memberError;
-      if (!memberRows || memberRows.length === 0) return [];
+      if (error) {
+        console.error('getMyOrganizations error:', error);
+        return [];
+      }
 
-      const orgIds = memberRows.map(m => m.organization_id);
-
-      // Agora buscamos as organizações correspondentes
-      const { data: orgs, error: orgsError } = await supabase
-        .from('organizations')
-        .select('*')
-        .in('id', orgIds);
-
-      if (orgsError) throw orgsError;
-      return orgs || [];
+      return data
+        ?.map(m => m.organizations as unknown as Organization)
+        .filter(Boolean) ?? [];
     } catch (e) {
-      console.error("Erro ao carregar organizações do usuário:", e);
+      console.error('getMyOrganizations exception:', e);
       return [];
     }
   },
