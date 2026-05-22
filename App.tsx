@@ -531,6 +531,7 @@ const App: FC = () => {
                 setActiveOrg(null);
                 financeService.setActiveOrganizationId(null);
                 setIsOnboarding(false);
+                loadedRegistriesRef.current = {}; // Limpar cache no logout
             }
         } else {
             console.log("[onAuthStateChange] ID do usuário idêntico. Side-effects ignorados para evitar renders/onboarding falso.");
@@ -557,11 +558,12 @@ const App: FC = () => {
   }, [startDate, endDate, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter, activeTab, loadTransactions, loading]);
 
   useEffect(() => {
+    if (loading || (isConnected && !financeService.activeOrganizationId)) return;
     // Carrega registros para quase todas as abas que usam o formulário ou exibem nomes
     if (!['settings', 'manual'].includes(activeTab)) {
       loadRegistries(false, selectedWalletId);
     }
-  }, [activeTab, loadRegistries, selectedWalletId, activeRegistryTab]);
+  }, [activeTab, loadRegistries, selectedWalletId, activeRegistryTab, loading, isConnected]);
 
   useEffect(() => {
     if (activeTab === 'payables') {
@@ -1129,6 +1131,7 @@ const App: FC = () => {
                       const newOrgId = e.target.value;
                       const o = organizations.find(org => org.id === newOrgId);
                       if (o) {
+                        loadedRegistriesRef.current = {}; // Limpar cache na troca manual de organização
                         setActiveOrg(o);
                         financeService.setActiveOrganizationId(o.id);
                         localStorage.setItem('fincontrol_active_org_id', o.id);
