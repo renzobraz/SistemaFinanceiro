@@ -398,14 +398,7 @@ const App: FC = () => {
     if (supabase) {
         try {
             console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase...");
-            // Verifica sessão atual - timeout de 15 segundos para evitar quedas prematuras na Vercel (I1)
-            const sessionPromise = supabase.auth.getSession();
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000));
-            
-            const { data: { session } } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
-            
-            // Reset retry count on success
-            loadAllRetryCountRef.current = 0;
+            const { data: { session } } = await supabase.auth.getSession();
             
             const sessionUser = session?.user || null;
             loggedInUser = sessionUser;
@@ -418,26 +411,15 @@ const App: FC = () => {
                 await loadOrganizations();
                 console.log(`[Rastreamento] [loadAll] Passo 1 concluído. activeOrganizationId de financeService: ${financeService.activeOrganizationId}`);
             }
+            setIsOffline(false);
         } catch (e: any) {
             console.warn("Supabase connection check failed:", e.message);
             
             // Limpar estado inconsistente do localStorage para evitar bloqueios em recargas futuras (I2)
             localStorage.removeItem('fincontrol_active_org_id');
             
-            if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message === 'Timeout' || e.message?.includes('Network')) {
+            if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message?.includes('Network')) {
                 setIsOffline(true);
-            }
-            
-            // Se timeout, tentar novamente mais uma vez após 3 segundos antes de desistir (I3)
-            if (e.message === 'Timeout') {
-                if (loadAllRetryCountRef.current < 1) {
-                    loadAllRetryCountRef.current += 1;
-                    console.log("[Rastreamento] [loadAll] Timeout na ativação da sessão. Agendando retry em 3 segundos...");
-                    setTimeout(() => loadAll(false), 3000);
-                    return; // Retorna para evitar desmontar estado do loader prematuramente ou forçar login
-                } else {
-                    console.warn("[Rastreamento] [loadAll] Timeout detectado no retry também.");
-                }
             }
             
             if (isInitialFetch) {
