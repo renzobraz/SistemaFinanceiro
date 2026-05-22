@@ -416,7 +416,26 @@ const App: FC = () => {
     if (supabase) {
         try {
             console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase...");
-            const { data: { session } } = await supabase.auth.getSession();
+            let { data: { session } } = await supabase.auth.getSession();
+            
+            if (session) {
+              const expiresAt = session.expires_at || 0;
+              const now = Math.floor(Date.now() / 1000);
+              const isExpiredOrExpiring = expiresAt - now < 60; // menos de 60 segundos
+              
+              if (isExpiredOrExpiring) {
+                console.log('[Rastreamento] [loadAll] Token próximo de expirar ou expirado, fazendo refresh...');
+                try {
+                  const { data: refreshData } = await supabase.auth.refreshSession();
+                  if (refreshData.session) {
+                    session = refreshData.session;
+                    console.log('[Rastreamento] [loadAll] Token renovado com sucesso.');
+                  }
+                } catch (refreshErr: any) {
+                  console.warn('[Rastreamento] [loadAll] Falha ao renovar sessão:', refreshErr.message);
+                }
+              }
+            }
             
             const sessionUser = session?.user || null;
             loggedInUser = sessionUser;
