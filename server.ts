@@ -5,7 +5,6 @@ import { fileURLToPath } from "url";
 import YahooFinance from "yahoo-finance2";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import { rateLimit } from "express-rate-limit";
 import crypto from "crypto";
@@ -1033,22 +1032,26 @@ export const app = express();
   // Configuração do Vite/Static
   if (process.env.NODE_ENV !== "production") {
     console.log("Configurando Vite...");
-    createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    }).then((vite) => {
-      app.use(vite.middlewares);
-      console.log("Vite pronto.");
-      
-      const server = app.listen(PORT, "0.0.0.0", () => {
-        console.log(`>>> Servidor dev ouvindo na porta ${PORT}.`);
-      });
+    import("vite").then(({ createServer: createViteServer }) => {
+      createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      }).then((vite) => {
+        app.use(vite.middlewares);
+        console.log("Vite pronto.");
+        
+        const server = app.listen(PORT, "0.0.0.0", () => {
+          console.log(`>>> Servidor dev ouvindo na porta ${PORT}.`);
+        });
 
-      server.on('error', (err: any) => {
-        console.error('Erro crítico no servidor dev:', err);
+        server.on('error', (err: any) => {
+          console.error('Erro crítico no servidor dev:', err);
+        });
+      }).catch(err => {
+        console.error("Erro ao inicializar Vite:", err);
       });
     }).catch(err => {
-      console.error("Erro ao inicializar Vite:", err);
+      console.error("Erro ao importar dinamicamente Vite:", err);
     });
   } else {
     const distPath = path.join(process.cwd(), "dist");
