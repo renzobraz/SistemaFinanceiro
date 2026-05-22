@@ -135,8 +135,6 @@ console.error = (...args: any[]) => {
 // -----------------------------------------------------------
 
 // O Yahoo Finance 3.x silencia erros de validação via configuração ou catch
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 function sanitizeYahooError(e: any): any {
   if (!e) return { message: "Erro desconhecido no Yahoo Finance" };
