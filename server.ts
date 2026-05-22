@@ -191,9 +191,8 @@ async function robustChart(symbol: string, options: any) {
   }
 }
 
-async function startServer() {
-  const PORT = 3000;
-  const app = express();
+export const PORT = 3000;
+export const app = express();
 
   // Helmet para cabeçalhos de segurança HTTP (I4)
   if (process.env.NODE_ENV === "production") {
@@ -1036,28 +1035,37 @@ async function startServer() {
   // Configuração do Vite/Static
   if (process.env.NODE_ENV !== "production") {
     console.log("Configurando Vite...");
-    const vite = await createViteServer({
+    createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
+    }).then((vite) => {
+      app.use(vite.middlewares);
+      console.log("Vite pronto.");
+      
+      const server = app.listen(PORT, "0.0.0.0", () => {
+        console.log(`>>> Servidor dev ouvindo na porta ${PORT}.`);
+      });
+
+      server.on('error', (err: any) => {
+        console.error('Erro crítico no servidor dev:', err);
+      });
+    }).catch(err => {
+      console.error("Erro ao inicializar Vite:", err);
     });
-    app.use(vite.middlewares);
-    console.log("Vite pronto.");
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
+
+    if (!process.env.VERCEL) {
+      const server = app.listen(PORT, "0.0.0.0", () => {
+        console.log(`>>> Servidor prod ouvindo na porta ${PORT}. Pronto para receber requisições.`);
+      });
+
+      server.on('error', (err: any) => {
+        console.error('Erro crítico no servidor prod:', err);
+      });
+    }
   }
-
-  // Inicia o servidor apenas após todas as rotas serem registradas
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`>>> Servidor ouvindo na porta ${PORT}. Pronto para receber requisições.`);
-  });
-
-  server.on('error', (err: any) => {
-    console.error('Erro crítico no servidor:', err);
-  });
-}
-
-startServer();
