@@ -595,6 +595,10 @@ app.get("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
 
 // API SMTP Settings - POST
 app.post("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
+  console.log('[SMTP-POST] Requisição recebida');
+  console.log('[SMTP-POST] Body:', JSON.stringify(req.body));
+  console.log('[SMTP-POST] SMTP_ENCRYPTION_KEY presente:', !!process.env.SMTP_ENCRYPTION_KEY);
+  console.log('[SMTP-POST] User:', req.user?.id);
   try {
     const userId = req.user.id;
     const settings = req.body;
@@ -655,12 +659,18 @@ app.post("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
       .from('smtp_settings')
       .upsert(payload, { onConflict: 'user_id' });
 
-    if (error) throw error;
+    if (error) {
+      console.error("[SMTP-SAVE] Erro de banco no Supabase:", error);
+      throw error;
+    }
 
     return res.json({ success: true, message: "SMTP salvo com sucesso." });
   } catch (err: any) {
-    console.error("[SMTP-SAVE] Erro:", err);
-    return res.status(500).json({ error: "Falha ao salvar configurações", details: err.message });
+    console.error("[SMTP-SAVE] Exception capturada completa:", err);
+    if (err && err.stack) {
+      console.error("[SMTP-SAVE] Stack trace:", err.stack);
+    }
+    return res.status(500).json({ error: "Falha ao salvar configurações", details: err ? err.message || String(err) : "Erro desconhecido" });
   }
 });
 

@@ -95,10 +95,8 @@ const App: FC = () => {
       let activeUser = forceUser || user;
       
       if (!activeUser) {
-        console.log("[loadOrganizations] Sem activeUser direto. Obtendo sessão de forma segura...");
-        const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Session Timeout')), 10000));
-        const { data: sessionData } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
+        console.log("[loadOrganizations] Sem activeUser direto. Obtendo sessão...");
+        const { data: sessionData } = await supabase.auth.getSession();
         activeUser = sessionData?.session?.user || null;
       }
       
@@ -405,10 +403,8 @@ const App: FC = () => {
 
     if (supabase) {
         try {
-            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase de forma segura com timeout de 8s...");
-            const sessionPromise = supabase.auth.getSession();
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Auth Session Timeout')), 8000));
-            const { data: { session } } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
+            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase...");
+            const { data: { session } } = await supabase.auth.getSession();
             
             const sessionUser = session?.user || null;
             loggedInUser = sessionUser;
