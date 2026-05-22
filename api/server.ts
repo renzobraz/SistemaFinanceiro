@@ -340,24 +340,34 @@ const emailTestRateLimiter = rateLimit({
 const requireAuth = async (req: any, res: any, next: any) => {
   try {
     const authHeader = req.headers.authorization;
+    console.log('[RequireAuth] Header presente:', !!authHeader);
+    
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      console.log('[RequireAuth] Token ausente ou inválido');
       return res.status(401).json({ error: "Acesso negado: Bearer token ausente" });
     }
 
     const token = authHeader.split(" ")[1];
     if (!token) {
+      console.log('[RequireAuth] Token vazio extraído do Bearer');
       return res.status(401).json({ error: "Acesso negado: Token ausente" });
     }
 
     const supabaseUrl = process.env.VITE_SUPABASE_URL;
     const supabaseKey = process.env.VITE_SUPABASE_KEY;
 
+    console.log('[RequireAuth] Supabase URL presente:', !!supabaseUrl);
+    console.log('[RequireAuth] Supabase Key presente:', !!supabaseKey);
+
     if (!supabaseUrl || !supabaseKey) {
+      console.error('[RequireAuth] Variáveis de ambiente ausentes!');
       return res.status(500).json({ error: "Configuração do banco ausente no servidor" });
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
     const { data: { user }, error } = await supabase.auth.getUser(token);
+    
+    console.log('[RequireAuth] User encontrado:', !!user, 'Erro:', error?.message);
 
     if (error || !user) {
       return res.status(401).json({ error: "Não autorizado: Token inválido" });
@@ -367,7 +377,7 @@ const requireAuth = async (req: any, res: any, next: any) => {
     req.token = token;
     next();
   } catch (err: any) {
-    console.error("[RequireAuth] Erro na validação:", err);
+    console.error("[RequireAuth] Erro crítico:", err.message);
     return res.status(500).json({ error: "Erro de autenticação" });
   }
 };
