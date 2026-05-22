@@ -83,7 +83,7 @@ const App: FC = () => {
   const [createdBankId, setCreatedBankId] = useState('');
   const [createdWalletId, setCreatedWalletId] = useState('');
 
-  const loadOrganizations = useCallback(async (selectedOrgId?: string) => {
+  const loadOrganizations = useCallback(async (selectedOrgId?: string, forceUser?: any) => {
     try {
       const supabase = financeService.getSupabase();
       if (!supabase) {
@@ -92,17 +92,25 @@ const App: FC = () => {
         return;
       }
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const user = sessionData?.session?.user;
-      console.log("[loadOrganizations] Buscando organizações. Usuário atual:", user?.email || 'Nenhum');
+      let activeUser = forceUser || user;
+      
+      if (!activeUser) {
+        console.log("[loadOrganizations] Sem activeUser direto. Obtendo sessão de forma segura...");
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Session Timeout')), 10000));
+        const { data: sessionData } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
+        activeUser = sessionData?.session?.user || null;
+      }
+      
+      console.log("[loadOrganizations] Buscando organizações. Usuário atual:", activeUser?.email || 'Nenhum');
 
-      if (!user) {
+      if (!activeUser) {
         console.log("[loadOrganizations] Nenhum usuário logado. Cancelando verificação de onboarding.");
         setIsOnboarding(false);
         return;
       }
 
-      const orgs = await financeService.getMyOrganizations();
+      const orgs = await financeService.getMyOrganizations(activeUser.id);
       console.log("[loadOrganizations] Organizações retornadas do banco:", orgs);
       setOrganizations(orgs);
 
@@ -397,8 +405,10 @@ const App: FC = () => {
 
     if (supabase) {
         try {
-            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase...");
-            const { data: { session } } = await supabase.auth.getSession();
+            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase de forma segura com timeout de 8s...");
+            const sessionPromise = supabase.auth.getSession();
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Auth Session Timeout')), 8000));
+            const { data: { session } } = (await Promise.race([sessionPromise, timeoutPromise])) as any;
             
             const sessionUser = session?.user || null;
             loggedInUser = sessionUser;
@@ -408,7 +418,7 @@ const App: FC = () => {
             console.log(`[Rastreamento] [loadAll] Usuário ativo: ${sessionUser ? sessionUser.email : 'Nenhum'}`);
             if (sessionUser) {
                 console.log("[Rastreamento] [loadAll] Passo 1: Carregando organizações de forma assíncrona garantindo conclusão...");
-                await loadOrganizations();
+                await loadOrganizations(undefined, sessionUser);
                 console.log(`[Rastreamento] [loadAll] Passo 1 concluído. activeOrganizationId de financeService: ${financeService.activeOrganizationId}`);
             }
             setIsOffline(false);
@@ -418,7 +428,7 @@ const App: FC = () => {
             // Limpar estado inconsistente do localStorage para evitar bloqueios em recargas futuras (I2)
             localStorage.removeItem('fincontrol_active_org_id');
             
-            if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message?.includes('Network')) {
+            if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message?.includes('Network') || e.message?.includes('Timeout')) {
                 setIsOffline(true);
             }
             
@@ -516,7 +526,7 @@ const App: FC = () => {
             if (newUser) {
                 if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
                     console.log("[onAuthStateChange] Carregando novas organizações para o usuário...");
-                    await loadOrganizations();
+                    await loadOrganizations(undefined, newUser);
                     await loadAll(false);
                 }
             } else {
@@ -840,7 +850,7 @@ const App: FC = () => {
         } as any);
       }
       
-      await loadOrganizations();
+      await loadOrganizations(undefined, user);
       await loadAll(true);
       setIsOnboarding(false);
       setActiveTab('dashboard');

@@ -414,29 +414,113 @@ export const financeService = {
     cache.balances = {};
   },
 
-  async getMyOrganizations(): Promise<Organization[]> {
+  async getMyOrganizations(userId?: string): Promise<Organization[]> {
     const supabase = getSupabase();
     if (!supabase) return [];
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return [];
+      let activeUserId = userId;
+      if (!activeUserId) {
+        console.log('[getMyOrganizations] Sem userId direto. Obtendo sessão do Supabase...');
+        const { data: { session } } = await supabase.auth.getSession();
+        activeUserId = session?.user?.id || null;
+      }
+      
+      if (!activeUserId) return [];
 
-      console.log('[getMyOrganizations] Chamando RPC com user.id:', user.id);
+      console.log('[getMyOrganizations] Chamando RPC com user.id:', activeUserId);
 
-      const rpcPromise = supabase.rpc('get_user_organizations', { p_user_id: user.id });
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('RPC Timeout')), 5000)
-      );
+      let data: any = null;
+      let error: any = null;
 
-      const { data, error } = await Promise.race([rpcPromise, timeoutPromise]) as any;
+      try {
+        const rpcPromise = supabase.rpc('get_user_organizations', { p_user_id: activeUserId });
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('RPC Timeout')), 3500)
+        );
 
-      console.log('[getMyOrganizations] data:', JSON.stringify(data));
-      console.log('[getMyOrganizations] error:', error);
+        const rpcResult = await Promise.race([rpcPromise, timeoutPromise]) as any;
+        data = rpcResult.data;
+        error = rpcResult.error;
+        console.log('[getMyOrganizations] RPC success data:', JSON.stringify(data));
+      } catch (rpcErr: any) {
+        console.warn('[getMyOrganizations] RPC falhou ou deu timeout, iniciando fallback direto:', rpcErr.message);
+        error = rpcErr;
+      }
 
-      if (error) return [];
+      if (error || !data || data.length === 0) {
+        console.log('[getMyOrganizations] Utilizando Fallback do banco via queries nativas...');
+        const fallbackData = await this.getMyOrganizationsFallback(activeUserId);
+        console.log('[getMyOrganizations] Fallback concluído com sucesso. Total retornado:', fallbackData.length);
+        return fallbackData;
+      }
+
       return data as Organization[] || [];
     } catch (e: any) {
-      console.error('[getMyOrganizations] Exception:', e.message);
+      console.error('[getMyOrganizations] Exception no fluxo principal:', e.message);
+      try {
+        const activeUserId = userId || (await supabase.auth.getSession()).data.session?.user?.id;
+        if (activeUserId) {
+          return await this.getMyOrganizationsFallback(activeUserId);
+        }
+      } catch (f: any) {
+        console.error('[getMyOrganizations] Fallback final também falhou:', f.message);
+      }
+      return [];
+    }
+  },
+
+  async getMyOrganizationsFallback(activeUserId: string): Promise<Organization[]> {
+    const supabase = getSupabase();
+    if (!supabase) return [];
+    try {
+      // 1. Obter organizações onde o usuário é dono direto
+      const { data: ownedData, error: ownedError } = await supabase
+        .from('organizations')
+        .select('*')
+        .eq('owner_id', activeUserId);
+      
+      if (ownedError) {
+        console.warn('[getMyOrganizationsFallback] Erro ao buscar organizações próprias:', ownedError);
+      }
+
+      // 2. Obter membros em que o usuário faz parte
+      const { data: membersData, error: membersError } = await supabase
+        .from('organization_members')
+        .select('organization_id')
+        .eq('user_id', activeUserId);
+
+      if (membersError) {
+        console.warn('[getMyOrganizationsFallback] Erro ao buscar associações de membros:', membersError);
+      }
+
+      const orgIds = new Set<string>();
+      if (ownedData) {
+        ownedData.forEach((org: any) => orgIds.add(org.id));
+      }
+
+      const memberOrgIds = (membersData || []).map((m: any) => m.organization_id).filter(Boolean);
+      
+      let mergedOrgs: Organization[] = ownedData ? [...ownedData] : [];
+
+      if (memberOrgIds.length > 0) {
+        const remainingIds = memberOrgIds.filter((id: string) => !orgIds.has(id));
+        if (remainingIds.length > 0) {
+          const { data: memberOrgs, error: memberOrgsError } = await supabase
+            .from('organizations')
+            .select('*')
+            .in('id', remainingIds);
+
+          if (memberOrgsError) {
+            console.warn('[getMyOrganizationsFallback] Erro ao buscar detalhes das organizações de membro:', memberOrgsError);
+          } else if (memberOrgs) {
+            mergedOrgs = [...mergedOrgs, ...memberOrgs];
+          }
+        }
+      }
+
+      return mergedOrgs;
+    } catch (err: any) {
+      console.error('[getMyOrganizationsFallback] Falha geral no fallback:', err.message);
       return [];
     }
   },
