@@ -108,13 +108,25 @@ const App: FC = () => {
         return;
       }
 
-      const orgs = await financeService.getMyOrganizations(activeUser.id);
+      let orgs = await financeService.getMyOrganizations(activeUser.id);
       console.log("[loadOrganizations] Organizações retornadas do banco:", orgs);
+
+      // Se não houver nenhuma organização no banco de dados e temos um usuário logado remoto,
+      // podemos estar diante de um Cold Start do Supabase. Vamos aguardar 3s e tentar novamente antes de ativar onboarding.
+      if (orgs.length === 0) {
+        console.log("[loadOrganizations] Nenhuma organização encontrada inicial. Aguardando 3 segundos para re-tentar fluxo devido a possível cold start...");
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        console.log("[loadOrganizations] Re-tentando carregar organizações...");
+        orgs = await financeService.getMyOrganizations(activeUser.id);
+        console.log("[loadOrganizations] Organizações retornadas após re-tentativa:", orgs);
+      }
+
       setOrganizations(orgs);
 
-      // Se não houver nenhuma organização no banco de dados e temos um usuário logado remoto
+      // Se não houver mesmo após re-tentativa, ativa onboarding
       if (orgs.length === 0) {
-        console.log("[loadOrganizations] Nenhuma organização encontrada para o usuário. Ativando Onboarding.");
+        console.log("[loadOrganizations] Nenhuma organização encontrada mesmo após re-tentativa. Ativando Onboarding.");
         setIsOnboarding(true);
         setActiveTab('onboarding');
         setActiveOrg(null);
