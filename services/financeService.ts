@@ -472,25 +472,50 @@ export const financeService = {
   async getMyOrganizationsFallback(activeUserId: string): Promise<Organization[]> {
     const supabase = getSupabase();
     if (!supabase) return [];
+    
+    console.log('[getMyOrganizations-Fallback] Iniciando queries diretas para o usuário:', activeUserId);
+    
     try {
       // 1. Obter organizações onde o usuário é dono direto
-      const { data: ownedData, error: ownedError } = await supabase
+      console.log('[getMyOrganizations-Fallback] Buscando organizações próprias (Q1)...');
+      const q1Promise = supabase
         .from('organizations')
         .select('*')
         .eq('owner_id', activeUserId);
       
+      const q1Timeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Q1 Timeout (organizations)')), 5000)
+      );
+
+      const q1Result = await Promise.race([q1Promise, q1Timeout]) as any;
+      const ownedData = q1Result.data;
+      const ownedError = q1Result.error;
+
       if (ownedError) {
-        console.warn('[getMyOrganizationsFallback] Erro ao buscar organizações próprias:', ownedError);
+        console.warn('[getMyOrganizations-Fallback] Erro ao buscar organizações próprias:', ownedError);
+      } else {
+        console.log('[getMyOrganizations-Fallback] Q1 concluído com sucesso. Total próprio:', ownedData?.length);
       }
 
       // 2. Obter membros em que o usuário faz parte
-      const { data: membersData, error: membersError } = await supabase
+      console.log('[getMyOrganizations-Fallback] Buscando associações de membros (Q2)...');
+      const q2Promise = supabase
         .from('organization_members')
         .select('organization_id')
         .eq('user_id', activeUserId);
 
+      const q2Timeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Q2 Timeout (organization_members)')), 5000)
+      );
+
+      const q2Result = await Promise.race([q2Promise, q2Timeout]) as any;
+      const membersData = q2Result.data;
+      const membersError = q2Result.error;
+
       if (membersError) {
-        console.warn('[getMyOrganizationsFallback] Erro ao buscar associações de membros:', membersError);
+        console.warn('[getMyOrganizations-Fallback] Erro ao buscar associações de membros:', membersError);
+      } else {
+        console.log('[getMyOrganizations-Fallback] Q2 concluído com sucesso. Total membros:', membersData?.length);
       }
 
       const orgIds = new Set<string>();
@@ -505,22 +530,33 @@ export const financeService = {
       if (memberOrgIds.length > 0) {
         const remainingIds = memberOrgIds.filter((id: string) => !orgIds.has(id));
         if (remainingIds.length > 0) {
-          const { data: memberOrgs, error: memberOrgsError } = await supabase
+          console.log('[getMyOrganizations-Fallback] Buscando detalhes de organizações de membros (Q3) para IDs:', remainingIds);
+          const q3Promise = supabase
             .from('organizations')
             .select('*')
             .in('id', remainingIds);
 
+          const q3Timeout = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Q3 Timeout (organizations detail)')), 5000)
+          );
+
+          const q3Result = await Promise.race([q3Promise, q3Timeout]) as any;
+          const memberOrgs = q3Result.data;
+          const memberOrgsError = q3Result.error;
+
           if (memberOrgsError) {
-            console.warn('[getMyOrganizationsFallback] Erro ao buscar detalhes das organizações de membro:', memberOrgsError);
+            console.warn('[getMyOrganizations-Fallback] Erro ao buscar detalhes das organizações de membro:', memberOrgsError);
           } else if (memberOrgs) {
+            console.log('[getMyOrganizations-Fallback] Q3 concluído com sucesso. Total membro detalhe:', memberOrgs.length);
             mergedOrgs = [...mergedOrgs, ...memberOrgs];
           }
         }
       }
 
+      console.log('[getMyOrganizations-Fallback] Processo finalizado com sucesso. Total de organizações merged:', mergedOrgs.length);
       return mergedOrgs;
     } catch (err: any) {
-      console.error('[getMyOrganizationsFallback] Falha geral no fallback:', err.message);
+      console.error('[getMyOrganizations-Fallback] Falha geral no fallback:', err.message);
       return [];
     }
   },
