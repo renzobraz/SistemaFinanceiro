@@ -383,7 +383,7 @@ const requireAuth = async (req: any, res: any, next: any) => {
 };
 
 // API Send-Invite
-app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req, res) => {
+app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req: any, res: any) => {
   try {
     const { email, invitedBy, ownerId, role } = req.body;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -411,7 +411,13 @@ app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req, res) =>
       return res.status(500).json({ error: "Configuração do banco de dados ausente." });
     }
     
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${req.token}`
+        }
+      }
+    });
     let smtpConfig: any = null;
 
     if (ownerId) {
@@ -575,7 +581,13 @@ app.get("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
       return res.status(500).json({ error: "Configuração do banco ausente" });
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${req.token}`
+        }
+      }
+    });
     const { data, error } = await supabase
       .from('smtp_settings')
       .select('*')
@@ -652,7 +664,13 @@ app.post("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
       return res.status(500).json({ error: "Configuração do banco ausente" });
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${req.token}`
+        }
+      }
+    });
 
     const payload = {
       host,
