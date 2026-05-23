@@ -501,10 +501,10 @@ export const financeService = {
       let error: any = null;
 
       try {
-        console.log('[getMyOrganizations] Executando RPC com timeout de 15s...');
+        console.log('[getMyOrganizations] Executando RPC com timeout de 45s...');
         const rpcPromise = supabase.rpc('get_user_organizations', { p_user_id: activeUserId });
         const rpcTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('RPC Timeout após 15 segundos — redirecionando para fallback')), 15000)
+          setTimeout(() => reject(new Error('RPC Timeout após 45 segundos — redirecionando para fallback')), 45000)
         );
         const result = await Promise.race([rpcPromise, rpcTimeout]) as any;
         data = result.data;
@@ -545,14 +545,14 @@ export const financeService = {
     
     try {
       // 1. Obter organizações onde o usuário é dono direto
-      console.log('[getMyOrganizations-Fallback] ⏳ [Passo 1/3] Buscando organizações de propriedade do usuário (Q1) com timeout de 15s...');
+      console.log('[getMyOrganizations-Fallback] ⏳ [Passo 1/3] Buscando organizações de propriedade do usuário (Q1) com timeout de 45s...');
       const q1Promise = supabase
         .from('organizations')
         .select('*')
         .eq('owner_id', activeUserId);
 
       const q1Timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Q1 Timeout (organizations owned) após 15 segundos')), 15000)
+        setTimeout(() => reject(new Error('Q1 Timeout (organizations owned) após 45 segundos')), 45000)
       );
 
       const q1Result = await Promise.race([q1Promise, q1Timeout]) as any;
@@ -566,14 +566,14 @@ export const financeService = {
       }
 
       // 2. Obter membros em que o usuário faz parte
-      console.log('[getMyOrganizations-Fallback] ⏳ [Passo 2/3] Buscando associações de membros (Q2)...');
+      console.log('[getMyOrganizations-Fallback] ⏳ [Passo 2/3] Buscando associações de membros (Q2) com timeout de 45s...');
       const q2Promise = supabase
         .from('organization_members')
         .select('organization_id')
         .eq('user_id', activeUserId);
 
       const q2Timeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Q2 Timeout (organization_members) após 10 segundos')), 10000)
+        setTimeout(() => reject(new Error('Q2 Timeout (organization_members) após 45 segundos')), 45000)
       );
 
       const q2Result = await Promise.race([q2Promise, q2Timeout]) as any;
@@ -598,14 +598,14 @@ export const financeService = {
       if (memberOrgIds.length > 0) {
         const remainingIds = memberOrgIds.filter((id: string) => !orgIds.has(id));
         if (remainingIds.length > 0) {
-          console.log('[getMyOrganizations-Fallback] ⏳ [Passo 3/3] Buscando detalhes de organizações de membros externos (Q3) para IDs:', remainingIds);
+          console.log('[getMyOrganizations-Fallback] ⏳ [Passo 3/3] Buscando detalhes de organizações de membros externos (Q3) para IDs: ' + remainingIds);
           const q3Promise = supabase
             .from('organizations')
             .select('*')
             .in('id', remainingIds);
 
           const q3Timeout = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Q3 Timeout (organizations detail) após 10 segundos')), 10000)
+            setTimeout(() => reject(new Error('Q3 Timeout (organizations detail) após 45 segundos')), 45000)
           );
 
           const q3Result = await Promise.race([q3Promise, q3Timeout]) as any;

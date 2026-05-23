@@ -114,6 +114,7 @@ const App: FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [activeRegistryTab, setActiveRegistryTab] = useState('wallets'); 
   const [loading, setLoading] = useState(true);
+  const [loadingSubText, setLoadingSubText] = useState('Carregando registros do Supabase...');
   const [refreshing, setRefreshing] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isLocalMode, setIsLocalMode] = useState(false);
@@ -156,16 +157,16 @@ const App: FC = () => {
       let activeUser = forceUser || user;
       
       if (!activeUser) {
-        console.log("[loadOrganizations] Sem activeUser direto. Obtendo sessão com timeout de 8s...");
+        console.log("[loadOrganizations] Sem activeUser direto. Obtendo sessão...");
         try {
           const sessionPromise = supabase.auth.getSession();
           const sessionTimeout = new Promise<any>((_, reject) =>
-            setTimeout(() => reject(new Error('Timeout de 8s ao obter sessão em loadOrganizations')), 8000)
+            setTimeout(() => reject(new Error('Timeout ao obter sessão em loadOrganizations')), 45000)
           );
           const { data: sessionData } = await Promise.race([sessionPromise, sessionTimeout]);
           activeUser = sessionData?.session?.user || null;
         } catch (sessErr: any) {
-          console.warn("[loadOrganizations] Falha ou timeout de 8s ao obter sessão em loadOrganizations:", sessErr.message);
+          console.warn("[loadOrganizations] Falha ou timeout ao obter sessão em loadOrganizations:", sessErr.message);
           activeUser = null;
         }
       }
@@ -470,7 +471,18 @@ const App: FC = () => {
 
   const loadAll = async (isInitialFetch = false) => {
     console.log(`[Rastreamento] [loadAll] Iniciando carregamento de tudo. isInitialFetch: ${isInitialFetch}`);
-    if (isInitialFetch) setLoading(true);
+    if (isInitialFetch) {
+      setLoading(true);
+      setLoadingSubText('Iniciando sincronização...');
+    }
+    
+    // Configura o temporizador de Cold Start
+    let coldStartTimer: any = null;
+    if (isInitialFetch) {
+      coldStartTimer = setTimeout(() => {
+        setLoadingSubText('O banco de dados do Supabase está acordando (Cold Start)... Aguarde, isso pode levar de 15 a 30 segundos.');
+      }, 3500);
+    }
     
     // Verifica conexão
     const supabase = financeService.getSupabase();
@@ -485,10 +497,11 @@ const App: FC = () => {
 
     if (supabase) {
         try {
-            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase com timeout de 8s...");
+            if (isInitialFetch) setLoadingSubText('Obtendo sessão ativa do Supabase...');
+            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase com timeout de 45s...");
             const getSessionPromise = supabase.auth.getSession();
             const getSessionTimeout = new Promise<any>((_, reject) =>
-              setTimeout(() => reject(new Error('Timeout de 8s ao obter sessão do Supabase no loadAll')), 8000)
+              setTimeout(() => reject(new Error('Timeout ao obter sessão do Supabase no loadAll')), 45000)
             );
             let { data: { session } } = await Promise.race([getSessionPromise, getSessionTimeout]);
             
@@ -498,11 +511,12 @@ const App: FC = () => {
               const isExpiredOrExpiring = expiresAt - now < 60; // menos de 60 segundos
               
               if (isExpiredOrExpiring) {
-                console.log('[Rastreamento] [loadAll] Token próximo de expirar ou expirado, fazendo refresh com timeout de 8s...');
+                if (isInitialFetch) setLoadingSubText('Sessão expirada. Renovando credenciais de acesso...');
+                console.log('[Rastreamento] [loadAll] Token próximo de expirar ou expirado, fazendo refresh com timeout de 45s...');
                 try {
                   const refreshPromise = supabase.auth.refreshSession();
                   const refreshTimeout = new Promise<any>((_, reject) =>
-                    setTimeout(() => reject(new Error('Timeout de 8s ao renovar token do Supabase no loadAll')), 8000)
+                    setTimeout(() => reject(new Error('Timeout ao renovar token do Supabase no loadAll')), 45000)
                   );
                   const { data: refreshData } = await Promise.race([refreshPromise, refreshTimeout]);
                   if (refreshData.session) {
@@ -522,6 +536,7 @@ const App: FC = () => {
             
             console.log(`[Rastreamento] [loadAll] Usuário ativo: ${sessionUser ? sessionUser.email : 'Nenhum'}`);
             if (sessionUser) {
+                if (isInitialFetch) setLoadingSubText('Carregando informações da sua organização...');
                 console.log("[Rastreamento] [loadAll] Passo 1: Carregando organizações de forma assíncrona garantindo conclusão...");
                 await loadOrganizations(undefined, sessionUser);
                 console.log(`[Rastreamento] [loadAll] Passo 1 concluído. activeOrganizationId de financeService: ${financeService.activeOrganizationId}`);
@@ -538,6 +553,7 @@ const App: FC = () => {
             }
             
             if (isInitialFetch) {
+                if (coldStartTimer) clearTimeout(coldStartTimer);
                 setLoading(false);
             }
         }
@@ -549,6 +565,7 @@ const App: FC = () => {
         console.warn("[Rastreamento] [loadAll] Supabase configurado, mas nenhum usuário ativo encontrado (sessão nula ou timeout de conexão). Encerrando carregamento de dados e forçando exibição da tela de login.");
         setUser(null);
         if (isInitialFetch) {
+            if (coldStartTimer) clearTimeout(coldStartTimer);
             setLoading(false);
         }
         return;
@@ -561,6 +578,7 @@ const App: FC = () => {
     if (isSupabaseConfigured && loggedInUser && !activeOrgId) {
         console.warn("[Rastreamento] [loadAll] Supabase ativo e usuário logado, mas activeOrganizationId continua nulo (fluxo de Onboarding ou carregamento). Cancelando carga sequencial subsequente de cadastros e transações.");
         if (isInitialFetch) {
+            if (coldStartTimer) clearTimeout(coldStartTimer);
             setLoading(false);
         }
         return;
@@ -574,6 +592,7 @@ const App: FC = () => {
     // para que a busca de transações já use os filtros corretos
     if (!initialPrefsApplied.current) {
         try {
+            if (isInitialFetch) setLoadingSubText('Carregando preferências de visualização...');
             console.log("[Rastreamento] [loadAll] Buscando preferências de usuário...");
             const savedPrefs = await financeService.getUserSettings();
             console.log("[Rastreamento] [loadAll] Preferências do usuário recuperadas:", savedPrefs);
@@ -596,8 +615,11 @@ const App: FC = () => {
 
     // Carrega registros e transações de forma sequencial para garantir consistência
     try {
+        if (isInitialFetch) setLoadingSubText('Carregando bancos, carteiras e cadastros...');
         console.log("[Rastreamento] [loadAll] Passo 2: Chamando loadRegistries()...");
         await loadRegistries();
+        
+        if (isInitialFetch) setLoadingSubText('Sincronizando fluxo de caixa e transações...');
         console.log("[Rastreamento] [loadAll] Passo 3: Chamando loadTransactions()...");
         await loadTransactions();
         console.log("[Rastreamento] [loadAll] Todos os passos concluídos com êxito.");
@@ -606,6 +628,7 @@ const App: FC = () => {
     }
 
     if (isInitialFetch) {
+        if (coldStartTimer) clearTimeout(coldStartTimer);
         setLoading(false);
     }
   };
@@ -915,9 +938,9 @@ const App: FC = () => {
             <div className="w-16 h-16 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
             <Database className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 text-blue-600" />
         </div>
-        <div className="text-center">
+        <div className="text-center max-w-md px-6">
             <p className="text-slate-800 font-bold text-lg">Sincronizando Dados</p>
-            <p className="text-slate-500 text-sm">Carregando seus registros do Supabase...</p>
+            <p className="text-slate-500 text-sm mt-1 transition-all duration-300">{loadingSubText}</p>
         </div>
       </div>
     );
