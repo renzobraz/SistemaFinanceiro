@@ -461,6 +461,7 @@ export interface TransactionFilters {
 function cleanPermissionObject(p: any): any {
   if (!p) return p;
   const cleaned = { ...p };
+  cleaned.rawRole = p.role; // Preserva o role bruto original para edição posterior
   if (cleaned.role && cleaned.role.includes(':')) {
     cleaned.role = cleaned.role.split(':')[0];
   }
@@ -1062,10 +1063,18 @@ export const financeService = {
       }
     }
 
-    // 3. Atualiza status no user_permissions para ativo
+    // 3. Atualiza status no user_permissions para ativo e anexa o IDs de usuário no mapeamento do role
+    const mappingWithUserId = { ...walletProfiles, _user_id: session.user.id };
+    const updatedRole = invitation.role && invitation.role.includes(':') 
+      ? `${invitation.role.split(':')[0]}:${JSON.stringify(mappingWithUserId)}`
+      : `${invitation.role || 'viewer'}:${JSON.stringify(mappingWithUserId)}`;
+
     const { error } = await supabase
       .from('user_permissions')
-      .update({ status: 'active' })
+      .update({ 
+        status: 'active',
+        role: updatedRole
+      })
       .eq('id', invitationId);
 
     if (error) throw error;
@@ -1088,19 +1097,23 @@ export const financeService = {
       }
 
       if (orgId) {
-        const inserts = Object.entries(walletProfiles).map(([walletId, profileId]) => ({
-          organization_id: orgId,
-          user_id: session.user.id,
-          wallet_id: walletId,
-          profile_id: profileId
-        }));
+        const inserts = Object.entries(walletProfiles)
+          .filter(([key]) => !key.startsWith('_'))
+          .map(([walletId, profileId]) => ({
+            organization_id: orgId,
+            user_id: session.user.id,
+            wallet_id: walletId,
+            profile_id: profileId
+          }));
 
-        const { error: insertErr } = await supabase
-          .from('user_wallet_permissions')
-          .insert(inserts);
+        if (inserts.length > 0) {
+          const { error: insertErr } = await supabase
+            .from('user_wallet_permissions')
+            .insert(inserts);
 
-        if (insertErr) {
-          console.error("Erro ao salvar vínculos em user_wallet_permissions:", insertErr);
+          if (insertErr) {
+            console.error("Erro ao salvar vínculos em user_wallet_permissions:", insertErr);
+          }
         }
       }
     }

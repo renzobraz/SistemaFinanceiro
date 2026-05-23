@@ -14,7 +14,10 @@ import {
   ArrowRight,
   ShieldCheck,
   ShieldAlert,
-  UserCheck
+  UserCheck,
+  Key,
+  Pencil,
+  X
 } from 'lucide-react';
 
 // Definição dos módulos existentes no sistema conforme planejado
@@ -42,6 +45,16 @@ export const TeamManagement: React.FC = () => {
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [wallets, setWallets] = useState<any[]>([]);
   const [selectedWallets, setSelectedWallets] = useState<Record<string, string>>({});
+
+  // --- ESTADOS DE EDICAO & RECUPERACAO ---
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
+  const [resettingEmail, setResettingEmail] = useState<string | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedPermissionToEdit, setSelectedPermissionToEdit] = useState<UserPermission | null>(null);
+  const [editUserName, setEditUserName] = useState('');
+  const [editUserProfileId, setEditUserProfileId] = useState('');
+  const [editSelectedWallets, setEditSelectedWallets] = useState<Record<string, string>>({});
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // --- ESTADOS DA NOVA ABA DE PERFIS ---
   const [activeTab, setActiveTab] = useState<'team' | 'profiles'>('team');
@@ -77,6 +90,7 @@ export const TeamManagement: React.FC = () => {
         const orgId = financeService.activeOrganizationId;
 
         if (user && orgId) {
+          setCurrentUserEmail(user.email || '');
           const { data: memberData } = await supabase
             .from('organization_members')
             .select('role')
@@ -307,6 +321,202 @@ export const TeamManagement: React.FC = () => {
       loadData();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // --- AUXILIARES E ACOES DE MEMBROS (MODELO DE EDITAR E PASSWORD RESET) ---
+  const getWalletProfilesOfPermission = (p: UserPermission & { rawRole?: string }): Record<string, string> => {
+    let walletProfiles: Record<string, string> = {};
+    const rawRole = p.rawRole || '';
+    if (rawRole && rawRole.includes(':')) {
+      try {
+        const jsonPart = rawRole.substring(rawRole.indexOf(':') + 1);
+        walletProfiles = JSON.parse(jsonPart);
+      } catch (err) {
+        console.warn("Failed parsing wallet profiles from rawRole:", err);
+      }
+    } else if (p.invited_email && p.invited_email.includes('+wperms_')) {
+      try {
+        const start = p.invited_email.indexOf('+wperms_') + 8;
+        const end = p.invited_email.indexOf('@');
+        const encoded = p.invited_email.substring(start, end);
+        const jsonStr = decodeURIComponent(escape(atob(encoded)));
+        walletProfiles = JSON.parse(jsonStr);
+      } catch (err) {
+        console.warn("Failed parsing wallet profiles from email:", err);
+      }
+    }
+    return walletProfiles;
+  };
+
+  const handleResetPassword = async (email: string) => {
+    const supabase = financeService.getSupabase();
+    if (!supabase) return;
+    
+    setResettingEmail(email);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`
+      });
+      if (error) throw error;
+      alert(`E-mail de redefinição enviado para ${email}`);
+    } catch (err: any) {
+      console.error('[handleResetPassword] Erro:', err);
+      alert(`Falha ao enviar e-mail de redefinição: ${err.message || err}`);
+    } finally {
+      setResettingEmail(null);
+    }
+  };
+
+  const handleOpenEditModal = (p: UserPermission & { rawRole?: string }) => {
+    setSelectedPermissionToEdit(p);
+    
+    const mappings = getWalletProfilesOfPermission(p);
+    
+    const userName = mappings._user_name || '';
+    setEditUserName(userName);
+    
+    let selectedProfileId = '';
+    const checkedWallets: Record<string, string> = {};
+    
+    Object.entries(mappings).forEach(([k, v]) => {
+      if (!k.startsWith('_')) {
+        checkedWallets[k] = v;
+        if (!selectedProfileId) {
+          selectedProfileId = v;
+        }
+      }
+    });
+    
+    if (!selectedProfileId && profiles.length > 0) {
+      selectedProfileId = profiles[0].id;
+    }
+    
+    setEditUserProfileId(selectedProfileId);
+    setEditSelectedWallets(checkedWallets);
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditWalletToggle = (walletId: string) => {
+    setEditSelectedWallets(prev => {
+      const copy = { ...prev };
+      if (walletId in copy) {
+        delete copy[walletId];
+      } else {
+        copy[walletId] = editUserProfileId;
+      }
+      return copy;
+    });
+  };
+
+  const handleEditProfileIdChange = (profileId: string) => {
+    setEditUserProfileId(profileId);
+    setEditSelectedWallets(prev => {
+      const copy = { ...prev };
+      Object.keys(copy).forEach(k => {
+        if (!k.startsWith('_')) {
+          copy[k] = profileId;
+        }
+      });
+      return copy;
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedPermissionToEdit) return;
+    const supabase = financeService.getSupabase();
+    if (!supabase) return;
+    
+    setIsSavingEdit(true);
+    try {
+      const orgId = financeService.activeOrganizationId;
+      if (!orgId) throw new Error("Nenhuma organização ativa encontrada.");
+      
+      const walletProfiles: Record<string, string> = {};
+      Object.entries(editSelectedWallets).forEach(([walletId, profileId]) => {
+        if (!walletId.startsWith('_')) {
+          walletProfiles[walletId] = profileId;
+        }
+      });
+      
+      if (Object.keys(walletProfiles).length === 0) {
+        throw new Error("Selecione pelo menos uma carteira permitida.");
+      }
+      
+      if (editUserName.trim()) {
+        walletProfiles._user_name = editUserName.trim();
+      }
+      
+      const originalMappings = getWalletProfilesOfPermission(selectedPermissionToEdit);
+      const guestUserId = originalMappings._user_id || null;
+      
+      if (guestUserId) {
+        walletProfiles._user_id = guestUserId;
+      }
+      
+      const cleanRoleName = selectedPermissionToEdit.role || 'viewer';
+      const updatedRole = `${cleanRoleName}:${JSON.stringify(walletProfiles)}`;
+      
+      const { error: permError } = await supabase
+        .from('user_permissions')
+        .update({ role: updatedRole })
+        .eq('id', selectedPermissionToEdit.id);
+        
+      if (permError) throw permError;
+      
+      if (selectedPermissionToEdit.status === 'active') {
+        let userId = guestUserId;
+        
+        if (!userId) {
+          const walletIdsToCheck = Object.keys(originalMappings).filter(k => !k.startsWith('_'));
+          if (walletIdsToCheck.length > 0) {
+            const { data: wps } = await supabase
+              .from('user_wallet_permissions')
+              .select('user_id')
+              .eq('organization_id', orgId)
+              .in('wallet_id', walletIdsToCheck)
+              .limit(1);
+            if (wps && wps.length > 0) {
+              userId = wps[0].user_id;
+            }
+          }
+        }
+        
+        if (userId) {
+          const { error: delErr } = await supabase
+            .from('user_wallet_permissions')
+            .delete()
+            .eq('organization_id', orgId)
+            .eq('user_id', userId);
+            
+          if (delErr) throw delErr;
+          
+          const inserts = Object.entries(walletProfiles)
+            .filter(([k]) => !k.startsWith('_'))
+            .map(([walletId, profileId]) => ({
+              organization_id: orgId,
+              user_id: userId,
+              wallet_id: walletId,
+              profile_id: profileId
+            }));
+            
+          if (inserts.length > 0) {
+            const { error: insErr } = await supabase
+              .from('user_wallet_permissions')
+              .insert(inserts);
+            if (insErr) throw insErr;
+          }
+        }
+      }
+      
+      alert("Perfil editado com sucesso!");
+      setIsEditModalOpen(false);
+      loadData();
+    } catch (err: any) {
+      console.error('[handleSaveEdit] Erro:', err);
+      alert(err.message || "Falha ao salvar as alterações do perfil.");
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -716,7 +926,7 @@ export const TeamManagement: React.FC = () => {
                 </h3>
               </div>
               
-              {permissions.length === 0 ? (
+              {permissions.length === 0 && !(myRole === 'owner' && currentUserEmail) ? (
                 <div className="p-12 text-center">
                   <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
                      <Users className="w-8 h-8" />
@@ -726,39 +936,104 @@ export const TeamManagement: React.FC = () => {
                 </div>
               ) : (
                 <div className="divide-y divide-slate-50">
-                  {permissions.map(p => (
-                    <div key={p.id} className="p-5 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
+                  {/* Proprietário / Owner (Sempre no topo) */}
+                  {myRole === 'owner' && currentUserEmail && (
+                    <div className="p-5 flex items-center justify-between bg-purple-50/10 hover:bg-purple-50/20 transition-colors">
                       <div className="flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${p.status === 'active' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400'}`}>
-                          {p.status === 'active' ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-amber-100 text-amber-600 border border-amber-200/40 shadow-sm">
+                          <ShieldCheck className="w-5 h-5 text-amber-600" />
                         </div>
                         <div>
-                          <div className="text-sm font-bold text-slate-800">{p.invited_email}</div>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
-                              p.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
-                              p.role === 'editor' ? 'bg-blue-100 text-blue-700' : 
-                              'bg-slate-100 text-slate-600'
-                            }`}>
-                              {p.role}
+                          <div className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                            <span>{currentUserEmail}</span>
+                            <span className="text-[9px] font-black tracking-widest bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-full uppercase">
+                              PROPRIETÁRIO
                             </span>
-                            <span className="text-[10px] text-slate-400">•</span>
-                            <span className={`text-[10px] font-bold ${p.status === 'active' ? 'text-green-600' : 'text-amber-500'}`}>
-                              {p.status === 'active' ? 'Ativo' : 'Aguardando Aceite'}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] font-bold text-green-600">
+                              Conta Ativa
                             </span>
                           </div>
                         </div>
                       </div>
-                      
-                      <button
-                        onClick={() => handleDelete(p.id)}
-                        className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                        title="Remover acesso"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {/* Sem ações para o Proprietário */}
+                      <div className="w-20"></div>
                     </div>
-                  ))}
+                  )}
+
+                  {permissions.map(p => {
+                    const mappings = getWalletProfilesOfPermission(p);
+                    const displayName = mappings._user_name || null;
+                    return (
+                      <div key={p.id} className="p-5 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${p.status === 'active' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400'}`}>
+                            {p.status === 'active' ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <div className="text-sm font-bold text-slate-800">
+                              {displayName ? (
+                                <span className="flex flex-col">
+                                  <span>{displayName}</span>
+                                  <span className="text-xs text-slate-400 font-normal">{p.invited_email}</span>
+                                </span>
+                              ) : (
+                                p.invited_email
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                                p.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
+                                p.role === 'editor' ? 'bg-blue-100 text-blue-700' : 
+                                'bg-slate-100 text-slate-600'
+                              }`}>
+                                {p.role}
+                              </span>
+                              <span className="text-[10px] text-slate-400">•</span>
+                              <span className={`text-[10px] font-bold ${p.status === 'active' ? 'text-green-600' : 'text-amber-500'}`}>
+                                {p.status === 'active' ? 'Ativo' : 'Aguardando Aceite'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-1">
+                          {/* Reset de Senha */}
+                          <button
+                            onClick={() => handleResetPassword(p.invited_email)}
+                            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                            title="Redefinir senha"
+                            disabled={resettingEmail === p.invited_email}
+                          >
+                            {resettingEmail === p.invited_email ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Key className="w-4 h-4" />
+                            )}
+                          </button>
+
+                          {/* Editar Perfil */}
+                          <button
+                            onClick={() => handleOpenEditModal(p)}
+                            className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                            title="Editar perfil"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+
+                          {/* Excluir acesso */}
+                          <button
+                            onClick={() => handleDelete(p.id)}
+                            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                            title="Remover acesso"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1015,6 +1290,120 @@ export const TeamManagement: React.FC = () => {
                 </p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {/* MODAL DE EDITAR PERFIL DO USUÁRIO */}
+      {isEditModalOpen && selectedPermissionToEdit && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-xl border border-slate-100 max-w-md w-full overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-800">Editar Perfil de Acesso</h3>
+              <button 
+                onClick={() => setIsEditModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-5">
+              {/* Informações básicas do usuário */}
+              <div>
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">E-mail do Usuário</span>
+                <p className="text-sm font-bold text-slate-700 mt-1 bg-slate-50 px-3.5 py-2.5 rounded-xl border border-slate-100">
+                  {selectedPermissionToEdit.invited_email}
+                </p>
+              </div>
+
+              {/* Campo: Nome do Usuário */}
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                  Nome do Usuário
+                </label>
+                <input
+                  type="text"
+                  value={editUserName}
+                  onChange={(e) => setEditUserName(e.target.value)}
+                  placeholder="Nome descritivo do usuário"
+                  className="w-full text-sm font-semibold text-slate-700 mt-1 border border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 px-3.5 py-2.5 rounded-xl transition-all"
+                />
+              </div>
+
+              {/* Campo: Perfil de acesso (dropdown) */}
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                  Perfil de Acesso
+                </label>
+                <select
+                  value={editUserProfileId}
+                  onChange={(e) => handleEditProfileIdChange(e.target.value)}
+                  className="w-full text-sm font-semibold text-slate-700 mt-1 border border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 px-3.5 py-2.5 rounded-xl transition-all bg-white"
+                >
+                  <option value="" disabled>Selecione um Perfil</option>
+                  {profiles.map(prof => (
+                    <option key={prof.id} value={prof.id}>
+                      {prof.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Campo: Carteiras permitidas (checkboxes) */}
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-2">
+                  Carteiras Permitidas
+                </label>
+                <div className="border border-slate-200/60 rounded-2xl p-4 max-h-40 overflow-y-auto space-y-2 bg-slate-50/50">
+                  {wallets.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic text-center py-4">Nenhuma carteira cadastrada.</p>
+                  ) : (
+                    wallets.map(w => {
+                      const isChecked = w.id in editSelectedWallets;
+                      return (
+                        <label key={w.id} className="flex items-center gap-3 cursor-pointer group text-slate-700 text-sm font-medium">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleEditWalletToggle(w.id)}
+                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500/20 transition-all cursor-pointer"
+                          />
+                          <span className="text-slate-600 group-hover:text-slate-800 transition-colors">
+                            {w.name}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-3">
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="px-4.5 py-2.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={isSavingEdit}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-blue-200"
+              >
+                {isSavingEdit ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Salvando...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Salvar Alterações</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
