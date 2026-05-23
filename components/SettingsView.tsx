@@ -132,6 +132,19 @@ create table if not exists public.transactions (
   created_at timestamp with time zone default now()
 );
 
+-- Tabela para salvar servidores SMTP
+create table if not exists public.smtp_settings (
+  id uuid default gen_random_uuid() primary key,
+  host text not null,
+  port integer not null,
+  "user" text not null,
+  pass text not null,
+  from_name text not null,
+  from_email text not null,
+  user_id uuid unique not null,
+  updated_at timestamp with time zone default now()
+);
+
 -- 4. Garantir Permissões Explícitas (Corrigir Erro 42501)
 grant all on public.banks to anon, authenticated, service_role;
 grant all on public.categories to anon, authenticated, service_role;
@@ -142,6 +155,7 @@ grant all on public.asset_types to anon, authenticated, service_role;
 grant all on public.asset_sectors to anon, authenticated, service_role;
 grant all on public.asset_tickers to anon, authenticated, service_role;
 grant all on public.transactions to anon, authenticated, service_role;
+grant all on public.smtp_settings to anon, authenticated, service_role;
 
 -- 5. Habilitar RLS e criar políticas de acesso (Resolve avisos de segurança)
 alter table public.banks enable row level security;
@@ -153,6 +167,7 @@ alter table public.asset_types enable row level security;
 alter table public.asset_sectors enable row level security;
 alter table public.asset_tickers enable row level security;
 alter table public.transactions enable row level security;
+alter table public.smtp_settings enable row level security;
 
 -- Criar política permitindo acesso total (já que o app não exige login)
 create policy "Allow all operations" on public.banks for all using (true) with check (true);
@@ -163,7 +178,8 @@ create policy "Allow all operations" on public.wallets for all using (true) with
 create policy "Allow all operations" on public.asset_types for all using (true) with check (true);
 create policy "Allow all operations" on public.asset_sectors for all using (true) with check (true);
 create policy "Allow all operations" on public.asset_tickers for all using (true) with check (true);
-create policy "Allow all operations" on public.transactions for all using (true) with check (true);`;
+create policy "Allow all operations" on public.transactions for all using (true) with check (true);
+create policy "Allow all operations" on public.smtp_settings for all using (true) with check (true);`;
 
   const sqlMigration = `-- EXECUTE ESTE SQL SE VOCÊ JÁ TEM AS TABELAS CRIADAS:
 alter table public.banks add column if not exists type text default 'CHECKING';
@@ -174,17 +190,33 @@ create table if not exists public.asset_types (id uuid default gen_random_uuid()
 create table if not exists public.asset_sectors (id uuid default gen_random_uuid() primary key, name text not null);
 create table if not exists public.asset_tickers (id uuid default gen_random_uuid() primary key, name text not null, ticker text not null);
 
+-- Tabela para salvar servidores SMTP se não existir
+create table if not exists public.smtp_settings (
+  id uuid default gen_random_uuid() primary key,
+  host text not null,
+  port integer not null,
+  "user" text not null,
+  pass text not null,
+  from_name text not null,
+  from_email text not null,
+  user_id uuid unique not null,
+  updated_at timestamp with time zone default now()
+);
+
 grant all on public.asset_types to anon, authenticated, service_role;
 grant all on public.asset_sectors to anon, authenticated, service_role;
 grant all on public.asset_tickers to anon, authenticated, service_role;
+grant all on public.smtp_settings to anon, authenticated, service_role;
 
 alter table public.asset_types enable row level security;
 alter table public.asset_sectors enable row level security;
 alter table public.asset_tickers enable row level security;
+alter table public.smtp_settings enable row level security;
 
 create policy "Allow all operations" on public.asset_types for all using (true) with check (true);
 create policy "Allow all operations" on public.asset_sectors for all using (true) with check (true);
 create policy "Allow all operations" on public.asset_tickers for all using (true) with check (true);
+create policy "Allow all operations" on public.smtp_settings for all using (true) with check (true);
 
 -- Recarregar o cache do PostgREST (opcional, o Supabase faz automático em alguns segundos)
 -- NOTA: Se o erro PGRST204 persistir, tente rodar os comandos acima novamente.`;

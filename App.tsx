@@ -125,6 +125,7 @@ const App: FC = () => {
   const loadedRegistriesRef = useRef<Record<string, boolean>>({});
   const currentUserIdRef = useRef<string | null>(null);
   const loadAllRetryCountRef = useRef(0);
+  const isLoadingAllRef = useRef(false);
   
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [activeOrg, setActiveOrg] = useState<Organization | null>(null);
@@ -470,7 +471,14 @@ const App: FC = () => {
   }, [startDate, endDate, selectedBankId, selectedWalletId, statusFilter, activeTab]);
 
   const loadAll = async (isInitialFetch = false) => {
+    if (isLoadingAllRef.current) {
+      console.log(`[Rastreamento] [loadAll] Já existe um processo de carga em andamento. Ignorando chamada duplicada.`);
+      return;
+    }
+    
+    isLoadingAllRef.current = true;
     console.log(`[Rastreamento] [loadAll] Iniciando carregamento de tudo. isInitialFetch: ${isInitialFetch}`);
+    
     if (isInitialFetch) {
       setLoading(true);
       setLoadingSubText('Iniciando sincronização...');
@@ -484,152 +492,159 @@ const App: FC = () => {
       }, 3500);
     }
     
-    // Verifica conexão
-    const supabase = financeService.getSupabase();
-    const isSupabaseConfigured = !!supabase;
-    setIsConnected(isSupabaseConfigured);
-    setIsLocalMode(!supabase);
-    setIsOffline(false);
+    try {
+      // Verifica conexão
+      const supabase = financeService.getSupabase();
+      const isSupabaseConfigured = !!supabase;
+      setIsConnected(isSupabaseConfigured);
+      setIsLocalMode(!supabase);
+      setIsOffline(false);
 
-    console.log(`[Rastreamento] [loadAll] Conexão remota Supabase configurada: ${isSupabaseConfigured}`);
+      console.log(`[Rastreamento] [loadAll] Conexão remota Supabase configurada: ${isSupabaseConfigured}`);
 
-    let loggedInUser = null;
+      let loggedInUser = null;
 
-    if (supabase) {
-        try {
-            if (isInitialFetch) setLoadingSubText('Obtendo sessão ativa do Supabase...');
-            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase com timeout de 45s...");
-            const getSessionPromise = supabase.auth.getSession();
-            const getSessionTimeout = new Promise<any>((_, reject) =>
-              setTimeout(() => reject(new Error('Timeout ao obter sessão do Supabase no loadAll')), 45000)
-            );
-            let { data: { session } } = await Promise.race([getSessionPromise, getSessionTimeout]);
-            
-            if (session) {
-              const expiresAt = session.expires_at || 0;
-              const now = Math.floor(Date.now() / 1000);
-              const isExpiredOrExpiring = expiresAt - now < 60; // menos de 60 segundos
+      if (supabase) {
+          try {
+              if (isInitialFetch) setLoadingSubText('Obtendo sessão ativa do Supabase...');
+              console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase com timeout de 45s...");
+              const getSessionPromise = supabase.auth.getSession();
+              const getSessionTimeout = new Promise<any>((_, reject) =>
+                setTimeout(() => reject(new Error('Timeout ao obter sessão do Supabase no loadAll')), 45000)
+              );
+              let { data: { session } } = await Promise.race([getSessionPromise, getSessionTimeout]);
               
-              if (isExpiredOrExpiring) {
-                if (isInitialFetch) setLoadingSubText('Sessão expirada. Renovando credenciais de acesso...');
-                console.log('[Rastreamento] [loadAll] Token próximo de expirar ou expirado, fazendo refresh com timeout de 45s...');
-                try {
-                  const refreshPromise = supabase.auth.refreshSession();
-                  const refreshTimeout = new Promise<any>((_, reject) =>
-                    setTimeout(() => reject(new Error('Timeout ao renovar token do Supabase no loadAll')), 45000)
-                  );
-                  const { data: refreshData } = await Promise.race([refreshPromise, refreshTimeout]);
-                  if (refreshData.session) {
-                    session = refreshData.session;
-                    console.log('[Rastreamento] [loadAll] Token renovado com sucesso.');
+              if (session) {
+                const expiresAt = session.expires_at || 0;
+                const now = Math.floor(Date.now() / 1000);
+                const isExpiredOrExpiring = expiresAt - now < 60; // menos de 60 segundos
+                
+                if (isExpiredOrExpiring) {
+                  if (isInitialFetch) setLoadingSubText('Sessão expirada. Renovando credenciais de acesso...');
+                  console.log('[Rastreamento] [loadAll] Token próximo de expirar ou expirado, fazendo refresh com timeout de 45s...');
+                  try {
+                    const refreshPromise = supabase.auth.refreshSession();
+                    const refreshTimeout = new Promise<any>((_, reject) =>
+                      setTimeout(() => reject(new Error('Timeout ao renovar token do Supabase no loadAll')), 45000)
+                    );
+                    const { data: refreshData } = await Promise.race([refreshPromise, refreshTimeout]);
+                    if (refreshData.session) {
+                      session = refreshData.session;
+                      console.log('[Rastreamento] [loadAll] Token renovado com sucesso.');
+                    }
+                  } catch (refreshErr: any) {
+                    console.warn('[Rastreamento] [loadAll] Falha ao renovar sessão:', refreshErr.message);
                   }
-                } catch (refreshErr: any) {
-                  console.warn('[Rastreamento] [loadAll] Falha ao renovar sessão:', refreshErr.message);
                 }
               }
-            }
-            
-            const sessionUser = session?.user || null;
-            loggedInUser = sessionUser;
-            currentUserIdRef.current = sessionUser?.id || null;
-            setUser(sessionUser);
-            
-            console.log(`[Rastreamento] [loadAll] Usuário ativo: ${sessionUser ? sessionUser.email : 'Nenhum'}`);
-            if (sessionUser) {
-                if (isInitialFetch) setLoadingSubText('Carregando informações da sua organização...');
-                console.log("[Rastreamento] [loadAll] Passo 1: Carregando organizações de forma assíncrona garantindo conclusão...");
-                await loadOrganizations(undefined, sessionUser);
-                console.log(`[Rastreamento] [loadAll] Passo 1 concluído. activeOrganizationId de financeService: ${financeService.activeOrganizationId}`);
-            }
-            setIsOffline(false);
-        } catch (e: any) {
-            console.warn("Supabase connection check failed:", e.message);
-            
-            // Limpar estado inconsistente do localStorage para evitar bloqueios em recargas futuras (I2)
-            localStorage.removeItem('fincontrol_active_org_id');
-            
-            if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message?.includes('Network') || e.message?.includes('Timeout')) {
-                setIsOffline(true);
-            }
-            
-            if (isInitialFetch) {
-                if (coldStartTimer) clearTimeout(coldStartTimer);
-                setLoading(false);
-            }
-        }
-    }
+              
+              const sessionUser = session?.user || null;
+              loggedInUser = sessionUser;
+              currentUserIdRef.current = sessionUser?.id || null;
+              setUser(sessionUser);
+              
+              console.log(`[Rastreamento] [loadAll] Usuário ativo: ${sessionUser ? sessionUser.email : 'Nenhum'}`);
+              if (sessionUser) {
+                  if (isInitialFetch) setLoadingSubText('Carregando informações da sua organização...');
+                  console.log("[Rastreamento] [loadAll] Passo 1: Carregando organizações de forma assíncrona garantindo conclusão...");
+                  await loadOrganizations(undefined, sessionUser);
+                  console.log(`[Rastreamento] [loadAll] Passo 1 concluído. activeOrganizationId de financeService: ${financeService.activeOrganizationId}`);
+              }
+              setIsOffline(false);
+          } catch (e: any) {
+              console.warn("Supabase connection check failed:", e.message);
+              
+              // Limpar estado inconsistente do localStorage para evitar bloqueios em recargas futuras (I2)
+              localStorage.removeItem('fincontrol_active_org_id');
+              
+              if (e.message?.includes('fetch') || e.name === 'TypeError' || e.message?.includes('Network') || e.message?.includes('Timeout')) {
+                  setIsOffline(true);
+              }
+              
+              if (isInitialFetch) {
+                  if (coldStartTimer) clearTimeout(coldStartTimer);
+                  setLoading(false);
+              }
+          }
+      }
 
-    // Se estiver em modo Supabase e o usuário não estiver logado (ou se ocorreu timeout / conexão falhou),
-    // interrompemos o loading imediatamente e exibimos a tela de login.
-    if (isSupabaseConfigured && !loggedInUser) {
-        console.warn("[Rastreamento] [loadAll] Supabase configurado, mas nenhum usuário ativo encontrado (sessão nula ou timeout de conexão). Encerrando carregamento de dados e forçando exibição da tela de login.");
-        setUser(null);
-        if (isInitialFetch) {
-            if (coldStartTimer) clearTimeout(coldStartTimer);
-            setLoading(false);
-        }
-        return;
-    }
+      // Se estiver em modo Supabase e o usuário não estiver logado (ou se ocorreu timeout / conexão falhou),
+      // interrompemos o loading imediatamente e exibimos a tela de login.
+      if (isSupabaseConfigured && !loggedInUser) {
+          console.warn("[Rastreamento] [loadAll] Supabase configurado, mas nenhum usuário ativo encontrado (sessão nula ou timeout de conexão). Encerrando carregamento de dados e forçando exibição da tela de login.");
+          setUser(null);
+          if (isInitialFetch) {
+              if (coldStartTimer) clearTimeout(coldStartTimer);
+              setLoading(false);
+          }
+          return;
+      }
 
-    // Proteção contra chamadas sem organização ativa definida em modo Supabase remoto
-    const activeOrgId = financeService.activeOrganizationId;
-    console.log(`[Rastreamento] [loadAll] Verificando integridade das informações organizacionais. Supabase: ${isSupabaseConfigured}, Usuário ativo: ${!!loggedInUser}, ID da Orga Ativa: ${activeOrgId}`);
+      // Proteção contra chamadas sem organização ativa definida em modo Supabase remoto
+      const activeOrgId = financeService.activeOrganizationId;
+      console.log(`[Rastreamento] [loadAll] Verificando integridade das informações organizacionais. Supabase: ${isSupabaseConfigured}, Usuário ativo: ${!!loggedInUser}, ID da Orga Ativa: ${activeOrgId}`);
 
-    if (isSupabaseConfigured && loggedInUser && !activeOrgId) {
-        console.warn("[Rastreamento] [loadAll] Supabase ativo e usuário logado, mas activeOrganizationId continua nulo (fluxo de Onboarding ou carregamento). Cancelando carga sequencial subsequente de cadastros e transações.");
-        if (isInitialFetch) {
-            if (coldStartTimer) clearTimeout(coldStartTimer);
-            setLoading(false);
-        }
-        return;
-    }
+      if (isSupabaseConfigured && loggedInUser && !activeOrgId) {
+          console.warn("[Rastreamento] [loadAll] Supabase ativo e usuário logado, mas activeOrganizationId continua nulo (fluxo de Onboarding ou carregamento). Cancelando carga sequencial subsequente de cadastros e transações.");
+          if (isInitialFetch) {
+              if (coldStartTimer) clearTimeout(coldStartTimer);
+              setLoading(false);
+          }
+          return;
+      }
 
-    // Se já temos registros no localStorage, podemos liberar o loading mais cedo
-    const keyMap: any = { banks: 'fincontrol_banks', categories: 'fincontrol_categories' };
-    const hasLocalData = !!localStorage.getItem(keyMap.banks) || !!localStorage.getItem(keyMap.categories);
+      // Se já temos registros no localStorage, podemos liberar o loading mais cedo
+      const keyMap: any = { banks: 'fincontrol_banks', categories: 'fincontrol_categories' };
+      const hasLocalData = !!localStorage.getItem(keyMap.banks) || !!localStorage.getItem(keyMap.categories);
 
-    // Se é o carregamento inicial, busca as preferências ANTES de buscar as transações
-    // para que a busca de transações já use os filtros corretos
-    if (!initialPrefsApplied.current) {
-        try {
-            if (isInitialFetch) setLoadingSubText('Carregando preferências de visualização...');
-            console.log("[Rastreamento] [loadAll] Buscando preferências de usuário...");
-            const savedPrefs = await financeService.getUserSettings();
-            console.log("[Rastreamento] [loadAll] Preferências do usuário recuperadas:", savedPrefs);
-            if (savedPrefs.defaultTab) setActiveTab(savedPrefs.defaultTab);
-            if (savedPrefs.defaultWalletId) setSelectedWalletId(savedPrefs.defaultWalletId);
-            if (savedPrefs.defaultBankId) setSelectedBankId(savedPrefs.defaultBankId);
-            if (savedPrefs.defaultPerformanceBankId) setPerformanceBankId(savedPrefs.defaultPerformanceBankId);
-            if (savedPrefs.defaultPerformanceWalletId) setPerformanceWalletId(savedPrefs.defaultPerformanceWalletId);
-            if (savedPrefs.defaultStatus) setStatusFilter(savedPrefs.defaultStatus);
-            
-            const range = financeService.getDateRangeFromPreference(savedPrefs.defaultDateRange);
-            if (range.start) setStartDate(range.start);
-            if (range.end) setEndDate(range.end);
-            
-            initialPrefsApplied.current = true;
-        } catch (e) {
-            console.warn("Falha ao carregar preferências", e);
-        }
-    }
+      // Se é o carregamento inicial, busca as preferências ANTES de buscar as transações
+      // para que a busca de transações já use os filtros corretos
+      if (!initialPrefsApplied.current) {
+          try {
+              if (isInitialFetch) setLoadingSubText('Carregando preferências de visualização...');
+              console.log("[Rastreamento] [loadAll] Buscando preferências de usuário...");
+              const savedPrefs = await financeService.getUserSettings();
+              console.log("[Rastreamento] [loadAll] Preferências do usuário recuperadas:", savedPrefs);
+              if (savedPrefs.defaultTab) setActiveTab(savedPrefs.defaultTab);
+              if (savedPrefs.defaultWalletId) setSelectedWalletId(savedPrefs.defaultWalletId);
+              if (savedPrefs.defaultBankId) setSelectedBankId(savedPrefs.defaultBankId);
+              if (savedPrefs.defaultPerformanceBankId) setPerformanceBankId(savedPrefs.defaultPerformanceBankId);
+              if (savedPrefs.defaultPerformanceWalletId) setPerformanceWalletId(savedPrefs.defaultPerformanceWalletId);
+              if (savedPrefs.defaultStatus) setStatusFilter(savedPrefs.defaultStatus);
+              
+              const range = financeService.getDateRangeFromPreference(savedPrefs.defaultDateRange);
+              if (range.start) setStartDate(range.start);
+              if (range.end) setEndDate(range.end);
+              
+              initialPrefsApplied.current = true;
+          } catch (e) {
+              console.warn("Falha ao carregar preferências", e);
+          }
+      }
 
-    // Carrega registros e transações de forma sequencial para garantir consistência
-    try {
-        if (isInitialFetch) setLoadingSubText('Carregando bancos, carteiras e cadastros...');
-        console.log("[Rastreamento] [loadAll] Passo 2: Chamando loadRegistries()...");
-        await loadRegistries();
-        
-        if (isInitialFetch) setLoadingSubText('Sincronizando fluxo de caixa e transações...');
-        console.log("[Rastreamento] [loadAll] Passo 3: Chamando loadTransactions()...");
-        await loadTransactions();
-        console.log("[Rastreamento] [loadAll] Todos os passos concluídos com êxito.");
-    } catch (e) {
-        console.error("Erro na carga inicial de dados", e);
-    }
+      // Carrega registros e transações de forma sequencial para garantir consistência
+      try {
+          if (isInitialFetch) setLoadingSubText('Carregando bancos, carteiras e cadastros...');
+          console.log("[Rastreamento] [loadAll] Passo 2: Chamando loadRegistries()...");
+          await loadRegistries();
+          
+          if (isInitialFetch) setLoadingSubText('Sincronizando fluxo de caixa e transações...');
+          console.log("[Rastreamento] [loadAll] Passo 3: Chamando loadTransactions()...");
+          await loadTransactions();
+          console.log("[Rastreamento] [loadAll] Todos os passos concluídos com êxito.");
+      } catch (e) {
+          console.error("Erro na carga inicial de dados", e);
+      }
 
-    if (isInitialFetch) {
-        if (coldStartTimer) clearTimeout(coldStartTimer);
-        setLoading(false);
+      if (isInitialFetch) {
+          if (coldStartTimer) clearTimeout(coldStartTimer);
+          setLoading(false);
+      }
+    } finally {
+      isLoadingAllRef.current = false;
+      if (isInitialFetch && coldStartTimer) {
+        clearTimeout(coldStartTimer);
+      }
     }
   };
 
@@ -660,6 +675,10 @@ const App: FC = () => {
 
         if (newUser) {
           if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+            if (isLoadingAllRef.current) {
+              console.log('[onAuthStateChange] Carregamento principal (loadAll) já está em andamento. Ignorando re-trigger redundante no listener de auth.');
+              return;
+            }
             console.log('[onAuthStateChange] Carregando organizações para o novo usuário...');
             await loadOrganizations(undefined, newUser);
             await loadAll(false);

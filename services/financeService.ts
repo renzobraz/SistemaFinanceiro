@@ -495,16 +495,16 @@ export const financeService = {
       
       if (!activeUserId) return [];
 
-      console.log('[getMyOrganizations] Chamando RPC com user.id:', activeUserId);
+      console.log('[getMyOrganizations] Recuperado ID de usuário ativo:', activeUserId);
 
       let data: any = null;
       let error: any = null;
 
       try {
-        console.log('[getMyOrganizations] Executando RPC com timeout de 45s...');
+        console.log('[getMyOrganizations] Executando RPC com timeout otimizado de 20s...');
         const rpcPromise = supabase.rpc('get_user_organizations', { p_user_id: activeUserId });
         const rpcTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('RPC Timeout após 45 segundos — redirecionando para fallback')), 45000)
+          setTimeout(() => reject(new Error('RPC Timeout após 20 segundos — redirecionando para fallback')), 20000)
         );
         const result = await Promise.race([rpcPromise, rpcTimeout]) as any;
         data = result.data;
@@ -516,7 +516,7 @@ export const financeService = {
       }
 
       if (error || !data || data.length === 0) {
-        console.log('[getMyOrganizations] Utilizando Fallback do banco via queries nativas...');
+        console.log('[getMyOrganizations] Utilizando Fallback do banco via queries nativas em paralelo...');
         const fallbackData = await this.getMyOrganizationsFallback(activeUserId);
         console.log('[getMyOrganizations] Fallback concluído com sucesso. Total retornado:', fallbackData.length);
         return fallbackData;
@@ -541,49 +541,45 @@ export const financeService = {
     const supabase = getSupabase();
     if (!supabase) return [];
     
-    console.log('[getMyOrganizations-Fallback] 🚀 Iniciando queries nativas diretas sem timeout no Q1 para mitigar possible Cold Start do Supabase para o usuário:', activeUserId);
+    console.log('[getMyOrganizations-Fallback] 🚀 Iniciando queries nativas diretos em PARALELO para mitigar possible Cold Start do Supabase para o usuário:', activeUserId);
     
     try {
-      // 1. Obter organizações onde o usuário é dono direto
-      console.log('[getMyOrganizations-Fallback] ⏳ [Passo 1/3] Buscando organizações de propriedade do usuário (Q1) com timeout de 45s...');
+      // 1 e 2. Obter organizações que é dono (Q1) e membros associados (Q2) em PARALELO!
+      console.log('[getMyOrganizations-Fallback] ⏳ [Passo 1-2/3] Executando Q1 e Q2 em paralelo com timeout unificado de 25s...');
       const q1Promise = supabase
         .from('organizations')
         .select('*')
         .eq('owner_id', activeUserId);
 
-      const q1Timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Q1 Timeout (organizations owned) após 45 segundos')), 45000)
-      );
-
-      const q1Result = await Promise.race([q1Promise, q1Timeout]) as any;
-      const ownedData = q1Result.data;
-      const ownedError = q1Result.error;
-
-      if (ownedError) {
-        console.warn('[getMyOrganizations-Fallback] ⚠️ Erro ao buscar organizações próprias:', ownedError);
-      } else {
-        console.log('[getMyOrganizations-Fallback] ✅ [Passo 1/3] Q1 concluído com sucesso. Total de organizações próprias:', ownedData?.length);
-      }
-
-      // 2. Obter membros em que o usuário faz parte
-      console.log('[getMyOrganizations-Fallback] ⏳ [Passo 2/3] Buscando associações de membros (Q2) com timeout de 45s...');
       const q2Promise = supabase
         .from('organization_members')
         .select('organization_id')
         .eq('user_id', activeUserId);
 
-      const q2Timeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Q2 Timeout (organization_members) após 45 segundos')), 45000)
+      const fallbackTimeout = new Promise<any>((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout de 25 segundos no Q1-Q2 paralelo')), 25000)
       );
 
-      const q2Result = await Promise.race([q2Promise, q2Timeout]) as any;
+      const [q1Result, q2Result] = await Promise.race([
+        Promise.all([q1Promise, q2Promise]),
+        fallbackTimeout
+      ]);
+
+      const ownedData = q1Result.data;
+      const ownedError = q1Result.error;
       const membersData = q2Result.data;
       const membersError = q2Result.error;
+
+      if (ownedError) {
+        console.warn('[getMyOrganizations-Fallback] ⚠️ Erro ao buscar organizações próprias:', ownedError);
+      } else {
+        console.log('[getMyOrganizations-Fallback] ✅ Q1 próprio concluído. Total próprio:', ownedData?.length);
+      }
 
       if (membersError) {
         console.warn('[getMyOrganizations-Fallback] ⚠️ Erro ao buscar associações de membros:', membersError);
       } else {
-        console.log('[getMyOrganizations-Fallback] ✅ [Passo 2/3] Q2 concluído com sucesso. Total de membresias do usuário:', membersData?.length);
+        console.log('[getMyOrganizations-Fallback] ✅ Q2 membros concluído. Total membro:', membersData?.length);
       }
 
       const orgIds = new Set<string>();
@@ -605,7 +601,7 @@ export const financeService = {
             .in('id', remainingIds);
 
           const q3Timeout = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Q3 Timeout (organizations detail) após 45 segundos')), 45000)
+            setTimeout(() => reject(new Error('Q3 Timeout (organizations detail) após 20 segundos')), 20000)
           );
 
           const q3Result = await Promise.race([q3Promise, q3Timeout]) as any;
@@ -1276,7 +1272,10 @@ export const financeService = {
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error || `Erro do servidor (${response.status}) ao buscar SMTP_SETTINGS.`);
+      const detailedMessage = errData.details 
+        ? `${errData.error || 'Erro'}: ${errData.details}` 
+        : (errData.error || `Erro do servidor (${response.status}) ao buscar SMTP_SETTINGS.`);
+      throw new Error(detailedMessage);
     }
 
     return response.json();
@@ -1301,7 +1300,10 @@ export const financeService = {
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error || `Erro do servidor (${response.status}) ao salvar SMTP_SETTINGS.`);
+      const detailedMessage = errData.details 
+        ? `${errData.error || 'Erro'}: ${errData.details}` 
+        : (errData.error || `Erro do servidor (${response.status}) ao salvar SMTP_SETTINGS.`);
+      throw new Error(detailedMessage);
     }
   },
 
