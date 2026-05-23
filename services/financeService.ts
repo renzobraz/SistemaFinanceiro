@@ -251,7 +251,13 @@ const getSupabase = (): SupabaseClient | null => {
 
   try {
     console.log(`[getSupabase] Criando e guardando um novo cliente Supabase na memória. URL: "${url}"`);
-    supabaseInstance = createClient(url, key);
+    supabaseInstance = createClient(url, key, {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true,
+      }
+    });
     lastUrl = url;
     lastKey = key;
     return supabaseInstance;
@@ -433,13 +439,17 @@ export const financeService = {
       let error: any = null;
 
       try {
-        console.log('[getMyOrganizations] Executando RPC sem timeout para aguardar a resposta do banco de dados (cold start)...');
-        const { data: rpcData, error: rpcError } = await supabase.rpc('get_user_organizations', { p_user_id: activeUserId });
-        data = rpcData;
-        error = rpcError;
-        console.log('[getMyOrganizations] RPC success data:', JSON.stringify(data));
+        console.log('[getMyOrganizations] Executando RPC com timeout de 15s...');
+        const rpcPromise = supabase.rpc('get_user_organizations', { p_user_id: activeUserId });
+        const rpcTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('RPC Timeout após 15 segundos — redirecionando para fallback')), 15000)
+        );
+        const result = await Promise.race([rpcPromise, rpcTimeout]) as any;
+        data = result.data;
+        error = result.error;
+        console.log('[getMyOrganizations] RPC concluído. Data:', JSON.stringify(data));
       } catch (rpcErr: any) {
-        console.warn('[getMyOrganizations] RPC falhou, iniciando fallback direto:', rpcErr.message);
+        console.warn('[getMyOrganizations] RPC falhou ou timeout, iniciando fallback:', rpcErr.message);
         error = rpcErr;
       }
 
@@ -473,11 +483,19 @@ export const financeService = {
     
     try {
       // 1. Obter organizações onde o usuário é dono direto
-      console.log('[getMyOrganizations-Fallback] ⏳ [Passo 1/3] Buscando organizações de propriedade do usuário (Q1) sem limite de tempo...');
-      const { data: ownedData, error: ownedError } = await supabase
+      console.log('[getMyOrganizations-Fallback] ⏳ [Passo 1/3] Buscando organizações de propriedade do usuário (Q1) com timeout de 15s...');
+      const q1Promise = supabase
         .from('organizations')
         .select('*')
         .eq('owner_id', activeUserId);
+
+      const q1Timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Q1 Timeout (organizations owned) após 15 segundos')), 15000)
+      );
+
+      const q1Result = await Promise.race([q1Promise, q1Timeout]) as any;
+      const ownedData = q1Result.data;
+      const ownedError = q1Result.error;
 
       if (ownedError) {
         console.warn('[getMyOrganizations-Fallback] ⚠️ Erro ao buscar organizações próprias:', ownedError);

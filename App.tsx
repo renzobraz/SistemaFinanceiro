@@ -535,45 +535,113 @@ const App: FC = () => {
   useEffect(() => {
     loadAll(true);
 
-    // Listen for auth changes
     const supabase = financeService.getSupabase();
-    if (supabase) {
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-        const newUser = session?.user || null;
-        const newUserId = newUser?.id || null;
-        const prevUserId = currentUserIdRef.current;
-        
-        console.log(`[onAuthStateChange] Evento de autenticação disparado: ${event}. ID Antigo: ${prevUserId}, ID Novo: ${newUserId}`);
-        
-        if (prevUserId !== newUserId) {
-            console.log(`[onAuthStateChange] Identificamos mudança de usuário (${prevUserId} -> ${newUserId}). Atualizando sessões.`);
-            currentUserIdRef.current = newUserId;
-            setUser(newUser);
-            
-            if (newUser) {
-                if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
-                    console.log("[onAuthStateChange] Carregando novas organizações para o usuário...");
-                    await loadOrganizations(undefined, newUser);
-                    await loadAll(false);
-                }
-            } else {
-                console.log("[onAuthStateChange] Sem usuário ativo. Limpando estados organizacionais.");
-                setOrganizations([]);
-                setActiveOrg(null);
-                financeService.setActiveOrganizationId(null);
-                setIsOnboarding(false);
-                loadedRegistriesRef.current = {}; // Limpar cache no logout
-            }
-        } else {
-            console.log("[onAuthStateChange] ID do usuário idêntico. Side-effects ignorados para evitar renders/onboarding falso.");
-        }
-      });
+    if (!supabase) return;
 
-      return () => {
-        subscription.unsubscribe();
-      };
-    }
-  }, [isConnected]);
+    // ─── 1. Listener de mudança de autenticação ───────────────────────────────
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const newUser    = session?.user || null;
+      const newUserId  = newUser?.id   || null;
+      const prevUserId = currentUserIdRef.current;
+
+      console.log(`[onAuthStateChange] Evento: ${event} | Prev: ${prevUserId} | New: ${newUserId}`);
+
+      // Token renovado pelo Supabase automaticamente — singleton já gerencia internamente
+      if (event === 'TOKEN_REFRESHED') {
+        console.log('[onAuthStateChange] Token renovado automaticamente pelo Supabase.');
+        return;
+      }
+
+      if (prevUserId !== newUserId) {
+        console.log(`[onAuthStateChange] Mudança de usuário detectada (${prevUserId} -> ${newUserId}).`);
+        currentUserIdRef.current = newUserId;
+        setUser(newUser);
+
+        if (newUser) {
+          if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+            console.log('[onAuthStateChange] Carregando organizações para o novo usuário...');
+            await loadOrganizations(undefined, newUser);
+            await loadAll(false);
+          }
+        } else {
+          console.log('[onAuthStateChange] Logout detectado. Limpando estado organizacional.');
+          setOrganizations([]);
+          setActiveOrg(null);
+          financeService.setActiveOrganizationId(null);
+          setIsOnboarding(false);
+          loadedRegistriesRef.current = {};
+        }
+      } else {
+        console.log('[onAuthStateChange] Mesmo usuário. Side-effects ignorados.');
+      }
+    });
+
+    // ─── 2. Refresh proativo a cada 4 minutos ─────────────────────────────────
+    // Renova o token se restar menos de 5 minutos para expirar.
+    // Garante que sessões longas (usuário idle) não expirem silenciosamente.
+    const FOUR_MINUTES = 4 * 60 * 1000;
+
+    const tokenRefreshInterval = setInterval(async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+
+        const now         = Math.floor(Date.now() / 1000);
+        const secondsLeft = (session.expires_at || 0) - now;
+
+        if (secondsLeft < 5 * 60) {
+          console.log(`[tokenRefreshInterval] Token expira em ${secondsLeft}s — renovando...`);
+          const { error } = await supabase.auth.refreshSession();
+          if (error) {
+            console.error('[tokenRefreshInterval] Falha ao renovar:', error.message);
+          } else {
+            console.log('[tokenRefreshInterval] Token renovado com sucesso.');
+          }
+        }
+      } catch (e: any) {
+        console.warn('[tokenRefreshInterval] Erro inesperado:', e.message);
+      }
+    }, FOUR_MINUTES);
+
+    // ─── 3. Visibilidade da aba ────────────────────────────────────────────────
+    // Quando o usuário volta à aba após longo período em background, o browser
+    // pode ter pausado os setIntervals internos do Supabase. Forçamos um check.
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState !== 'visible') return;
+
+      console.log('[visibilityChange] Aba voltou ao foco — verificando sessão...');
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (!session) {
+          console.warn('[visibilityChange] Sem sessão ativa. Forçando logout visual.');
+          setUser(null);
+          return;
+        }
+
+        const now         = Math.floor(Date.now() / 1000);
+        const secondsLeft = (session.expires_at || 0) - now;
+
+        if (secondsLeft < 5 * 60) {
+          console.log(`[visibilityChange] Token expira em ${secondsLeft}s — renovando...`);
+          await supabase.auth.refreshSession();
+        } else {
+          console.log(`[visibilityChange] Sessão válida. Expira em ${Math.round(secondsLeft / 60)}min.`);
+        }
+      } catch (e: any) {
+        console.warn('[visibilityChange] Erro ao verificar sessão:', e.message);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // ─── Cleanup ──────────────────────────────────────────────────────────────
+    return () => {
+      subscription.unsubscribe();
+      clearInterval(tokenRefreshInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []); // Array vazio: listener criado uma única vez, nunca recriado por re-renders
 
   // Proteção e Debounce de 300ms para evitar requisições consecutivas ao trocar filtros
   useEffect(() => {
