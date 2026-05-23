@@ -683,13 +683,90 @@ app.post("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
       updated_at: new Date().toISOString()
     };
 
-    const { error } = await supabase
-      .from('smtp_settings')
-      .upsert(payload, { onConflict: 'user_id' });
+    // Fluxo inteligente para evitar problemas de RLS com "upsert" ou ausência de UNIQUE constraint em user_id:
+    console.log('[SMTP-SAVE] Iniciando persistência inteligente para o usuário:', userId);
+    
+    let saveError = null;
+    let existingRecords: any[] | null = null;
+    
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('smtp_settings')
+        .select('id')
+        .eq('user_id', userId);
+        
+      if (fetchError) {
+        console.warn("[SMTP-SAVE-Fetch] Falha ao ler registros existentes, usaremos o upsert como fallback direto:", fetchError.message);
+        throw fetchError;
+      }
+      existingRecords = data;
+    } catch (err) {
+      existingRecords = null;
+    }
 
-    if (error) {
-      console.error("[SMTP-SAVE] Erro de banco no Supabase:", error);
-      throw error;
+    if (existingRecords && existingRecords.length > 0) {
+      const firstId = existingRecords[0].id;
+      console.log(`[SMTP-SAVE] Registros SMTP encontrados: ${existingRecords.length}. Atualizando registro ID: ${firstId}...`);
+      
+      const { error: updateError } = await supabase
+        .from('smtp_settings')
+        .update({
+          host,
+          port: parsedPort,
+          user,
+          pass: encryptedPass,
+          from_name,
+          from_email: from_email.toLowerCase().trim(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', firstId);
+        
+      saveError = updateError;
+      
+      // Limpeza opcional de registros duplicados adicionais se houver mais de um, para manter a tabela redundante limpa
+      if (!updateError && existingRecords.length > 1) {
+        const extraIds = existingRecords.slice(1).map(r => r.id);
+        console.log('[SMTP-SAVE] Removendo registros SMTP duplicados redundantes extras:', extraIds);
+        await supabase
+          .from('smtp_settings')
+          .delete()
+          .in('id', extraIds);
+      }
+    } else {
+      console.log("[SMTP-SAVE] Nenhum registro SMTP encontrado. Inserindo novo registro...");
+      const { error: insertError } = await supabase
+        .from('smtp_settings')
+        .insert({
+          host,
+          port: parsedPort,
+          user,
+          pass: encryptedPass,
+          from_name,
+          from_email: from_email.toLowerCase().trim(),
+          user_id: userId,
+          updated_at: new Date().toISOString()
+        });
+        
+      saveError = insertError;
+    }
+
+    // Fallback caso a operação individual de insert/update falhe (p. ex., políticas de RLS parciais ou triggers)
+    if (saveError) {
+      console.warn("[SMTP-SAVE] A gravação via SELECT+INSERT/UPDATE falhou (ou faltam políticas individuais no Supabase). Erro:", saveError.message);
+      console.log("[SMTP-SAVE] Executando segunda tentativa usando o upsert original...");
+      
+      const { error: upsertError } = await supabase
+        .from('smtp_settings')
+        .upsert(payload, { onConflict: 'user_id' });
+        
+      if (upsertError) {
+        console.error("[SMTP-SAVE-Fatal] Ambas as tentativas de gravação falharam no Supabase:", upsertError);
+        throw upsertError;
+      } else {
+        console.log("[SMTP-SAVE] Sucesso na persistência usando fallback de upsert.");
+      }
+    } else {
+      console.log("[SMTP-SAVE] 🎉 Persistência de SMTP concluída com sucesso usando fluxo de SELECT+INSERT/UPDATE!");
     }
 
     return res.json({ success: true, message: "SMTP salvo com sucesso." });
