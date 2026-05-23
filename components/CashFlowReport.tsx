@@ -27,6 +27,10 @@ import {
   CheckSquare,
   Square
 } from 'lucide-react';
+import { safeStorage } from '../services/financeService';
+
+// Sombreia localmente o localStorage global para uso seguro em IFrames / Sandbox do AI Studio
+const localStorage = safeStorage;
 
 interface CashFlowReportProps {
   allTransactions: Transaction[];

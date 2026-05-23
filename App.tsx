@@ -48,6 +48,67 @@ import {
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 
+// Implementação segura e à prova de sandbox do window.localStorage para o ambiente de IFrames do AI Studio
+const safeStorage = (() => {
+  let hasLocalStorage = false;
+  try {
+    const testKey = '__test_ls__';
+    window.localStorage.setItem(testKey, testKey);
+    window.localStorage.removeItem(testKey);
+    hasLocalStorage = true;
+  } catch (e) {
+    hasLocalStorage = false;
+    console.warn('[Storage] Modo IFrame/Sandbox detectado. Usando armazenamento em memória ao invés do localStorage nativo.');
+  }
+
+  const memoryStore: Record<string, string> = {};
+
+  return {
+    getItem(key: string): string | null {
+      if (hasLocalStorage) {
+        try {
+          return window.localStorage.getItem(key);
+        } catch {
+          return memoryStore[key] || null;
+        }
+      }
+      return memoryStore[key] || null;
+    },
+    setItem(key: string, value: string): void {
+      if (hasLocalStorage) {
+        try {
+          window.localStorage.setItem(key, value);
+          return;
+        } catch {}
+      }
+      memoryStore[key] = value;
+    },
+    removeItem(key: string): void {
+      if (hasLocalStorage) {
+        try {
+          window.localStorage.removeItem(key);
+          return;
+        } catch {}
+      }
+      delete memoryStore[key];
+    },
+    clear(): void {
+      if (hasLocalStorage) {
+        try {
+          window.localStorage.clear();
+          return;
+        } catch {}
+      }
+      for (const key in memoryStore) {
+        delete memoryStore[key];
+      }
+    }
+  };
+})();
+
+// Sombreia localmente o localStorage global para uso seguro sem quebras de SecurityError
+const localStorage = safeStorage;
+
 const App: FC = () => {
   const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -95,9 +156,18 @@ const App: FC = () => {
       let activeUser = forceUser || user;
       
       if (!activeUser) {
-        console.log("[loadOrganizations] Sem activeUser direto. Obtendo sessão...");
-        const { data: sessionData } = await supabase.auth.getSession();
-        activeUser = sessionData?.session?.user || null;
+        console.log("[loadOrganizations] Sem activeUser direto. Obtendo sessão com timeout de 8s...");
+        try {
+          const sessionPromise = supabase.auth.getSession();
+          const sessionTimeout = new Promise<any>((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout de 8s ao obter sessão em loadOrganizations')), 8000)
+          );
+          const { data: sessionData } = await Promise.race([sessionPromise, sessionTimeout]);
+          activeUser = sessionData?.session?.user || null;
+        } catch (sessErr: any) {
+          console.warn("[loadOrganizations] Falha ou timeout de 8s ao obter sessão em loadOrganizations:", sessErr.message);
+          activeUser = null;
+        }
       }
       
       console.log("[loadOrganizations] Buscando organizações. Usuário atual:", activeUser?.email || 'Nenhum');
@@ -415,8 +485,12 @@ const App: FC = () => {
 
     if (supabase) {
         try {
-            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase...");
-            let { data: { session } } = await supabase.auth.getSession();
+            console.log("[Rastreamento] [loadAll] Obtendo sessão atual do Supabase com timeout de 8s...");
+            const getSessionPromise = supabase.auth.getSession();
+            const getSessionTimeout = new Promise<any>((_, reject) =>
+              setTimeout(() => reject(new Error('Timeout de 8s ao obter sessão do Supabase no loadAll')), 8000)
+            );
+            let { data: { session } } = await Promise.race([getSessionPromise, getSessionTimeout]);
             
             if (session) {
               const expiresAt = session.expires_at || 0;
@@ -424,9 +498,13 @@ const App: FC = () => {
               const isExpiredOrExpiring = expiresAt - now < 60; // menos de 60 segundos
               
               if (isExpiredOrExpiring) {
-                console.log('[Rastreamento] [loadAll] Token próximo de expirar ou expirado, fazendo refresh...');
+                console.log('[Rastreamento] [loadAll] Token próximo de expirar ou expirado, fazendo refresh com timeout de 8s...');
                 try {
-                  const { data: refreshData } = await supabase.auth.refreshSession();
+                  const refreshPromise = supabase.auth.refreshSession();
+                  const refreshTimeout = new Promise<any>((_, reject) =>
+                    setTimeout(() => reject(new Error('Timeout de 8s ao renovar token do Supabase no loadAll')), 8000)
+                  );
+                  const { data: refreshData } = await Promise.race([refreshPromise, refreshTimeout]);
                   if (refreshData.session) {
                     session = refreshData.session;
                     console.log('[Rastreamento] [loadAll] Token renovado com sucesso.');

@@ -3,8 +3,11 @@ import React, { useState, useEffect } from 'react';
 import { Database, Save, CheckCircle2, AlertCircle, Copy, Terminal, Unplug, Info, AlertTriangle, Loader2, Play, Search, CheckCircle, RefreshCcw, Settings } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { ConfirmModal } from './ConfirmModal';
-import { DEFAULT_SUPABASE_CONFIG, financeService } from '../services/financeService';
+import { DEFAULT_SUPABASE_CONFIG, financeService, safeStorage } from '../services/financeService';
 import { Bank, Wallet, UserPreferences, DateRangeOption } from '../types';
+
+// Sombreia localmente o localStorage global para uso seguro em IFrames / Sandbox do AI Studio
+const localStorage = safeStorage;
 
 interface SettingsViewProps {
   onSaveConfig: (url: string, key: string) => void;

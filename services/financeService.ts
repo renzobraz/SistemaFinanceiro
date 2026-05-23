@@ -19,6 +19,67 @@ import {
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+// Implementação segura e à prova de sandbox do window.localStorage para o ambiente de IFrames do AI Studio
+export const safeStorage = (() => {
+  let hasLocalStorage = false;
+  try {
+    const testKey = '__test_ls__';
+    window.localStorage.setItem(testKey, testKey);
+    window.localStorage.removeItem(testKey);
+    hasLocalStorage = true;
+  } catch (e) {
+    hasLocalStorage = false;
+    console.warn('[Storage] Modo IFrame/Sandbox detectado. Usando armazenamento em memória ao invés do localStorage nativo.');
+  }
+
+  const memoryStore: Record<string, string> = {};
+
+  return {
+    getItem(key: string): string | null {
+      if (hasLocalStorage) {
+        try {
+          return window.localStorage.getItem(key);
+        } catch {
+          return memoryStore[key] || null;
+        }
+      }
+      return memoryStore[key] || null;
+    },
+    setItem(key: string, value: string): void {
+      if (hasLocalStorage) {
+        try {
+          window.localStorage.setItem(key, value);
+          return;
+        } catch {}
+      }
+      memoryStore[key] = value;
+    },
+    removeItem(key: string): void {
+      if (hasLocalStorage) {
+        try {
+          window.localStorage.removeItem(key);
+          return;
+        } catch {}
+      }
+      delete memoryStore[key];
+    },
+    clear(): void {
+      if (hasLocalStorage) {
+        try {
+          window.localStorage.clear();
+          return;
+        } catch {}
+      }
+      for (const key in memoryStore) {
+        delete memoryStore[key];
+      }
+    }
+  };
+})();
+
+// Sombreia localmente o localStorage global para uso seguro sem quebras de SecurityError
+const localStorage = safeStorage;
+
 export const DEFAULT_SUPABASE_CONFIG = {
   // Substitui chaves fixadas pelas variáveis de ambiente do Vite
   url: import.meta.env.VITE_SUPABASE_URL || "",
@@ -256,6 +317,7 @@ const getSupabase = (): SupabaseClient | null => {
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: true,
+        storage: safeStorage as any,
       }
     });
     lastUrl = url;
