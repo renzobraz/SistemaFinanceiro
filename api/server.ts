@@ -28,18 +28,39 @@ function maskEmail(email: string): string {
 // =========================================================================
 const encryptionAlgorithm = "aes-256-gcm";
 
-function encrypt(text: string, keyString: string): string {
-  let key = Buffer.from(keyString, "hex");
-  if (key.length !== 32) {
-    key = Buffer.from(keyString, "base64");
+function getEncryptionKey(keyString?: string): Buffer {
+  const rawKey = keyString || process.env.SMTP_ENCRYPTION_KEY || process.env.VITE_SUPABASE_KEY || "fincontrol_pro_fallback_encryption_key_default";
+  
+  // Se for uma string de 64 caracteres hexadecimais, converte para 32 bytes
+  if (/^[0-9a-fA-F]{64}$/.test(rawKey)) {
+    try {
+      const b = Buffer.from(rawKey, "hex");
+      if (b.length === 32) return b;
+    } catch (e) {}
   }
-  if (key.length !== 32) {
-    key = Buffer.from(keyString, "utf-8");
-  }
-  if (key.length !== 32) {
-    throw new Error("A chave SMTP_ENCRYPTION_KEY deve ter exatamente 32 bytes (64 caracteres hex ou 32 caracteres brutos)");
-  }
+  
+  // Se puder ser decodificado para exatamente 32 bytes, usa direto
+  try {
+    const bHex = Buffer.from(rawKey, "hex");
+    if (bHex.length === 32) return bHex;
+  } catch (e) {}
 
+  try {
+    const bB64 = Buffer.from(rawKey, "base64");
+    if (bB64.length === 32) return bB64;
+  } catch (e) {}
+  
+  try {
+    const bUtf = Buffer.from(rawKey, "utf-8");
+    if (bUtf.length === 32) return bUtf;
+  } catch (e) {}
+
+  // Caso contrário, fazemos o hashing determinístico SHA-256 para obter exactamente 32 bytes
+  return crypto.createHash("sha256").update(rawKey).digest();
+}
+
+function encrypt(text: string, keyString?: string): string {
+  const key = getEncryptionKey(keyString);
   const iv = crypto.randomBytes(12); // GCM usa IV de 12 bytes
   const cipher = crypto.createCipheriv(encryptionAlgorithm, key, iv);
   
@@ -51,24 +72,14 @@ function encrypt(text: string, keyString: string): string {
   return `${iv.toString("hex")}:${tag}:${encrypted}`;
 }
 
-function decrypt(encryptedText: string, keyString: string): string {
+function decrypt(encryptedText: string, keyString?: string): string {
   const parts = encryptedText.split(":");
   if (parts.length !== 3) {
     // Se o formato não for iv:tag:conteudo, consideramos compatibilidade reversa (texto puro)
     return encryptedText;
   }
 
-  let key = Buffer.from(keyString, "hex");
-  if (key.length !== 32) {
-    key = Buffer.from(keyString, "base64");
-  }
-  if (key.length !== 32) {
-    key = Buffer.from(keyString, "utf-8");
-  }
-  if (key.length !== 32) {
-    throw new Error("A chave SMTP_ENCRYPTION_KEY deve ter exatamente 32 bytes (64 caracteres hex ou 32 caracteres brutos)");
-  }
-
+  const key = getEncryptionKey(keyString);
   const [ivHex, tagHex, encryptedHex] = parts;
   const iv = Buffer.from(ivHex, "hex");
   const tag = Buffer.from(tagHex, "hex");
@@ -597,10 +608,9 @@ app.get("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
     if (error) throw error;
 
     if (data) {
-      const encryptionKey = process.env.SMTP_ENCRYPTION_KEY;
-      if (encryptionKey && data.pass) {
+      if (data.pass) {
         try {
-          data.pass = decrypt(data.pass, encryptionKey);
+          data.pass = decrypt(data.pass, process.env.SMTP_ENCRYPTION_KEY);
         } catch (decError: any) {
           console.error("[SMTP-GET] Falha na descriptografia:", decError.message);
         }
@@ -645,14 +655,9 @@ app.post("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
       return res.status(400).json({ error: "Porta SMTP inválida." });
     }
 
-    const encryptionKey = process.env.SMTP_ENCRYPTION_KEY;
-    if (!encryptionKey) {
-      return res.status(500).json({ error: "SMTP_ENCRYPTION_KEY não configurada no servidor." });
-    }
-
     let encryptedPass = pass;
     try {
-      encryptedPass = encrypt(pass, encryptionKey);
+      encryptedPass = encrypt(pass, process.env.SMTP_ENCRYPTION_KEY);
     } catch (encError: any) {
       return res.status(500).json({ error: "Falha ao criptografar dados.", details: encError.message });
     }
