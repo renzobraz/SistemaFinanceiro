@@ -24,14 +24,36 @@ import { safeStorage } from '../services/financeService';
 // Sombreia localmente o localStorage global para uso seguro em IFrames / Sandbox do AI Studio
 const localStorage = safeStorage;
 
+const sidebarToDbModuleMap: Record<string, string> = {
+  'dashboard': 'dashboard',
+  'reports': 'reports',
+  'cashflow': 'cashflow',
+  'expenses-analysis': 'expenses',
+  'investments': 'investments',
+  'distribution': 'distribution',
+  'payables': 'payables',
+  'bank-transactions': 'transactions',
+  'brokerage-notes': 'brokerage',
+  'registries': 'registries'
+};
+
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   isOpen?: boolean;
   onClose?: () => void;
+  userModulePermissions?: Record<string, any>;
+  userRole?: string;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen = false, onClose }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ 
+  activeTab, 
+  setActiveTab, 
+  isOpen = false, 
+  onClose,
+  userModulePermissions = {},
+  userRole = ''
+}) => {
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const saved = localStorage.getItem('sidebar_collapsed');
     return saved === 'true';
@@ -58,6 +80,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
     { id: 'registries', label: 'Cadastros', icon: Database },
   ];
 
+  const filteredMenuItems = menuItems.filter(item => {
+    if (!userModulePermissions || Object.keys(userModulePermissions).length === 0) {
+      return true;
+    }
+    const dbModule = sidebarToDbModuleMap[item.id] || item.id;
+    return userModulePermissions[dbModule]?.can_view === true;
+  });
+
   const settingsSubItems = [
     { id: 'settings-filters', label: 'Filtro Inicialização', icon: Filter },
     { id: 'settings-team', label: 'Gerenciar Equipe', icon: Users },
@@ -66,6 +96,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
     { id: 'settings-sql', label: 'Configuração SQL', icon: Terminal },
     { id: 'settings-manual', label: 'Manual / Ajuda', icon: BookOpen },
   ];
+
+  const showSettingsSubmenu = !userRole || userRole === 'owner' || userRole === 'admin';
 
   const widthClass = isCollapsed ? 'w-64 lg:w-20' : 'w-64';
   const textClass = isCollapsed ? 'block lg:hidden' : 'block';
@@ -102,7 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
 
         <nav className="flex-1 py-6 overflow-y-auto overflow-x-hidden text-sm uppercase tracking-tighter">
           <ul className="space-y-2 px-2">
-            {menuItems.map((item) => {
+            {filteredMenuItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
@@ -160,7 +192,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
               </button>
 
               {/* Submenu de Configurações */}
-              {isSettingsOpen && (
+              {isSettingsOpen && showSettingsSubmenu && (
                 <ul className={`mt-1 space-y-1 ml-6 border-l border-slate-800 pl-4 animate-in slide-in-from-top-2 duration-300 ${isCollapsed ? 'lg:hidden' : ''}`}>
                   {settingsSubItems.map((sub) => {
                     const SubIcon = sub.icon;

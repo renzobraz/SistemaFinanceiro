@@ -131,6 +131,8 @@ const App: FC = () => {
   const [activeOrg, setActiveOrg] = useState<Organization | null>(null);
   const [isOnboarding, setIsOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(1);
+  const [userModulePermissions, setUserModulePermissions] = useState<Record<string, any>>({});
+  const [userRole, setUserRole] = useState<string>('');
 
   // ESTADOS LOCAIS PARA O FLUXO DE ONBOARDING
   const [newOrgName, setNewOrgName] = useState('');
@@ -220,11 +222,30 @@ const App: FC = () => {
         localStorage.setItem('fincontrol_active_org_id', foundOrg.id);
         loadedRegistriesRef.current = {}; // Limpar cache de registros ao definir organização ativa
         console.log("[loadOrganizations] Cache de cadastros loadedRegistriesRef limpo ao definir a organização ativa.");
+
+        // Carrega permissões do usuário
+        const perms = await financeService.getUserModulePermissions();
+        setUserModulePermissions(perms);
+
+        // Obtém o pápel do usuário logado na organização ativa para repassar ao Sidebar
+        let role = '';
+        if (supabase && activeUser) {
+          const { data: memberData } = await supabase
+            .from('organization_members')
+            .select('role')
+            .eq('organization_id', foundOrg.id)
+            .eq('user_id', activeUser.id)
+            .maybeSingle();
+          role = memberData?.role || '';
+        }
+        setUserRole(role || 'owner'); // fallback para owner
       } else {
         console.log("[loadOrganizations] Nenhuma organização correspondente encontrada nos registros carregados.");
         setActiveOrg(null);
         financeService.setActiveOrganizationId(null);
         loadedRegistriesRef.current = {}; // Limpar cache se não encontrar organização ativa
+        setUserModulePermissions({});
+        setUserRole('');
       }
     } catch (e) {
       console.error("Erro ao carregar organizações no App:", e);
@@ -1313,7 +1334,14 @@ const App: FC = () => {
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+      <Sidebar 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        isOpen={isSidebarOpen} 
+        onClose={() => setIsSidebarOpen(false)} 
+        userModulePermissions={userModulePermissions}
+        userRole={userRole}
+      />
       
       <main className="flex-1 flex flex-col overflow-hidden relative">
         <header className="py-2.5 bg-white border-b border-gray-200 flex flex-wrap items-center justify-between px-6 flex-shrink-0 z-10 gap-3 shadow-sm">

@@ -3031,5 +3031,103 @@ export const financeService = {
     const list = getEntityLocal<BaseEntity>(keyMap[type], []);
     const updatedList = list.map(item => item.id === id ? { ...item, active } : item);
     saveEntityLocal(keyMap[type], updatedList);
+  },
+
+  async getUserModulePermissions(): Promise<Record<string, { can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean; can_export: boolean }>> {
+    const defaultPermissions: Record<string, { can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean; can_export: boolean }> = {};
+    const ALL_MODULES = [
+      'dashboard', 'reports', 'cashflow', 'expenses', 'investments', 
+      'distribution', 'payables', 'transactions', 'brokerage', 'registries'
+    ];
+    
+    ALL_MODULES.forEach(mod => {
+      defaultPermissions[mod] = { can_view: false, can_create: false, can_edit: false, can_delete: false, can_export: false };
+    });
+
+    const supabase = getSupabase();
+    if (!supabase) return defaultPermissions;
+
+    const orgId = this.activeOrganizationId;
+    if (!orgId) return defaultPermissions;
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData?.session?.user;
+    if (!user) return defaultPermissions;
+
+    const mainPromise = (async () => {
+      // 1. Verifica papel em organization_members
+      const { data: memberData } = await supabase
+        .from('organization_members')
+        .select('role')
+        .eq('organization_id', orgId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      const userRole = memberData?.role || '';
+      if (userRole === 'owner' || userRole === 'admin') {
+        const adminPerms: Record<string, any> = {};
+        ALL_MODULES.forEach(mod => {
+          adminPerms[mod] = { can_view: true, can_create: true, can_edit: true, can_delete: true, can_export: true };
+        });
+        return adminPerms;
+      }
+
+      // 2. Busca os profile_id em user_wallet_permissions
+      const { data: walletPerms, error: walletError } = await supabase
+        .from('user_wallet_permissions')
+        .select('profile_id')
+        .eq('organization_id', orgId)
+        .eq('user_id', user.id);
+
+      if (walletError) {
+        console.error("Erro ao buscar user_wallet_permissions:", walletError);
+        return defaultPermissions;
+      }
+
+      const profileIds = Array.from(new Set((walletPerms || []).map(p => p.profile_id).filter(Boolean)));
+      if (profileIds.length === 0) {
+        return defaultPermissions;
+      }
+
+      // 3. Busca profile_module_permissions para esses perfis
+      const { data: modPerms, error: modError } = await supabase
+        .from('profile_module_permissions')
+        .select('module, can_view, can_create, can_edit, can_delete, can_export')
+        .in('profile_id', profileIds);
+
+      if (modError) {
+        console.error("Erro ao buscar profile_module_permissions:", modError);
+        return defaultPermissions;
+      }
+
+      const merged: Record<string, { can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean; can_export: boolean }> = { ...defaultPermissions };
+      
+      if (modPerms) {
+        modPerms.forEach((p: any) => {
+          const mod = p.module;
+          if (!merged[mod]) {
+            merged[mod] = { can_view: false, can_create: false, can_edit: false, can_delete: false, can_export: false };
+          }
+          merged[mod].can_view = merged[mod].can_view || !!p.can_view;
+          merged[mod].can_create = merged[mod].can_create || !!p.can_create;
+          merged[mod].can_edit = merged[mod].can_edit || !!p.can_edit;
+          merged[mod].can_delete = merged[mod].can_delete || !!p.can_delete;
+          merged[mod].can_export = merged[mod].can_export || !!p.can_export;
+        });
+      }
+
+      return merged;
+    })();
+
+    const timeoutPromise = new Promise<Record<string, { can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean; can_export: boolean }>>((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout de 15 segundos ao buscar permissões organizacionais')), 15000)
+    );
+
+    try {
+      return await Promise.race([mainPromise, timeoutPromise]);
+    } catch (err) {
+      console.error("[getUserModulePermissions] Falhou ao resolver permissões do usuário:", err);
+      return defaultPermissions;
+    }
   }
 };
