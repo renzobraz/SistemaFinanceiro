@@ -552,10 +552,12 @@ app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req: any, re
 
 app.post("/api/accept-invitation", requireAuth, async (req: any, res: any) => {
   try {
-    const { invitationId } = req.body;
+    const { invitationId, email } = req.body;
     const userId = req.user.id;
 
-    if (!invitationId) return res.status(400).json({ error: "invitationId obrigatório" });
+    if (!invitationId && !email) {
+      return res.status(400).json({ error: "invitationId ou email obrigatório" });
+    }
 
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -566,13 +568,20 @@ app.post("/api/accept-invitation", requireAuth, async (req: any, res: any) => {
     });
 
     // 1. Busca o convite
-    const { data: invitation, error: fetchErr } = await admin
-      .from('user_permissions')
-      .select('*')
-      .eq('id', invitationId)
-      .maybeSingle();
+    let invitation;
+    if (invitationId) {
+      const { data } = await admin.from('user_permissions').select('*').eq('id', invitationId).maybeSingle();
+      invitation = data;
+    } else if (email) {
+      const [localPart, domain] = email.toLowerCase().trim().split('@');
+      const { data } = await admin.from('user_permissions').select('*')
+        .ilike('invited_email', `${localPart}%@${domain}`)
+        .eq('status', 'pending')
+        .maybeSingle();
+      invitation = data;
+    }
 
-    if (fetchErr || !invitation) return res.status(404).json({ error: "Convite não encontrado" });
+    if (!invitation) return res.status(404).json({ error: "Convite não encontrado" });
 
     // 2. Resolve organization_id
     let orgId = invitation.organization_id;
@@ -586,8 +595,8 @@ app.post("/api/accept-invitation", requireAuth, async (req: any, res: any) => {
     }
     if (!orgId) return res.status(400).json({ error: "Organização não encontrada" });
 
-    // 3. Atualiza status
-    await admin.from('user_permissions').update({ status: 'active' }).eq('id', invitationId);
+    // 3. Atualiza status usando o id do convite encontrado
+    await admin.from('user_permissions').update({ status: 'active' }).eq('id', invitation.id);
 
     // 4. Insere em organization_members
     const { data: existing } = await admin

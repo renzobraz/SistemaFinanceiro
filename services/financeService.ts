@@ -1060,22 +1060,22 @@ export const financeService = {
     const session = sessionData?.session;
     if (!session?.user) throw new Error("Usuário não autenticado");
 
-    // Extrai partes do email para busca flexível
-    const [localPart, domain] = email.toLowerCase().trim().split('@');
+    // Passa o email direto ao servidor — ele faz o SELECT com service_role
+    const apiUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+    const response = await fetch(`${apiUrl}/api/accept-invitation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ email: email })
+    });
 
-    const { data: invitation, error } = await supabase
-      .from('user_permissions')
-      .select('*')
-      .ilike('invited_email', `${localPart}%@${domain}`)
-      .eq('status', 'pending')
-      .maybeSingle();
-
-    if (error || !invitation) {
-      console.warn('[acceptInvitationByEmail] Convite não encontrado para:', email);
-      return;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      console.error('[acceptInvitationByEmail] Erro:', err);
+      // Não lança erro — usuário já tem sessão, só loga o problema
     }
-
-    await this.acceptInvitation(invitation.id);
   },
 
   async deletePermission(id: string): Promise<void> {
