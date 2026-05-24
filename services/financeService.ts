@@ -992,10 +992,13 @@ export const financeService = {
     const session = data?.session;
     if (!session?.user) return [];
 
+    const activeOrganizationId = this.activeOrganizationId;
+    if (!activeOrganizationId) return [];
+
     const { data: permissionsData, error } = await supabase
       .from('user_permissions')
       .select('*')
-      .eq('owner_id', session.user.id);
+      .eq('organization_id', activeOrganizationId);
 
     if (error) throw error;
     return (permissionsData || []).map(p => cleanPermissionObject(p));

@@ -101,8 +101,18 @@ export const TeamManagement: React.FC = () => {
           if (memberData) {
             setMyRole(memberData.role);
           } else {
-            // Fallback caso seja o criador ou não tenha registro explícito
-            setMyRole('owner');
+            // Verifica se é o criador real da organização
+            const { data: orgData } = await supabase
+              .from('organizations')
+              .select('owner_id')
+              .eq('id', orgId)
+              .maybeSingle();
+
+            if (orgData?.owner_id === user.id) {
+              setMyRole('owner');
+            } else {
+              setMyRole('viewer');
+            }
           }
 
           // Busca os perfis criados para a seleção no convite
@@ -120,14 +130,14 @@ export const TeamManagement: React.FC = () => {
           const walletsData = await financeService.getRegistry<any>('wallets').catch(() => []);
           setWallets(walletsData || []);
         } else {
-          setMyRole('owner');
+          setMyRole('viewer');
         }
       } else {
-        setMyRole('owner');
+        setMyRole('viewer');
       }
     } catch (err: any) {
       console.error('[loadData] Erro:', err);
-      setMyRole('owner'); // Fallback para evitar travamentos
+      setMyRole('viewer'); // Fallback para evitar travamentos
     } finally {
       setLoading(false);
     }
