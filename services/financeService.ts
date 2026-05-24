@@ -1044,7 +1044,18 @@ export const financeService = {
 
     if (fetchErr || !invitation) throw new Error("Convite não encontrado");
 
-    const orgId = invitation.organization_id;
+    let orgId = invitation.organization_id;
+
+    // Fallback: busca a organização pelo owner_id do convite
+    if (!orgId && invitation.owner_id) {
+      const { data: orgData } = await supabase
+        .from('organizations')
+        .select('id')
+        .eq('owner_id', invitation.owner_id)
+        .maybeSingle();
+      orgId = orgData?.id || null;
+    }
+
     if (!orgId) throw new Error("Convite sem organização associada");
 
     // 2. Atualiza status para active
@@ -1114,10 +1125,13 @@ export const financeService = {
     const session = sessionData?.session;
     if (!session?.user) throw new Error("Usuário não autenticado");
 
+    // Extrai partes do email para busca flexível
+    const [localPart, domain] = email.toLowerCase().trim().split('@');
+
     const { data: invitation, error: getErr } = await supabase
       .from('user_permissions')
       .select('*')
-      .eq('invited_email', email.toLowerCase().trim())
+      .ilike('invited_email', `${localPart}%@${domain}`)
       .eq('status', 'pending')
       .maybeSingle();
 

@@ -472,10 +472,15 @@ app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req: any, re
           auth: { autoRefreshToken: false, persistSession: false }
         });
 
+        // Extrai o email real antes do +wperms
+        const realEmail = email.includes('+wperms_') 
+          ? email.replace(/\+wperms_[^@]+/, '') 
+          : email;
+
         // Tenta invite primeiro (novo usuário)
         let { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
           type: 'invite',
-          email: email,
+          email: realEmail,
           options: { redirectTo: `${appUrl}/aceitar-convite` }
         });
 
@@ -484,7 +489,7 @@ app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req: any, re
           console.log('[INVITE] Usuário já existe — usando recovery link.');
           const recovery = await supabaseAdmin.auth.admin.generateLink({
             type: 'recovery',
-            email: email,
+            email: realEmail,
             options: { redirectTo: `${appUrl}/aceitar-convite` }
           });
           linkData = recovery.data;
