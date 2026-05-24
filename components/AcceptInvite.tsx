@@ -24,31 +24,40 @@ export const AcceptInvite: React.FC<AcceptInviteProps> = ({ inviteToken, onSucce
     const initializeSession = async () => {
       try {
         const supabase = financeService.getSupabase();
-        if (!supabase) {
-          throw new Error('Supabase não configurado.');
+        if (!supabase) throw new Error('Supabase não configurado.');
+
+        // Primeiro tenta pegar a sessão que o Supabase já criou automaticamente
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.user) {
+          // Supabase já processou o token do convite — sessão ativa
+          console.log('[AcceptInvite] Sessão já ativa via detectSessionInUrl:', session.user.email);
+          setEmail(session.user.email || null);
+          setInitLoading(false);
+          return;
         }
 
-        // Tenta setSession — se falhar, tenta getUser direto com o token
+        // Fallback: tenta setSession manualmente com o token
+        if (!inviteToken) {
+          throw new Error('Token do convite não encontrado. O link pode ter expirado.');
+        }
+
         const { data, error: sessionError } = await supabase.auth.setSession({
           access_token: inviteToken,
-          refresh_token: inviteToken, // usa o próprio access_token como fallback
+          refresh_token: inviteToken,
         });
 
         if (sessionError) {
-          // Fallback: verifica se o token já criou uma sessão válida
           const { data: userData, error: userError } = await supabase.auth.getUser(inviteToken);
           if (userError || !userData.user) throw new Error('Token do convite expirado ou inválido.');
           setEmail(userData.user.email || null);
         } else {
           const currentUser = data?.user || (await supabase.auth.getUser()).data.user;
-          if (currentUser) {
-            setEmail(currentUser.email || null);
-          } else {
-            throw new Error('Não foi possível carregar as informações do usuário convidado.');
-          }
+          if (currentUser) setEmail(currentUser.email || null);
+          else throw new Error('Não foi possível carregar as informações do usuário.');
         }
       } catch (err: any) {
-        console.error('[AcceptInvite] Erro ao inicializar sessão por convite:', err);
+        console.error('[AcceptInvite] Erro ao inicializar sessão:', err);
         setError(err.message || 'Token do convite expirado ou inválido.');
       } finally {
         setInitLoading(false);

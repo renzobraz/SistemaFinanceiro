@@ -136,8 +136,31 @@ const App: FC = () => {
   const [userRole, setUserRole] = useState<string>('');
 
   // FLUXO DE ACEITAR CONVITE
-  const [inviteToken, setInviteToken] = useState<string | null>(null);
-  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [inviteToken, setInviteToken] = useState<string>(() => {
+    const hash = window.location.hash || window.location.search || '';
+    const params = new URLSearchParams(hash.replace('#', '?'));
+    return params.get('access_token') || '';
+  });
+
+  const [showCreatePassword, setShowCreatePassword] = useState<boolean>(() => {
+    const hash = window.location.hash || window.location.search || '';
+    const params = new URLSearchParams(hash.replace('#', '?'));
+    const accessToken = params.get('access_token');
+    const type = params.get('type');
+    const isInvitePath = window.location.pathname.includes('aceitar-convite');
+    // Limpa a URL imediatamente para não reprocessar
+    if (accessToken && (type === 'invite' || isInvitePath)) {
+      window.history.replaceState(null, '', window.location.pathname);
+      return true;
+    }
+    return false;
+  });
+
+  const showCreatePasswordRef = useRef(showCreatePassword);
+
+  useEffect(() => {
+    showCreatePasswordRef.current = showCreatePassword;
+  }, [showCreatePassword]);
 
   // ESTADOS LOCAIS PARA O FLUXO DE ONBOARDING
   const [newOrgName, setNewOrgName] = useState('');
@@ -154,6 +177,10 @@ const App: FC = () => {
   const [createdWalletId, setCreatedWalletId] = useState('');
 
   const loadOrganizations = useCallback(async (selectedOrgId?: string, forceUser?: any) => {
+    if (showCreatePasswordRef.current) {
+      console.log('[loadOrganizations] Convite em andamento — onboarding bloqueado.');
+      return;
+    }
     try {
       const supabase = financeService.getSupabase();
       if (!supabase) {
@@ -674,21 +701,6 @@ const App: FC = () => {
     }
   };
 
-  useEffect(() => {
-    const hash = window.location.hash || window.location.search || '';
-    const params = new URLSearchParams(hash.replace('#', '?'));
-    const accessToken = params.get('access_token');
-    const type = params.get('type');
-    const isInvitePath = window.location.pathname.includes('/aceitar-convite');
-
-    if (accessToken && (type === 'invite' || isInvitePath)) {
-      setInviteToken(accessToken);
-      setShowCreatePassword(true);
-      setLoading(false);
-      // Limpa a URL para não reprocessar no próximo render
-      window.history.replaceState(null, '', window.location.pathname);
-    }
-  }, []);
 
   useEffect(() => {
     loadAll(true);
@@ -717,6 +729,10 @@ const App: FC = () => {
 
         if (newUser) {
           if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+            if (showCreatePasswordRef.current) {
+              console.log('[onAuthStateChange] Convite em andamento — onboarding ou load de organizações bloqueados.');
+              return;
+            }
             if (isLoadingAllRef.current) {
               console.log('[onAuthStateChange] Carregamento principal (loadAll) já está em andamento. Ignorando re-trigger redundante no listener de auth.');
               return;
@@ -992,6 +1008,28 @@ const App: FC = () => {
     { id: 'assetSectors', label: 'Setores', icon: LayoutGrid },
   ];
 
+  if (showCreatePassword) {
+    return (
+      <AcceptInvite
+        inviteToken={inviteToken || ''}
+        onSuccess={(activeUser) => {
+          setShowCreatePassword(false);
+          setInviteToken('');
+          setUser(activeUser);
+          loadAll(false);
+        }}
+        onCancel={() => {
+          setShowCreatePassword(false);
+          setInviteToken('');
+          const supabase = financeService.getSupabase();
+          if (supabase) {
+            supabase.auth.signOut();
+          }
+        }}
+      />
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-white flex-col gap-6">
@@ -1008,27 +1046,6 @@ const App: FC = () => {
   }
 
   const selectClass = "bg-white border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 outline-none text-slate-700 font-medium cursor-pointer hover:bg-gray-50 transition-colors h-[38px] flex items-center min-w-[140px]";
-
-  if (showCreatePassword && inviteToken) {
-    return (
-      <AcceptInvite
-        inviteToken={inviteToken}
-        onSuccess={(activeUser) => {
-          setUser(activeUser);
-          setShowCreatePassword(false);
-          setInviteToken(null);
-          window.location.hash = '';
-          loadAll(true);
-        }}
-        onCancel={() => {
-          setShowCreatePassword(false);
-          setInviteToken(null);
-          window.location.hash = '';
-          loadAll(true);
-        }}
-      />
-    );
-  }
 
   if (!user && isConnected && !isLocalMode) {
     return <Auth onLogin={loadAll} />;
