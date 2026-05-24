@@ -644,6 +644,124 @@ app.post("/api/accept-invitation", requireAuth, async (req: any, res: any) => {
   }
 });
 
+app.post("/api/update-user-permissions", requireAuth, async (req: any, res: any) => {
+  try {
+    const { invitedEmail, role, walletProfiles, orgId } = req.body;
+
+    if (!invitedEmail || !role || !walletProfiles || !orgId) {
+      return res.status(400).json({ error: "Parâmetros invitedEmail, role, walletProfiles e orgId são obrigatórios" });
+    }
+
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    if (!serviceKey || !supabaseUrl) return res.status(500).json({ error: "Configuração ausente" });
+
+    const admin = createClient(supabaseUrl, serviceKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
+    // 1. Busca o convite/permissão
+    const [localPart, domain] = invitedEmail.toLowerCase().trim().split('@');
+    const { data: invitation, error: fetchErr } = await admin
+      .from('user_permissions')
+      .select('*')
+      .eq('organization_id', orgId)
+      .ilike('invited_email', `${localPart}%@${domain}`)
+      .maybeSingle();
+
+    if (fetchErr || !invitation) {
+      return res.status(404).json({ error: "Permissão não encontrada para o e-mail informado." });
+    }
+
+    // 2. Atualiza a role na tabela user_permissions
+    const { error: permError } = await admin
+      .from('user_permissions')
+      .update({ role })
+      .eq('id', invitation.id);
+
+    if (permError) throw permError;
+
+    // 3. Se estiver ativa, atualiza user_wallet_permissions
+    if (invitation.status === 'active') {
+      // Extrai o email real antes do +wperms
+      const realEmail = invitedEmail.includes('+wperms_') 
+        ? invitedEmail.replace(/\+wperms_[^@]+/, '') 
+        : invitedEmail;
+
+      let userId = null;
+      try {
+        const roleStr = invitation.role || '';
+        const colonIdx = roleStr.indexOf(':');
+        if (colonIdx > -1) {
+          const jsonStr = roleStr.substring(colonIdx + 1);
+          const walletMap = JSON.parse(jsonStr);
+          userId = walletMap._user_id || null;
+        }
+      } catch (e) {
+        console.warn('[UPDATE-PERMISSIONS] Falha ao obter userId do JSON do convite:', e);
+      }
+
+      if (!userId) {
+        try {
+          const { data } = await admin.auth.admin.listUsers();
+          const users = data?.users || [];
+          const found = users.find((u: any) => u.email?.toLowerCase() === realEmail.toLowerCase());
+          userId = found?.id || null;
+        } catch (e) {
+          console.log('[UPDATE-PERMISSIONS] Falha ao obter usuário pelo listUsers auth:', e);
+        }
+      }
+
+      if (!userId) {
+        // Fallback: tenta obter através de registros existentes em user_wallet_permissions
+        const walletIdsToCheck = Object.keys(walletProfiles).filter(k => !k.startsWith('_'));
+        if (walletIdsToCheck.length > 0) {
+          const { data: wps } = await admin
+            .from('user_wallet_permissions')
+            .select('user_id')
+            .eq('organization_id', orgId)
+            .in('wallet_id', walletIdsToCheck)
+            .limit(1);
+          if (wps && wps.length > 0) {
+            userId = wps[0].user_id;
+          }
+        }
+      }
+
+      if (userId) {
+        // Remove permissões antigas
+        await admin
+          .from('user_wallet_permissions')
+          .delete()
+          .eq('organization_id', orgId)
+          .eq('user_id', userId);
+
+        // Insere novas
+        const inserts = Object.entries(walletProfiles)
+          .filter(([k]) => !k.startsWith('_'))
+          .map(([walletId, profileId]) => ({
+            organization_id: orgId,
+            user_id: userId,
+            wallet_id: walletId,
+            profile_id: profileId as string
+          }));
+
+        if (inserts.length > 0) {
+          const { error: insErr } = await admin
+            .from('user_wallet_permissions')
+            .insert(inserts);
+          if (insErr) throw insErr;
+        }
+      }
+    }
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[UPDATE-PERMISSIONS] Erro:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // API Test-Email
 app.post("/api/test-email", requireAuth, emailTestRateLimiter, async (req, res) => {
   try {

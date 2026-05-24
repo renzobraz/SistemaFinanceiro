@@ -477,59 +477,33 @@ export const TeamManagement: React.FC = () => {
         walletProfiles._user_id = guestUserId;
       }
       
-      const cleanRoleName = selectedPermissionToEdit.role || 'viewer';
-      const updatedRole = `${cleanRoleName}:${JSON.stringify(walletProfiles)}`;
-      
-      const { error: permError } = await supabase
-        .from('user_permissions')
-        .update({ role: updatedRole })
-        .eq('id', selectedPermissionToEdit.id);
-        
-      if (permError) throw permError;
-      
-      if (selectedPermissionToEdit.status === 'active') {
-        let userId = guestUserId;
-        
-        if (!userId) {
-          const walletIdsToCheck = Object.keys(originalMappings).filter(k => !k.startsWith('_'));
-          if (walletIdsToCheck.length > 0) {
-            const { data: wps } = await supabase
-              .from('user_wallet_permissions')
-              .select('user_id')
-              .eq('organization_id', orgId)
-              .in('wallet_id', walletIdsToCheck)
-              .limit(1);
-            if (wps && wps.length > 0) {
-              userId = wps[0].user_id;
-            }
-          }
-        }
-        
-        if (userId) {
-          const { error: delErr } = await supabase
-            .from('user_wallet_permissions')
-            .delete()
-            .eq('organization_id', orgId)
-            .eq('user_id', userId);
-            
-          if (delErr) throw delErr;
-          
-          const inserts = Object.entries(walletProfiles)
-            .filter(([k]) => !k.startsWith('_'))
-            .map(([walletId, profileId]) => ({
-              organization_id: orgId,
-              user_id: userId,
-              wallet_id: walletId,
-              profile_id: profileId
-            }));
-            
-          if (inserts.length > 0) {
-            const { error: insErr } = await supabase
-              .from('user_wallet_permissions')
-              .insert(inserts);
-            if (insErr) throw insErr;
-          }
-        }
+      const baseRoleName = selectedPermissionToEdit.role && selectedPermissionToEdit.role.includes(':')
+        ? selectedPermissionToEdit.role.split(':')[0]
+        : (selectedPermissionToEdit.role || 'viewer');
+      const updatedRole = `${baseRoleName}:${JSON.stringify(walletProfiles)}`;
+
+      const sessionData = await supabase.auth.getSession();
+      const session = sessionData.data.session;
+      if (!session) throw new Error("Usuário não autenticado.");
+
+      const apiUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+      const response = await fetch(`${apiUrl}/api/update-user-permissions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          invitedEmail: selectedPermissionToEdit.invited_email,
+          role: updatedRole,
+          walletProfiles,
+          orgId
+        })
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || 'Falha ao salvar as alterações do perfil.');
       }
       
       alert("Perfil editado com sucesso!");
