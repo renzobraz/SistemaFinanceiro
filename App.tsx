@@ -148,8 +148,9 @@ const App: FC = () => {
     const accessToken = params.get('access_token');
     const type = params.get('type');
     const isInvitePath = window.location.pathname.includes('aceitar-convite');
+    const isValidType = type === 'invite' || type === 'recovery' || isInvitePath;
     // Limpa a URL imediatamente para não reprocessar
-    if (accessToken && (type === 'invite' || isInvitePath)) {
+    if (accessToken && isValidType) {
       window.history.replaceState(null, '', window.location.pathname);
       return true;
     }

@@ -472,22 +472,33 @@ app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req: any, re
           auth: { autoRefreshToken: false, persistSession: false }
         });
 
-        const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        // Tenta invite primeiro (novo usuário)
+        let { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
           type: 'invite',
           email: email,
-          options: {
-            redirectTo: `${appUrl}/aceitar-convite`
-          }
+          options: { redirectTo: `${appUrl}/aceitar-convite` }
         });
 
+        // Se usuário já existe, usa recovery (reset de senha)
+        if (linkError?.message?.includes('already been registered')) {
+          console.log('[INVITE] Usuário já existe — usando recovery link.');
+          const recovery = await supabaseAdmin.auth.admin.generateLink({
+            type: 'recovery',
+            email: email,
+            options: { redirectTo: `${appUrl}/aceitar-convite` }
+          });
+          linkData = recovery.data;
+          linkError = recovery.error;
+        }
+
         if (linkError) {
-          console.error("[SMTP] Erro do Supabase Admin ao gerar link de convite:", linkError.message);
+          console.error('[INVITE] Erro ao gerar link:', linkError.message);
         } else if (linkData?.properties?.action_link) {
           actionLink = linkData.properties.action_link;
-          console.log("[SMTP] Link de convite do Supabase Admin gerado com sucesso.");
+          console.log('[INVITE] Link gerado com sucesso:', actionLink.substring(0, 60) + '...');
         }
       } catch (adminErr: any) {
-        console.error("[SMTP] Falha ao gerar link do Supabase Admin:", adminErr.message);
+        console.error('[INVITE] Falha no Supabase Admin:', adminErr.message);
       }
     } else {
       console.warn("[SMTP] SUPABASE_SERVICE_ROLE_KEY ausente. Usando link padrão.");
