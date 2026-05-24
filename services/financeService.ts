@@ -1032,88 +1032,23 @@ export const financeService = {
     if (!supabase) throw new Error("Supabase não configurado");
 
     const { data: sessionData } = await supabase.auth.getSession();
-    const userId = sessionData?.session?.user?.id;
-    if (!userId) throw new Error("Usuário não autenticado");
+    const session = sessionData?.session;
+    if (!session?.user) throw new Error("Usuário não autenticado");
 
-    // 1. Busca o convite completo
-    const { data: invitation, error: fetchErr } = await supabase
-      .from('user_permissions')
-      .select('*')
-      .eq('id', invitationId)
-      .maybeSingle();
+    // Chama o endpoint servidor que usa service_role (bypassa RLS)
+    const apiUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+    const response = await fetch(`${apiUrl}/api/accept-invitation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ invitationId })
+    });
 
-    if (fetchErr || !invitation) throw new Error("Convite não encontrado");
-
-    let orgId = invitation.organization_id;
-
-    // Fallback: busca a organização pelo owner_id do convite
-    if (!orgId && invitation.owner_id) {
-      const { data: orgData } = await supabase
-        .from('organizations')
-        .select('id')
-        .eq('owner_id', invitation.owner_id)
-        .maybeSingle();
-      orgId = orgData?.id || null;
-    }
-
-    if (!orgId) throw new Error("Convite sem organização associada");
-
-    // 2. Atualiza status para active
-    const { error: updateErr } = await supabase
-      .from('user_permissions')
-      .update({ status: 'active' })
-      .eq('id', invitationId);
-
-    if (updateErr) throw updateErr;
-
-    // 3. Insere em organization_members se ainda não existir
-    const { data: existingMember } = await supabase
-      .from('organization_members')
-      .select('id')
-      .eq('organization_id', orgId)
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    if (!existingMember) {
-      const baseRole = (invitation.role || 'viewer').split(':')[0];
-      await supabase.from('organization_members').insert({
-        organization_id: orgId,
-        user_id: userId,
-        role: baseRole,
-        invited_by: invitation.owner_id
-      });
-    }
-
-    // 4. Cria user_wallet_permissions a partir do mapeamento do convite
-    try {
-      const roleStr = invitation.role || '';
-      const colonIdx = roleStr.indexOf(':');
-      if (colonIdx > -1) {
-        const jsonStr = roleStr.substring(colonIdx + 1);
-        const walletMap = JSON.parse(jsonStr);
-
-        const inserts = Object.entries(walletMap)
-          .filter(([k]) => !k.startsWith('_'))
-          .map(([walletId, profileId]) => ({
-            organization_id: orgId,
-            user_id: userId,
-            wallet_id: walletId,
-            profile_id: profileId as string
-          }));
-
-        if (inserts.length > 0) {
-          // Remove mapeamentos antigos antes de inserir
-          await supabase
-            .from('user_wallet_permissions')
-            .delete()
-            .eq('organization_id', orgId)
-            .eq('user_id', userId);
-
-          await supabase.from('user_wallet_permissions').insert(inserts);
-        }
-      }
-    } catch (parseErr) {
-      console.warn('[acceptInvitation] Erro ao parsear wallet map:', parseErr);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao aceitar convite');
     }
   },
 
@@ -1128,15 +1063,15 @@ export const financeService = {
     // Extrai partes do email para busca flexível
     const [localPart, domain] = email.toLowerCase().trim().split('@');
 
-    const { data: invitation, error: getErr } = await supabase
+    const { data: invitation, error } = await supabase
       .from('user_permissions')
       .select('*')
       .ilike('invited_email', `${localPart}%@${domain}`)
       .eq('status', 'pending')
       .maybeSingle();
 
-    if (getErr || !invitation) {
-      console.warn("Convite pendente não encontrado para o e-mail:", email);
+    if (error || !invitation) {
+      console.warn('[acceptInvitationByEmail] Convite não encontrado para:', email);
       return;
     }
 

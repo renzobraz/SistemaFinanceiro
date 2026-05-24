@@ -550,6 +550,91 @@ app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req: any, re
   }
 });
 
+app.post("/api/accept-invitation", requireAuth, async (req: any, res: any) => {
+  try {
+    const { invitationId } = req.body;
+    const userId = req.user.id;
+
+    if (!invitationId) return res.status(400).json({ error: "invitationId obrigatório" });
+
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    if (!serviceKey || !supabaseUrl) return res.status(500).json({ error: "Configuração ausente" });
+
+    const admin = createClient(supabaseUrl, serviceKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
+    // 1. Busca o convite
+    const { data: invitation, error: fetchErr } = await admin
+      .from('user_permissions')
+      .select('*')
+      .eq('id', invitationId)
+      .maybeSingle();
+
+    if (fetchErr || !invitation) return res.status(404).json({ error: "Convite não encontrado" });
+
+    // 2. Resolve organization_id
+    let orgId = invitation.organization_id;
+    if (!orgId) {
+      const { data: org } = await admin
+        .from('organizations')
+        .select('id')
+        .eq('owner_id', invitation.owner_id)
+        .maybeSingle();
+      orgId = org?.id;
+    }
+    if (!orgId) return res.status(400).json({ error: "Organização não encontrada" });
+
+    // 3. Atualiza status
+    await admin.from('user_permissions').update({ status: 'active' }).eq('id', invitationId);
+
+    // 4. Insere em organization_members
+    const { data: existing } = await admin
+      .from('organization_members')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!existing) {
+      const baseRole = (invitation.role || 'viewer').split(':')[0];
+      await admin.from('organization_members').insert({
+        organization_id: orgId,
+        user_id: userId,
+        role: baseRole,
+        invited_by: invitation.owner_id
+      });
+    }
+
+    // 5. Insere user_wallet_permissions
+    const roleStr = invitation.role || '';
+    const colonIdx = roleStr.indexOf(':');
+    if (colonIdx > -1) {
+      const walletMap = JSON.parse(roleStr.substring(colonIdx + 1));
+      const inserts = Object.entries(walletMap)
+        .filter(([k]) => !k.startsWith('_'))
+        .map(([walletId, profileId]) => ({
+          organization_id: orgId,
+          user_id: userId,
+          wallet_id: walletId,
+          profile_id: profileId as string
+        }));
+
+      if (inserts.length > 0) {
+        await admin.from('user_wallet_permissions').delete()
+          .eq('organization_id', orgId).eq('user_id', userId);
+        await admin.from('user_wallet_permissions').insert(inserts);
+      }
+    }
+
+    return res.json({ success: true, organizationId: orgId });
+  } catch (err: any) {
+    console.error('[ACCEPT-INVITATION] Erro:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // API Test-Email
 app.post("/api/test-email", requireAuth, emailTestRateLimiter, async (req, res) => {
   try {
