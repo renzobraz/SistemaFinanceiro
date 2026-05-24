@@ -1032,95 +1032,77 @@ export const financeService = {
     if (!supabase) throw new Error("Supabase não configurado");
 
     const { data: sessionData } = await supabase.auth.getSession();
-    const session = sessionData?.session;
-    if (!session?.user) throw new Error("Usuário não autenticado");
+    const userId = sessionData?.session?.user?.id;
+    if (!userId) throw new Error("Usuário não autenticado");
 
-    // 1. Busca as informações originais do convite antes de aceitar
-    const { data: invitation, error: getErr } = await supabase
+    // 1. Busca o convite completo
+    const { data: invitation, error: fetchErr } = await supabase
       .from('user_permissions')
       .select('*')
       .eq('id', invitationId)
-      .single();
+      .maybeSingle();
 
-    if (getErr || !invitation) {
-      throw new Error("Convite não encontrado ou sem permissão de acesso");
-    }
+    if (fetchErr || !invitation) throw new Error("Convite não encontrado");
 
-    // 2. Tenta fazer o parse do mapeamento {wallet_id: profile_id}
-    let walletProfiles: Record<string, string> = {};
-    
-    if (invitation.role && invitation.role.includes(':')) {
-      try {
-        const jsonPart = invitation.role.substring(invitation.role.indexOf(':') + 1);
-        walletProfiles = JSON.parse(jsonPart);
-      } catch (err) {
-        console.warn("Falha no parse do mapeamento de carteiras no role:", err);
-      }
-    } else if (invitation.invited_email && invitation.invited_email.includes('+wperms_')) {
-      try {
-        const start = invitation.invited_email.indexOf('+wperms_') + 8;
-        const end = invitation.invited_email.indexOf('@');
-        const encoded = invitation.invited_email.substring(start, end);
-        const jsonStr = decodeURIComponent(escape(atob(encoded)));
-        walletProfiles = JSON.parse(jsonStr);
-      } catch (err) {
-        console.warn("Falha no parse do mapeamento de carteiras no email:", err);
-      }
-    }
+    const orgId = invitation.organization_id;
+    if (!orgId) throw new Error("Convite sem organização associada");
 
-    // 3. Atualiza status no user_permissions para ativo e anexa o IDs de usuário no mapeamento do role
-    const mappingWithUserId = { ...walletProfiles, _user_id: session.user.id };
-    const updatedRole = invitation.role && invitation.role.includes(':') 
-      ? `${invitation.role.split(':')[0]}:${JSON.stringify(mappingWithUserId)}`
-      : `${invitation.role || 'viewer'}:${JSON.stringify(mappingWithUserId)}`;
-
-    const { error } = await supabase
+    // 2. Atualiza status para active
+    const { error: updateErr } = await supabase
       .from('user_permissions')
-      .update({ 
-        status: 'active',
-        role: updatedRole
-      })
+      .update({ status: 'active' })
       .eq('id', invitationId);
 
-    if (error) throw error;
+    if (updateErr) throw updateErr;
 
-    // 4. Se houver mapeamentos de carteiras com perfis, insere em user_wallet_permissions
-    if (walletProfiles && Object.keys(walletProfiles).length > 0) {
-      const firstProfileId = Object.values(walletProfiles)[0];
-      let orgId = this.activeOrganizationId || '';
+    // 3. Insere em organization_members se ainda não existir
+    const { data: existingMember } = await supabase
+      .from('organization_members')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('user_id', userId)
+      .maybeSingle();
 
-      // Tenta recuperar orgId consultando a tabela organization_profiles para o primeiro profile_id mapeado
-      if (firstProfileId && !orgId) {
-        const { data: profileObj } = await supabase
-          .from('organization_profiles')
-          .select('organization_id')
-          .eq('id', firstProfileId)
-          .maybeSingle();
-        if (profileObj?.organization_id) {
-          orgId = profileObj.organization_id;
-        }
-      }
+    if (!existingMember) {
+      const baseRole = (invitation.role || 'viewer').split(':')[0];
+      await supabase.from('organization_members').insert({
+        organization_id: orgId,
+        user_id: userId,
+        role: baseRole,
+        invited_by: invitation.owner_id
+      });
+    }
 
-      if (orgId) {
-        const inserts = Object.entries(walletProfiles)
-          .filter(([key]) => !key.startsWith('_'))
+    // 4. Cria user_wallet_permissions a partir do mapeamento do convite
+    try {
+      const roleStr = invitation.role || '';
+      const colonIdx = roleStr.indexOf(':');
+      if (colonIdx > -1) {
+        const jsonStr = roleStr.substring(colonIdx + 1);
+        const walletMap = JSON.parse(jsonStr);
+
+        const inserts = Object.entries(walletMap)
+          .filter(([k]) => !k.startsWith('_'))
           .map(([walletId, profileId]) => ({
             organization_id: orgId,
-            user_id: session.user.id,
+            user_id: userId,
             wallet_id: walletId,
-            profile_id: profileId
+            profile_id: profileId as string
           }));
 
         if (inserts.length > 0) {
-          const { error: insertErr } = await supabase
+          // Remove mapeamentos antigos antes de inserir
+          await supabase
             .from('user_wallet_permissions')
-            .insert(inserts);
+            .delete()
+            .eq('organization_id', orgId)
+            .eq('user_id', userId);
 
-          if (insertErr) {
-            console.error("Erro ao salvar vínculos em user_wallet_permissions:", insertErr);
-          }
+          await supabase.from('user_wallet_permissions').insert(inserts);
         }
       }
+    } catch (parseErr) {
+      console.warn('[acceptInvitation] Erro ao parsear wallet map:', parseErr);
     }
   },
 
