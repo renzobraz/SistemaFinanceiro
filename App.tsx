@@ -14,6 +14,7 @@ import { ProfitDistributionReport } from './components/ProfitDistributionReport'
 import ReportsDashboard from './src/components/reports/ReportsDashboard';
 import { HelpManual } from './components/HelpManual';
 import { SettingsPage } from './components/SettingsPage';
+import { AcceptInvite } from './components/AcceptInvite';
 import { financeService, DEFAULT_SUPABASE_CONFIG } from './services/financeService';
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus, AssetType, AssetSector, AssetTicker, Organization } from './types';
 import { BrokerageImport } from './components/BrokerageImport';
@@ -133,6 +134,10 @@ const App: FC = () => {
   const [onboardingStep, setOnboardingStep] = useState(1);
   const [userModulePermissions, setUserModulePermissions] = useState<Record<string, any>>({});
   const [userRole, setUserRole] = useState<string>('');
+
+  // FLUXO DE ACEITAR CONVITE
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
 
   // ESTADOS LOCAIS PARA O FLUXO DE ONBOARDING
   const [newOrgName, setNewOrgName] = useState('');
@@ -670,6 +675,22 @@ const App: FC = () => {
   };
 
   useEffect(() => {
+    const hash = window.location.hash || window.location.search || '';
+    const params = new URLSearchParams(hash.replace('#', '?'));
+    const accessToken = params.get('access_token');
+    const type = params.get('type');
+    const isInvitePath = window.location.pathname.includes('/aceitar-convite');
+
+    if (accessToken && (type === 'invite' || isInvitePath)) {
+      setInviteToken(accessToken);
+      setShowCreatePassword(true);
+      setLoading(false);
+      // Limpa a URL para não reprocessar no próximo render
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
     loadAll(true);
 
     const supabase = financeService.getSupabase();
@@ -987,6 +1008,27 @@ const App: FC = () => {
   }
 
   const selectClass = "bg-white border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 outline-none text-slate-700 font-medium cursor-pointer hover:bg-gray-50 transition-colors h-[38px] flex items-center min-w-[140px]";
+
+  if (showCreatePassword && inviteToken) {
+    return (
+      <AcceptInvite
+        inviteToken={inviteToken}
+        onSuccess={(activeUser) => {
+          setUser(activeUser);
+          setShowCreatePassword(false);
+          setInviteToken(null);
+          window.location.hash = '';
+          loadAll(true);
+        }}
+        onCancel={() => {
+          setShowCreatePassword(false);
+          setInviteToken(null);
+          window.location.hash = '';
+          loadAll(true);
+        }}
+      />
+    );
+  }
 
   if (!user && isConnected && !isLocalMode) {
     return <Auth onLogin={loadAll} />;

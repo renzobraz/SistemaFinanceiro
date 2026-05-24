@@ -936,7 +936,8 @@ export const financeService = {
       owner_id: session.user.id,
       invited_email: inviteEmail,
       role: inviteRole,
-      status: 'pending'
+      status: 'pending',
+      organization_id: this.activeOrganizationId
     });
 
     // Se falhar por erro de check constraint de permissão (ex: restrição no campo role), fallback para plus-addressing
@@ -956,7 +957,8 @@ export const financeService = {
         owner_id: session.user.id,
         invited_email: inviteEmail,
         role: inviteRole,
-        status: 'pending'
+        status: 'pending',
+        organization_id: this.activeOrganizationId
       });
       error = retryRes.error;
     }
@@ -1122,6 +1124,29 @@ export const financeService = {
     }
   },
 
+  async acceptInvitationByEmail(email: string): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const session = sessionData?.session;
+    if (!session?.user) throw new Error("Usuário não autenticado");
+
+    const { data: invitation, error: getErr } = await supabase
+      .from('user_permissions')
+      .select('*')
+      .eq('invited_email', email.toLowerCase().trim())
+      .eq('status', 'pending')
+      .maybeSingle();
+
+    if (getErr || !invitation) {
+      console.warn("Convite pendente não encontrado para o e-mail:", email);
+      return;
+    }
+
+    await this.acceptInvitation(invitation.id);
+  },
+
   async deletePermission(id: string): Promise<void> {
     const supabase = getSupabase();
     if (!supabase) throw new Error("Supabase não configurado");
@@ -1132,6 +1157,35 @@ export const financeService = {
       .eq('id', id);
 
     if (error) throw error;
+  },
+
+  async resendInvite(email: string, role: string): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+    
+    const { data } = await supabase.auth.getSession();
+    const session = data?.session;
+    if (!session?.user) throw new Error("Usuário não autenticado");
+
+    // Enviar e-mail via servidor backend
+    const res = await fetch('/api/send-invite', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({
+        email: email.toLowerCase().trim(),
+        invitedBy: session.user.email,
+        ownerId: session.user.id,
+        role: role.split(':')[0]
+      })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || "Falha ao enviar e-mail de convite.");
+    }
   },
 
   async getAssetAccruals(assetId?: string): Promise<AssetAccrual[]> {

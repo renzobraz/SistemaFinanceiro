@@ -49,6 +49,7 @@ export const TeamManagement: React.FC = () => {
   // --- ESTADOS DE EDICAO & RECUPERACAO ---
   const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
   const [resettingEmail, setResettingEmail] = useState<string | null>(null);
+  const [resendingEmail, setResendingEmail] = useState<string | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedPermissionToEdit, setSelectedPermissionToEdit] = useState<UserPermission | null>(null);
   const [editUserName, setEditUserName] = useState('');
@@ -331,6 +332,18 @@ export const TeamManagement: React.FC = () => {
       loadData();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleResendInvite = async (email: string, role: string) => {
+    setResendingEmail(email);
+    try {
+      await financeService.resendInvite(email, role);
+      alert('Convite reenviado com sucesso!');
+    } catch (err: any) {
+      alert(err.message || 'Erro ao reenviar convite');
+    } finally {
+      setResendingEmail(null);
     }
   };
 
@@ -993,13 +1006,19 @@ export const TeamManagement: React.FC = () => {
                               )}
                             </div>
                             <div className="flex items-center gap-2 mt-0.5">
-                              <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
-                                p.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
-                                p.role === 'editor' ? 'bg-blue-100 text-blue-700' : 
-                                'bg-slate-100 text-slate-600'
-                              }`}>
-                                {p.role}
-                              </span>
+                              {p.status === 'pending' ? (
+                                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 border border-amber-200">
+                                  AGUARDANDO
+                                </span>
+                              ) : (
+                                <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                                  p.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
+                                  p.role === 'editor' ? 'bg-blue-100 text-blue-700' : 
+                                  'bg-slate-100 text-slate-600'
+                                }`}>
+                                  {p.role}
+                                </span>
+                              )}
                               <span className="text-[10px] text-slate-400">•</span>
                               <span className={`text-[10px] font-bold ${p.status === 'active' ? 'text-green-600' : 'text-amber-500'}`}>
                                 {p.status === 'active' ? 'Ativo' : 'Aguardando Aceite'}
@@ -1009,28 +1028,48 @@ export const TeamManagement: React.FC = () => {
                         </div>
                         
                         <div className="flex items-center gap-1">
+                          {/* Reenviar Convite */}
+                          {p.status === 'pending' && (
+                            <button
+                              onClick={() => handleResendInvite(p.invited_email, p.role)}
+                              className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-all"
+                              title="Reenviar e-mail de convite"
+                              disabled={resendingEmail === p.invited_email}
+                            >
+                              {resendingEmail === p.invited_email ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Mail className="w-4 h-4" />
+                              )}
+                            </button>
+                          )}
+
                           {/* Reset de Senha */}
-                          <button
-                            onClick={() => handleResetPassword(p.invited_email)}
-                            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
-                            title="Redefinir senha"
-                            disabled={resettingEmail === p.invited_email}
-                          >
-                            {resettingEmail === p.invited_email ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Key className="w-4 h-4" />
-                            )}
-                          </button>
+                          {p.status === 'active' && (
+                            <button
+                              onClick={() => handleResetPassword(p.invited_email)}
+                              className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                              title="Redefinir senha"
+                              disabled={resettingEmail === p.invited_email}
+                            >
+                              {resettingEmail === p.invited_email ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Key className="w-4 h-4" />
+                              )}
+                            </button>
+                          )}
 
                           {/* Editar Perfil */}
-                          <button
-                            onClick={() => handleOpenEditModal(p)}
-                            className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
-                            title="Editar perfil"
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
+                          {p.status === 'active' && (
+                            <button
+                              onClick={() => handleOpenEditModal(p)}
+                              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                              title="Editar perfil"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          )}
 
                           {/* Excluir acesso */}
                           <button

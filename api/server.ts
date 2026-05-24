@@ -463,6 +463,36 @@ app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req: any, re
 
     const appUrl = (process.env.VITE_APP_URL || "").replace(/\/$/, "");
     
+    // Gerar link de convite real do Supabase Admin
+    let actionLink = appUrl;
+    const serviceKey = process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceKey) {
+      try {
+        const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+          auth: { autoRefreshToken: false, persistSession: false }
+        });
+
+        const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+          type: 'invite',
+          email: email,
+          options: {
+            redirectTo: `${appUrl}/aceitar-convite`
+          }
+        });
+
+        if (linkError) {
+          console.error("[SMTP] Erro do Supabase Admin ao gerar link de convite:", linkError.message);
+        } else if (linkData?.properties?.action_link) {
+          actionLink = linkData.properties.action_link;
+          console.log("[SMTP] Link de convite do Supabase Admin gerado com sucesso.");
+        }
+      } catch (adminErr: any) {
+        console.error("[SMTP] Falha ao gerar link do Supabase Admin:", adminErr.message);
+      }
+    } else {
+      console.warn("[SMTP] SUPABASE_SERVICE_KEY ausente. Usando link padrão.");
+    }
+    
     const mailOptions = {
       from: smtpConfig ? `"${smtpConfig.from_name}" <${smtpConfig.from_email}>` : `"FinControl" <no-reply@fincontrol.com>`,
       to: email.toLowerCase().trim(),
@@ -483,7 +513,7 @@ app.post("/api/send-invite", requireAuth, inviteRateLimiter, async (req: any, re
              </p>
           </div>
           <div style="text-align: center; margin: 32px 0;">
-             <a href="${appUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 32px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px; display: inline-block;">
+             <a href="${actionLink}" style="background-color: #2563eb; color: #ffffff; padding: 14px 32px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px; display: inline-block;">
                Acessar e Aceitar Convite
              </a>
           </div>
