@@ -41,7 +41,6 @@ export const TeamManagement: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [inviting, setInviting] = useState(false);
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<'viewer' | 'editor' | 'admin'>('viewer');
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [wallets, setWallets] = useState<any[]>([]);
   const [selectedWallets, setSelectedWallets] = useState<Record<string, string>>({});
@@ -304,7 +303,14 @@ export const TeamManagement: React.FC = () => {
     setInviting(true);
     setMessage(null);
     try {
-      await financeService.inviteUser(email, role, selectedWallets);
+      // Construir o role com base nas carteiras e perfis selecionados
+      const walletMap = Object.entries(selectedWallets)
+        .filter(([_, profileId]) => profileId) // só carteiras com perfil selecionado
+        .reduce((acc, [walletId, profileId]) => ({ ...acc, [walletId]: profileId }), {});
+
+      const role = 'viewer';
+
+      await financeService.inviteUser(email, role, walletMap);
       setMessage({ type: 'success', text: 'Convite enviado com sucesso!' });
       setEmail('');
       setSelectedWallets({});
@@ -370,6 +376,30 @@ export const TeamManagement: React.FC = () => {
       }
     }
     return walletProfiles;
+  };
+
+  const getProfileNameForPermission = (p: UserPermission & { rawRole?: string }): string => {
+    if (p.role === 'admin') return 'ADMINISTRADOR';
+    
+    const mappings = getWalletProfilesOfPermission(p);
+    const profileIds = Array.from(new Set(
+      Object.entries(mappings)
+        .filter(([k, v]) => !k.startsWith('_') && v)
+        .map(([_, v]) => v)
+    ));
+    
+    if (profileIds.length === 0) {
+      return p.role ? p.role.toUpperCase() : 'VISUALIZADOR';
+    }
+    
+    const names = profileIds
+      .map(id => {
+        const prof = profiles.find(pr => pr.id === id);
+        return prof ? prof.name : null;
+      })
+      .filter(Boolean);
+      
+    return names.length > 0 ? names.join(', ') : 'VISUALIZADOR';
   };
 
   const handleResetPassword = async (email: string) => {
@@ -757,39 +787,6 @@ export const TeamManagement: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-black text-slate-500 uppercase tracking-wider mb-2 px-1">Nível de Acesso Geral</label>
-                  <div className="grid grid-cols-1 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setRole('viewer')}
-                      className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${role === 'viewer' ? 'bg-blue-50 border-blue-200 ring-2 ring-blue-500/10' : 'bg-slate-50 border-slate-200 hover:border-slate-300'}`}
-                    >
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${role === 'viewer' ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                        <Shield className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-bold text-slate-800">Visualizador</div>
-                        <div className="text-[10px] text-slate-500 leading-tight">Apenas visualiza dados gerais (de acordo com as carteiras).</div>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setRole('editor')}
-                      className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${role === 'editor' ? 'bg-blue-50 border-blue-200 ring-2 ring-blue-500/10' : 'bg-slate-50 border-slate-200 hover:border-slate-300'}`}
-                    >
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${role === 'editor' ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                        <ShieldCheck className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-bold text-slate-800">Editor</div>
-                        <div className="text-[10px] text-slate-500 leading-tight">Pode criar e editar lançamentos nas carteiras liberadas.</div>
-                      </div>
-                    </button>
-                  </div>
-                </div>
-
                 {/* Seleção de Carteiras e Perfis (Fase 2) */}
                 <div className="space-y-3 border-t border-slate-100 pt-4">
                   <label className="block text-xs font-black text-slate-500 uppercase tracking-wider px-1">
@@ -806,37 +803,29 @@ export const TeamManagement: React.FC = () => {
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                      {wallets.map(wallet => {
-                        const isChecked = wallet.id in selectedWallets;
-                        const currentProfileId = selectedWallets[wallet.id] || '';
-                        
-                        return (
-                          <div key={wallet.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3 transition-colors hover:bg-slate-100/50">
-                            <label className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0">
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => handleWalletToggle(wallet.id)}
-                                className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 border-slate-300"
-                              />
-                              <span className="text-xs font-bold text-slate-700 truncate">{wallet.name}</span>
-                            </label>
-                            
-                            {isChecked && (
-                              <select
-                                value={currentProfileId}
-                                onChange={(e) => handleWalletProfileChange(wallet.id, e.target.value)}
-                                className="bg-white border border-slate-200 rounded-lg text-[11px] font-bold py-1.5 px-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-600 max-w-[120px]"
-                              >
-                                <option value="" disabled>Perfil...</option>
-                                {profiles.map(p => (
-                                  <option key={p.id} value={p.id}>{p.name}</option>
-                                ))}
-                              </select>
-                            )}
-                          </div>
-                        );
-                      })}
+                      {wallets.map(wallet => (
+                        <div key={wallet.id} className="flex items-center gap-3 p-3 border border-slate-200 rounded-xl">
+                          <input
+                            type="checkbox"
+                            checked={selectedWallets[wallet.id] !== undefined}
+                            onChange={() => handleWalletToggle(wallet.id)}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300"
+                          />
+                          <span className="text-sm font-medium text-slate-700 flex-1">{wallet.name}</span>
+                          {selectedWallets[wallet.id] !== undefined && (
+                            <select
+                              value={selectedWallets[wallet.id]}
+                              onChange={(e) => handleWalletProfileChange(wallet.id, e.target.value)}
+                              className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white font-bold text-slate-600 max-w-[150px] focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                            >
+                              <option value="">Selecione o perfil</option>
+                              {profiles.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -990,7 +979,7 @@ export const TeamManagement: React.FC = () => {
                                   p.role === 'editor' ? 'bg-blue-100 text-blue-700' : 
                                   'bg-slate-100 text-slate-600'
                                 }`}>
-                                  {p.role}
+                                  {getProfileNameForPermission(p)}
                                 </span>
                               )}
                               <span className="text-[10px] text-slate-400">•</span>
