@@ -1962,6 +1962,60 @@ export const financeService = {
             active: d.active !== false,
             walletId: d.wallet_id
           })) as any;
+
+          const { data: sessionData } = await supabase.auth.getSession();
+          const userId = sessionData?.session?.user?.id;
+
+          if (userId && this.activeOrganizationId) {
+            // Verifica se é owner ou admin (acesso total)
+            const { data: memberData } = await supabase
+              .from('organization_members')
+              .select('role')
+              .eq('organization_id', this.activeOrganizationId)
+              .eq('user_id', userId)
+              .maybeSingle();
+
+            let isOwnerOrAdmin = memberData?.role === 'owner' || memberData?.role === 'admin';
+
+            // Fallback: verifica se é o criador da organização
+            if (!isOwnerOrAdmin) {
+              const { data: orgData } = await supabase
+                .from('organizations')
+                .select('owner_id')
+                .eq('id', this.activeOrganizationId)
+                .maybeSingle();
+              isOwnerOrAdmin = orgData?.owner_id === userId;
+            }
+
+            if (!isOwnerOrAdmin) {
+              // Busca as carteiras permitidas e extrai os bank_ids delas
+              const { data: walletPerms } = await supabase
+                .from('user_wallet_permissions')
+                .select('wallet_id')
+                .eq('organization_id', this.activeOrganizationId)
+                .eq('user_id', userId);
+
+              const allowedWalletIds = (walletPerms || []).map(p => p.wallet_id);
+
+              if (allowedWalletIds.length > 0) {
+                // Busca as carteiras permitidas para obter os bank_ids
+                const { data: allowedWallets } = await supabase
+                  .from('wallets')
+                  .select('bank_id')
+                  .in('id', allowedWalletIds)
+                  .not('bank_id', 'is', null);
+
+                const allowedBankIds = new Set(
+                  (allowedWallets || []).map((w: any) => w.bank_id).filter(Boolean)
+                );
+
+                // Filtra bancos para incluir apenas os vinculados às carteiras permitidas
+                result = (result || []).filter((b: any) => allowedBankIds.has(b.id));
+              } else {
+                result = [];
+              }
+            }
+          }
         } else if (type === 'wallets') {
           result = allData.map((d: any) => ({ 
             id: String(d.id), 
