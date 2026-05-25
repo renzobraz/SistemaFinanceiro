@@ -1968,6 +1968,43 @@ export const financeService = {
             name: d.name,
             active: d.active !== false
           })) as any;
+
+          const { data: sessionData } = await supabase.auth.getSession();
+          const userId = sessionData?.session?.user?.id;
+
+          if (userId) {
+            // Verifica se é owner ou admin (acesso total)
+            const { data: memberData } = await supabase
+              .from('organization_members')
+              .select('role')
+              .eq('organization_id', this.activeOrganizationId)
+              .eq('user_id', userId)
+              .maybeSingle();
+
+            const { data: orgData } = await supabase
+              .from('organizations')
+              .select('owner_id')
+              .eq('id', this.activeOrganizationId)
+              .maybeSingle();
+
+            const isOwnerOrAdmin = memberData?.role === 'owner' || 
+                                   memberData?.role === 'admin' || 
+                                   orgData?.owner_id === userId;
+
+            if (!isOwnerOrAdmin) {
+              // Busca apenas as carteiras permitidas em user_wallet_permissions
+              const { data: walletPerms } = await supabase
+                .from('user_wallet_permissions')
+                .select('wallet_id')
+                .eq('organization_id', this.activeOrganizationId)
+                .eq('user_id', userId);
+
+              const allowedWalletIds = new Set((walletPerms || []).map(p => p.wallet_id));
+
+              // Filtra o resultado para incluir apenas carteiras permitidas
+              result = (result || []).filter((w: any) => allowedWalletIds.has(w.id));
+            }
+          }
         } else if (type === 'participants') {
           const virtualTargetPrices = JSON.parse(localStorage.getItem('fincontrol_virtual_target_prices') || '{}');
           const virtualPartnerData = JSON.parse(localStorage.getItem('fincontrol_virtual_partner_data') || '{}');
