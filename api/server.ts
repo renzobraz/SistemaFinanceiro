@@ -648,6 +648,9 @@ app.post("/api/update-user-permissions", requireAuth, async (req: any, res: any)
   try {
     const { invitedEmail, role, walletProfiles, orgId } = req.body;
 
+    console.log('[UPDATE-PERMS] Body recebido:', JSON.stringify(req.body));
+    console.log('[UPDATE-PERMS] User:', req.user?.id);
+
     if (!invitedEmail || !role || !walletProfiles || !orgId) {
       return res.status(400).json({ error: "Parâmetros invitedEmail, role, walletProfiles e orgId são obrigatórios" });
     }
@@ -669,6 +672,8 @@ app.post("/api/update-user-permissions", requireAuth, async (req: any, res: any)
       .ilike('invited_email', `${localPart}%@${domain}`)
       .maybeSingle();
 
+    console.log('[UPDATE-PERMS] Convite encontrado:', invitation, 'FetchErr:', fetchErr);
+
     if (fetchErr || !invitation) {
       return res.status(404).json({ error: "Permissão não encontrada para o e-mail informado." });
     }
@@ -678,6 +683,8 @@ app.post("/api/update-user-permissions", requireAuth, async (req: any, res: any)
       .from('user_permissions')
       .update({ role })
       .eq('id', invitation.id);
+
+    console.log('[UPDATE-PERMS] Resultado update user_permissions:', permError);
 
     if (permError) throw permError;
 
@@ -701,6 +708,8 @@ app.post("/api/update-user-permissions", requireAuth, async (req: any, res: any)
         console.warn('[UPDATE-PERMISSIONS] Falha ao obter userId do JSON do convite:', e);
       }
 
+      console.log('[UPDATE-PERMS] userId do JSON:', userId);
+
       if (!userId) {
         try {
           const { data } = await admin.auth.admin.listUsers();
@@ -711,6 +720,8 @@ app.post("/api/update-user-permissions", requireAuth, async (req: any, res: any)
           console.log('[UPDATE-PERMISSIONS] Falha ao obter usuário pelo listUsers auth:', e);
         }
       }
+
+      console.log('[UPDATE-PERMS] userId após listUsers:', userId);
 
       if (!userId) {
         // Fallback: tenta obter através de registros existentes em user_wallet_permissions
@@ -728,13 +739,19 @@ app.post("/api/update-user-permissions", requireAuth, async (req: any, res: any)
         }
       }
 
+      console.log('[UPDATE-PERMS] userId final resolvido:', userId);
+
       if (userId) {
         // Remove permissões antigas
-        await admin
+        const { error: deleteError } = await admin
           .from('user_wallet_permissions')
           .delete()
           .eq('organization_id', orgId)
           .eq('user_id', userId);
+
+        console.log('[UPDATE-PERMS] Resultado delete:', deleteError);
+
+        if (deleteError) throw deleteError;
 
         // Insere novas
         const inserts = Object.entries(walletProfiles)
@@ -746,11 +763,15 @@ app.post("/api/update-user-permissions", requireAuth, async (req: any, res: any)
             profile_id: profileId as string
           }));
 
+        console.log('[UPDATE-PERMS] Inserts:', inserts);
+
         if (inserts.length > 0) {
-          const { error: insErr } = await admin
+          const { error: insertError } = await admin
             .from('user_wallet_permissions')
             .insert(inserts);
-          if (insErr) throw insErr;
+
+          console.log('[UPDATE-PERMS] Resultado insert:', insertError);
+          if (insertError) throw insertError;
         }
       }
     }
