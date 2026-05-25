@@ -26,38 +26,42 @@ export const AcceptInvite: React.FC<AcceptInviteProps> = ({ inviteToken, onSucce
         const supabase = financeService.getSupabase();
         if (!supabase) throw new Error('Supabase não configurado.');
 
-        // Primeiro tenta pegar a sessão que o Supabase já criou automaticamente
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session?.user) {
-          // Supabase já processou o token do convite — sessão ativa
-          console.log('[AcceptInvite] Sessão já ativa via detectSessionInUrl:', session.user.email);
-          setEmail(session.user.email || null);
-          setInitLoading(false);
+        // Faz logout de qualquer sessão existente para evitar conflitos
+        await supabase.auth.signOut();
+
+        // Se temos o token do convite, usa ele diretamente
+        if (inviteToken) {
+          const { data, error: sessionError } = await supabase.auth.setSession({
+            access_token: inviteToken,
+            refresh_token: inviteToken,
+          });
+
+          if (sessionError) {
+            // Tenta getUser com o token diretamente
+            const { data: userData, error: userError } = await supabase.auth.getUser(inviteToken);
+            if (userError || !userData.user) {
+              throw new Error('Token do convite expirado ou inválido. Peça ao administrador para reenviar o convite.');
+            }
+            setEmail(userData.user.email || null);
+          } else {
+            const currentUser = data?.user || (await supabase.auth.getUser()).data.user;
+            if (currentUser) setEmail(currentUser.email || null);
+            else throw new Error('Não foi possível carregar as informações do usuário.');
+          }
           return;
         }
 
-        // Fallback: tenta setSession manualmente com o token
-        if (!inviteToken) {
-          throw new Error('Token do convite não encontrado. O link pode ter expirado.');
+        // Sem token — verifica se há sessão ativa do convite
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          setEmail(session.user.email || null);
+          return;
         }
 
-        const { data, error: sessionError } = await supabase.auth.setSession({
-          access_token: inviteToken,
-          refresh_token: inviteToken,
-        });
+        throw new Error('Token do convite não encontrado. O link pode ter expirado.');
 
-        if (sessionError) {
-          const { data: userData, error: userError } = await supabase.auth.getUser(inviteToken);
-          if (userError || !userData.user) throw new Error('Token do convite expirado ou inválido.');
-          setEmail(userData.user.email || null);
-        } else {
-          const currentUser = data?.user || (await supabase.auth.getUser()).data.user;
-          if (currentUser) setEmail(currentUser.email || null);
-          else throw new Error('Não foi possível carregar as informações do usuário.');
-        }
       } catch (err: any) {
-        console.error('[AcceptInvite] Erro ao inicializar sessão:', err);
+        console.error('[AcceptInvite] Erro:', err);
         setError(err.message || 'Token do convite expirado ou inválido.');
       } finally {
         setInitLoading(false);
