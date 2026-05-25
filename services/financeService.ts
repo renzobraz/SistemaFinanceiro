@@ -3101,9 +3101,6 @@ export const financeService = {
         .eq('user_id', user.id)
         .maybeSingle();
 
-      console.log('[getUserModulePermissions] userId:', user.id, 'orgId:', orgId);
-      console.log('[getUserModulePermissions] memberData:', memberData);
-
       const userRole = memberData?.role || '';
       if (userRole === 'owner' || userRole === 'admin') {
         const adminPerms: Record<string, any> = {};
@@ -3120,8 +3117,6 @@ export const financeService = {
         .eq('organization_id', orgId)
         .eq('user_id', user.id);
 
-      console.log('[getUserModulePermissions] walletPerms:', walletPerms);
-
       if (walletError) {
         console.error("Erro ao buscar user_wallet_permissions:", walletError);
         return defaultPermissions;
@@ -3137,8 +3132,6 @@ export const financeService = {
         .from('profile_module_permissions')
         .select('module, can_view, can_create, can_edit, can_delete, can_export')
         .in('profile_id', profileIds);
-
-      console.log('[getUserModulePermissions] modulePerms:', modPerms);
 
       if (modError) {
         console.error("Erro ao buscar profile_module_permissions:", modError);
