@@ -845,9 +845,10 @@ const App: FC = () => {
     if (loading || (isConnected && !financeService.activeOrganizationId)) return;
     // Carrega registros para quase todas as abas que usam o formulário ou exibem nomes
     if (!['settings', 'manual'].includes(activeTab)) {
-      loadRegistries(false, selectedWalletId);
+      const walletIdToLoad = activeTab === 'investments' ? performanceWalletId : selectedWalletId;
+      loadRegistries(false, walletIdToLoad);
     }
-  }, [activeTab, loadRegistries, selectedWalletId, activeRegistryTab, loading, isConnected]);
+  }, [activeTab, loadRegistries, selectedWalletId, performanceWalletId, activeRegistryTab, loading, isConnected]);
 
   useEffect(() => {
     if (activeTab === 'payables') {

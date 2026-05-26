@@ -290,6 +290,21 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           // Se names batem, permitimos.
         }
       }
+
+      // Filtro de Carteira para os Acréscimos Manuais
+      if (selectedWalletId !== 'ALL') {
+        const accrualBank = a.bankId ? registries.banks.find(b => String(b.id) === String(a.bankId)) : null;
+        const wId = accrualBank?.walletId;
+        if (wId && String(wId) !== String(selectedWalletId)) {
+          return;
+        }
+
+        // Se o acréscimo não tem banco, o próprio participante/ativo deve ser da carteira
+        const participant = registries.participants.find(p => String(p.id) === String(a.assetId));
+        if (participant?.walletId && String(participant.walletId) !== String(selectedWalletId)) {
+          return;
+        }
+      }
       
       const assetIdStr = String(a.assetId);
       accrualsByAsset.set(assetIdStr, (accrualsByAsset.get(assetIdStr) || 0) + a.value);
@@ -310,6 +325,21 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           if (accrualBank && selectedBank && accrualBank.name.trim() !== selectedBank.name.trim()) {
             return;
           }
+        }
+      }
+
+      // Filtro de Carteira para os Acréscimos Manuais
+      if (selectedWalletId !== 'ALL') {
+        const accrualBank = acc.bankId ? registries.banks.find(b => String(b.id) === String(acc.bankId)) : null;
+        const wId = accrualBank?.walletId;
+        if (wId && String(wId) !== String(selectedWalletId)) {
+          return;
+        }
+        
+        // Se o acréscimo não tem banco, o próprio participante/ativo deve ser da carteira
+        const participant = registries.participants.find(p => String(p.id) === String(acc.assetId));
+        if (participant?.walletId && String(participant.walletId) !== String(selectedWalletId)) {
+          return;
         }
       }
 
@@ -357,7 +387,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       return (a.createdAt || "").localeCompare(b.createdAt || "");
     });
 
-    // Filtra apenas transações de investimento confirmadas
+    // Filtra apenas transações de investimento confirmadas com lógica de carteira resiliente
     const relevantTransactions = sortedTransactions.filter(t => {
       const isConfirmed = t.status === 'PAID';
       
@@ -365,8 +395,19 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       // Consideramos investimento se tiver Tipo (category) OU Ticker
       const isInvestmentParticipant = !!participant?.category || !!participant?.ticker;
       
-      const matchesBank = selectedBankId === 'ALL' || t.bankId === selectedBankId;
-      const matchesWallet = selectedWalletId === 'ALL' || t.walletId === selectedWalletId;
+      const bank = registries.banks.find(b => String(b.id) === String(t.bankId));
+      
+      // Resiliência de carteira: se o wallet_id estiver vazio ou nulo na transação, pega do banco correspondente
+      const transactionWalletId = t.walletId || bank?.walletId;
+      
+      // Filtro de Banco: compara ID diretamente ou por nome para suportar duplicatas/merges de bancos
+      const matchesBank = selectedBankId === 'ALL' || 
+                          String(t.bankId) === String(selectedBankId) ||
+                          (bank && registries.banks.find(b => String(b.id) === String(selectedBankId))?.name.trim() === bank.name.trim());
+      
+      // Filtro de Carteira: compara ID diretamente
+      const matchesWallet = selectedWalletId === 'ALL' || 
+                            (transactionWalletId && String(transactionWalletId) === String(selectedWalletId));
       
       return isConfirmed && isInvestmentParticipant && matchesBank && matchesWallet;
     });
@@ -1331,8 +1372,19 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
 
   const cashBalanceByCurrency = useMemo(() => {
     const map: Record<string, number> = {};
-    const matchesBank = (t: Transaction) => selectedBankId === 'ALL' || t.bankId === selectedBankId;
-    const matchesWallet = (t: Transaction) => selectedWalletId === 'ALL' || t.walletId === selectedWalletId;
+    const matchesBank = (t: Transaction) => {
+      if (selectedBankId === 'ALL') return true;
+      if (String(t.bankId) === String(selectedBankId)) return true;
+      const tBank = registries.banks.find(b => String(b.id) === String(t.bankId));
+      const sBank = registries.banks.find(b => String(b.id) === String(selectedBankId));
+      return !!(tBank && sBank && tBank.name.trim() === sBank.name.trim());
+    };
+    const matchesWallet = (t: Transaction) => {
+      if (selectedWalletId === 'ALL') return true;
+      const bank = registries.banks.find(b => String(b.id) === String(t.bankId));
+      const wId = t.walletId || bank?.walletId;
+      return !!(wId && String(wId) === String(selectedWalletId));
+    };
     
     transactions
       .filter(t => t.status === 'PAID' && matchesBank(t) && matchesWallet(t))
