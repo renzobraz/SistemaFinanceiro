@@ -14,7 +14,8 @@ import {
   Info,
   Save,
   Trash2,
-  Plus
+  Plus,
+  ClipboardList
 } from 'lucide-react';
 import { geminiService } from '../services/geminiService';
 import { financeService } from '../services/financeService';
@@ -115,15 +116,29 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     };
   }, [parsedNote]);
 
-  // Check for duplicate note
-  const checkDuplicate = useCallback(async (number: string) => {
-    if (!number) return;
+  const [existingTransactions, setExistingTransactions] = useState<Transaction[]>([]);
+  const [showDiffModal, setShowDiffModal] = useState(false);
+
+  // Check for duplicate note (mesmo número, mesma corretora, mesma data)
+  const checkDuplicate = useCallback(async (number: string, bankId: string, date: string) => {
+    if (!number || !bankId || !date) {
+      setIsDuplicate(false);
+      setExistingTransactions([]);
+      return;
+    }
     setIsCheckingDuplicate(true);
     try {
       const transactions = await financeService.getTransactions({ docNumber: number });
-      // Only consider it a duplicate if we found transactions with that doc number
-      // We check for length > 0
-      setIsDuplicate(transactions.length > 0);
+      
+      const cleanDate = date.split('T')[0];
+      const dupTransactions = transactions.filter(t => {
+        const matchesBank = String(t.bankId) === String(bankId);
+        const matchesDate = t.date?.split('T')[0] === cleanDate;
+        return matchesBank && matchesDate;
+      });
+
+      setIsDuplicate(dupTransactions.length > 0);
+      setExistingTransactions(dupTransactions);
     } catch (err) {
       console.error("Erro ao verificar duplicidade:", err);
     } finally {
@@ -132,13 +147,110 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   }, []);
 
   useEffect(() => {
-    if (noteNumber) {
+    if (noteNumber && selectedBankId && tradeDate) {
       const timer = setTimeout(() => {
-        checkDuplicate(noteNumber);
+        checkDuplicate(noteNumber, selectedBankId, tradeDate);
       }, 500);
       return () => clearTimeout(timer);
+    } else {
+      setIsDuplicate(false);
+      setExistingTransactions([]);
     }
-  }, [noteNumber, checkDuplicate]);
+  }, [noteNumber, selectedBankId, tradeDate, checkDuplicate]);
+
+  // Compare parsed note with existing transactions
+  const differences = React.useMemo(() => {
+    if (!parsedNote || existingTransactions.length === 0) return null;
+
+    const added: { ticker: string; type: 'BUY' | 'SELL'; quantity: number; price: number; total: number }[] = [];
+    const removed: { ticker: string; type: 'DEBIT' | 'CREDIT'; quantity: number; unitPrice: number; value: number }[] = [];
+    const modified: {
+      ticker: string;
+      type: 'BUY' | 'SELL';
+      oldQty: number; oldPrice: number; oldTotal: number;
+      newQty: number; newPrice: number; newTotal: number;
+    }[] = [];
+
+    // Separate trades from tax emoluments transactions
+    const existingTrades = existingTransactions.filter(t => {
+      const participant = participants.find(p => p.id === t.participantId);
+      return participant && participant.name !== 'Taxas Corretagem' && !!participant.ticker;
+    });
+
+    const parsedTrades = parsedNote.trades || [];
+    const matchedExistingIds = new Set<string>();
+
+    parsedTrades.forEach(pTrade => {
+      const matches = existingTrades.filter(t => {
+        if (matchedExistingIds.has(t.id)) return false;
+        const p = participants.find(part => part.id === t.participantId);
+        const tickerMatch = p && p.ticker?.toLowerCase() === pTrade.ticker.toLowerCase();
+        const directionMatch = (pTrade.type === 'BUY' && t.type === 'DEBIT') || (pTrade.type === 'SELL' && t.type === 'CREDIT');
+        return tickerMatch && directionMatch;
+      });
+
+      if (matches.length > 0) {
+        const match = matches[0];
+        matchedExistingIds.add(match.id);
+
+        const qtyDiff = Math.abs((match.quantity || 0) - pTrade.quantity) > 0.001;
+        const priceDiff = Math.abs((match.unitPrice || 0) - pTrade.price) > 0.01;
+        const totalDiff = Math.abs((match.value || 0) - pTrade.total) > 0.01;
+
+        if (qtyDiff || priceDiff || totalDiff) {
+          modified.push({
+            ticker: pTrade.ticker,
+            type: pTrade.type,
+            oldQty: match.quantity || 0,
+            oldPrice: match.unitPrice || 0,
+            oldTotal: match.value || 0,
+            newQty: pTrade.quantity,
+            newPrice: pTrade.price,
+            newTotal: pTrade.total
+          });
+        }
+      } else {
+        added.push({
+          ticker: pTrade.ticker,
+          type: pTrade.type,
+          quantity: pTrade.quantity,
+          price: pTrade.price,
+          total: pTrade.total
+        });
+      }
+    });
+
+    existingTrades.forEach(t => {
+      if (!matchedExistingIds.has(t.id)) {
+        const p = participants.find(part => part.id === t.participantId);
+        removed.push({
+          ticker: p?.ticker || 'N/A',
+          type: t.type as 'DEBIT' | 'CREDIT',
+          quantity: t.quantity || 0,
+          unitPrice: t.unitPrice || 0,
+          value: t.value || 0
+        });
+      }
+    });
+
+    const existingFeesTx = existingTransactions.find(t => {
+      const participant = participants.find(p => p.id === t.participantId);
+      return participant?.name === 'Taxas Corretagem';
+    });
+    const parsedFee = parsedNote.costs?.total || 0;
+    const existingFeeVal = existingFeesTx?.value || 0;
+    const feeModified = Math.abs(parsedFee - existingFeeVal) > 0.01;
+
+    return {
+      added,
+      removed,
+      modified,
+      feeModified,
+      oldFee: existingFeeVal,
+      newFee: parsedFee,
+      hasChanges: added.length > 0 || removed.length > 0 || modified.length > 0 || feeModified
+    };
+  }, [parsedNote, existingTransactions, participants]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -174,7 +286,11 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       if (result.metadata?.settlementDate) setSettlementDate(result.metadata.settlementDate);
       if (result.metadata?.noteNumber) {
         setNoteNumber(result.metadata.noteNumber);
-        checkDuplicate(result.metadata.noteNumber);
+        checkDuplicate(
+          result.metadata.noteNumber, 
+          selectedBankId, 
+          result.metadata.date || new Date().toISOString().split('T')[0]
+        );
       }
     } catch (err: any) {
       console.error("Error processing brokerage note:", err);
@@ -184,26 +300,161 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     }
   };
 
+  const executePureImport = async () => {
+    if (!parsedNote) return;
+    
+    // 1. Ensure all participants (assets) exist
+    const updatedParticipants = [...participants];
+    
+    const createParticipantIfMissing = async (trade: BrokerageTrade) => {
+      let p = updatedParticipants.find(p => p.ticker === trade.ticker || p.name.toLowerCase() === trade.assetName.toLowerCase());
+      
+      if (!p) {
+        // Identify if it's a FII or Stock (Simple heuristic)
+        const isFII = trade.assetName.toLowerCase().includes('fii') || trade.ticker.endsWith('11');
+        const category = isFII ? 'FII' : 'Ação';
+        
+        const newP = await financeService.saveRegistryItem<Participant>('participants', {
+          id: '',
+          name: trade.assetName,
+          ticker: trade.ticker,
+          category: category,
+          currency: 'BRL'
+        });
+        updatedParticipants.push(newP);
+        return newP;
+      }
+      return p;
+    };
+
+    // Create transactions
+    const finalSettlementDate = settlementDate || tradeDate || new Date().toISOString().split('T')[0];
+    const finalNoteNumber = noteNumber || parsedNote.metadata?.noteNumber || '';
+
+    for (const trade of parsedNote.trades || []) {
+      const participant = await createParticipantIfMissing(trade);
+      
+      const transaction: Transaction = {
+        id: '',
+        date: finalSettlementDate,
+        description: `${trade.type === 'BUY' ? 'Compra' : 'Venda'} ${trade.ticker} - NC ${finalNoteNumber}`,
+        docNumber: finalNoteNumber,
+        value: trade.total || 0,
+        quantity: trade.quantity || 0,
+        unitPrice: trade.price || 0,
+        type: trade.type === 'BUY' ? 'DEBIT' : 'CREDIT',
+        status: 'PAID',
+        bankId: selectedBankId,
+        categoryId: investmentCategoryId,
+        participantId: participant.id,
+        costCenterId: selectedCostCenterId,
+        walletId: selectedWalletId
+      };
+      
+      await financeService.saveTransaction(transaction);
+    }
+
+    // Lança as taxas separadamente como solicitado para bater com o banco
+    if (parsedNote.costs?.total > 0) {
+      const feeCat = categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('despesa')) || categories[0];
+      
+      // Garante participante "Taxas Corretagem"
+      let feeParticipant = updatedParticipants.find(p => p.name === 'Taxas Corretagem');
+      if (!feeParticipant) {
+         feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
+           id: '',
+           name: 'Taxas Corretagem',
+         });
+      }
+
+      const feesTransaction: Transaction = {
+        id: "",
+        date: finalSettlementDate,
+        description: `Taxas/Emolumentos NC ${finalNoteNumber}`,
+        docNumber: finalNoteNumber,
+        value: parsedNote.costs.total,
+        type: 'DEBIT',
+        status: 'PAID',
+        bankId: selectedBankId,
+        categoryId: feeCat.id,
+        participantId: feeParticipant.id, 
+        costCenterId: selectedCostCenterId,
+        walletId: selectedWalletId
+      };
+      
+      await financeService.saveTransaction(feesTransaction);
+    }
+
+    onSuccess();
+  };
+
   const handleConfirmImport = async () => {
-    if (!parsedNote || isDuplicate) return;
+    if (!parsedNote) return;
 
     setIsProcessing(true);
+    setError(null);
     try {
-      // 1. Ensure all participants (assets) exist
+      const number = noteNumber || parsedNote.metadata?.noteNumber || '';
+      const date = tradeDate || parsedNote.metadata?.date || '';
+      
+      if (number && selectedBankId && date) {
+        const transactions = await financeService.getTransactions({ docNumber: number });
+        const cleanDate = date.split('T')[0];
+        const dupTransactions = transactions.filter(t => {
+          const matchesBank = String(t.bankId) === String(selectedBankId);
+          const matchesDate = t.date?.split('T')[0] === cleanDate;
+          return matchesBank && matchesDate;
+        });
+
+        if (dupTransactions.length > 0) {
+          setIsDuplicate(true);
+          setExistingTransactions(dupTransactions);
+          setIsProcessing(false);
+          setShowDiffModal(true);
+          return;
+        }
+      }
+
+      await executePureImport();
+    } catch (err: any) {
+      setError("Erro ao salvar transações: " + err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleReplaceImport = async () => {
+    if (!parsedNote) return;
+    setIsProcessing(true);
+    setShowDiffModal(false);
+    try {
+      const finalNoteNumber = noteNumber || parsedNote.metadata?.noteNumber || '';
+      await financeService.deleteBrokerageNote(finalNoteNumber);
+      
+      await executePureImport();
+    } catch (err: any) {
+      setError("Erro ao substituir nota existente: " + err.message);
+      setIsProcessing(false);
+    }
+  };
+
+  const handleMergeImport = async () => {
+    if (!parsedNote || !differences) return;
+    setIsProcessing(true);
+    setShowDiffModal(false);
+    try {
       const updatedParticipants = [...participants];
       
-      const createParticipantIfMissing = async (trade: BrokerageTrade) => {
-        let p = updatedParticipants.find(p => p.ticker === trade.ticker || p.name.toLowerCase() === trade.assetName.toLowerCase());
-        
+      const createParticipantIfMissing = async (ticker: string, assetName: string) => {
+        let p = updatedParticipants.find(p => p.ticker === ticker || p.name.toLowerCase() === assetName.toLowerCase());
         if (!p) {
-          // Identify if it's a FII or Stock (Simple heuristic)
-          const isFII = trade.assetName.toLowerCase().includes('fii') || trade.ticker.endsWith('11');
+          const isFII = assetName.toLowerCase().includes('fii') || ticker.endsWith('11');
           const category = isFII ? 'FII' : 'Ação';
           
           const newP = await financeService.saveRegistryItem<Participant>('participants', {
             id: '',
-            name: trade.assetName,
-            ticker: trade.ticker,
+            name: assetName,
+            ticker: ticker,
             category: category,
             currency: 'BRL'
           });
@@ -213,23 +464,64 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
         return p;
       };
 
-      // Create transactions
       const finalSettlementDate = settlementDate || tradeDate || new Date().toISOString().split('T')[0];
-      const finalTradeDate = tradeDate || new Date().toISOString().split('T')[0];
       const finalNoteNumber = noteNumber || parsedNote.metadata?.noteNumber || '';
 
-      for (const trade of parsedNote.trades || []) {
-        const participant = await createParticipantIfMissing(trade);
-        
+      // 1. Delete removed operations
+      if (differences.removed.length > 0) {
+        const txsToDelete: string[] = [];
+        differences.removed.forEach(rem => {
+          const tx = existingTransactions.find(t => {
+            const p = participants.find(part => part.id === t.participantId);
+            return p && p.ticker === rem.ticker && t.type === rem.type;
+          });
+          if (tx) txsToDelete.push(tx.id);
+        });
+        if (txsToDelete.length > 0) {
+          await financeService.deleteTransactions(txsToDelete);
+        }
+      }
+
+      // 2. Clear or update existing matched transactions (Modified ones)
+      for (const mod of differences.modified) {
+        const txToUpdate = existingTransactions.find(t => {
+          const p = participants.find(part => part.id === t.participantId);
+          const pMatch = p && p.ticker === mod.ticker;
+          const directionMatch = (mod.type === 'BUY' && t.type === 'DEBIT') || (mod.type === 'SELL' && t.type === 'CREDIT');
+          return pMatch && directionMatch;
+        });
+
+        if (txToUpdate) {
+          const updatedTx: Transaction = {
+            ...txToUpdate,
+            value: mod.newTotal,
+            quantity: mod.newQty,
+            unitPrice: mod.newPrice,
+            date: finalSettlementDate,
+            bankId: selectedBankId,
+            walletId: selectedWalletId,
+            costCenterId: selectedCostCenterId,
+            categoryId: investmentCategoryId
+          };
+          await financeService.saveTransaction(updatedTx);
+        }
+      }
+
+      // 3. Add new ones
+      for (const add of differences.added) {
+        const tradeData = parsedNote.trades.find(t => t.ticker === add.ticker);
+        const assetName = tradeData?.assetName || add.ticker;
+        const participant = await createParticipantIfMissing(add.ticker, assetName);
+
         const transaction: Transaction = {
           id: '',
           date: finalSettlementDate,
-          description: `${trade.type === 'BUY' ? 'Compra' : 'Venda'} ${trade.ticker} - NC ${finalNoteNumber}`,
+          description: `${add.type === 'BUY' ? 'Compra' : 'Venda'} ${add.ticker} - NC ${finalNoteNumber}`,
           docNumber: finalNoteNumber,
-          value: trade.total || 0,
-          quantity: trade.quantity || 0,
-          unitPrice: trade.price || 0,
-          type: trade.type === 'BUY' ? 'DEBIT' : 'CREDIT',
+          value: add.total,
+          quantity: add.quantity,
+          unitPrice: add.price,
+          type: add.type === 'BUY' ? 'DEBIT' : 'CREDIT',
           status: 'PAID',
           bankId: selectedBankId,
           categoryId: investmentCategoryId,
@@ -237,44 +529,61 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
           costCenterId: selectedCostCenterId,
           walletId: selectedWalletId
         };
-        
         await financeService.saveTransaction(transaction);
       }
 
-      // Lança as taxas separadamente como solicitado para bater com o banco
-      if (parsedNote.costs?.total > 0) {
-        const feeCat = categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('despesa')) || categories[0];
-        
-        // Garante participante "Taxas Corretagem"
-        let feeParticipant = updatedParticipants.find(p => p.name === 'Taxas Corretagem');
-        if (!feeParticipant) {
-           feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
-             id: '',
-             name: 'Taxas Corretagem',
-           });
-        }
+      // 4. Update fees if modified
+      if (differences.feeModified) {
+        const existingFeesTx = existingTransactions.find(t => {
+          const participant = participants.find(p => p.id === t.participantId);
+          return participant?.name === 'Taxas Corretagem';
+        });
 
-        const feesTransaction: Transaction = {
-          id: "",
-          date: finalSettlementDate,
-          description: `Taxas/Emolumentos NC ${finalNoteNumber}`,
-          docNumber: finalNoteNumber,
-          value: parsedNote.costs.total,
-          type: 'DEBIT',
-          status: 'PAID',
-          bankId: selectedBankId,
-          categoryId: feeCat.id,
-          participantId: feeParticipant.id, 
-          costCenterId: selectedCostCenterId,
-          walletId: selectedWalletId
-        };
-        
-        await financeService.saveTransaction(feesTransaction);
+        if (differences.newFee > 0) {
+          if (existingFeesTx) {
+            const updatedFeeTx: Transaction = {
+              ...existingFeesTx,
+              value: differences.newFee,
+              date: finalSettlementDate,
+              bankId: selectedBankId,
+              walletId: selectedWalletId,
+              costCenterId: selectedCostCenterId
+            };
+            await financeService.saveTransaction(updatedFeeTx);
+          } else {
+            let feeParticipant = updatedParticipants.find(p => p.name === 'Taxas Corretagem');
+            if (!feeParticipant) {
+               feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
+                 id: '',
+                 name: 'Taxas Corretagem',
+               });
+            }
+            const feeCat = categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('despesa')) || categories[0];
+
+            const feesTransaction: Transaction = {
+              id: "",
+              date: finalSettlementDate,
+              description: `Taxas/Emolumentos NC ${finalNoteNumber}`,
+              docNumber: finalNoteNumber,
+              value: differences.newFee,
+              type: 'DEBIT',
+              status: 'PAID',
+              bankId: selectedBankId,
+              categoryId: feeCat.id,
+              participantId: feeParticipant.id, 
+              costCenterId: selectedCostCenterId,
+              walletId: selectedWalletId
+            };
+            await financeService.saveTransaction(feesTransaction);
+          }
+        } else if (existingFeesTx) {
+          await financeService.deleteTransactions([existingFeesTx.id]);
+        }
       }
 
       onSuccess();
     } catch (err: any) {
-      setError("Erro ao salvar transações: " + err.message);
+      setError("Erro ao mesclar transações: " + err.message);
     } finally {
       setIsProcessing(false);
     }
@@ -424,11 +733,49 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
               )}
 
               {isDuplicate && (
-                <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-center gap-3 text-amber-700 animate-pulse">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                  <div>
-                    <p className="text-sm font-black">Atenção: Nota de corretagem já importada!</p>
-                    <p className="text-[11px] font-bold">Já existem registros no sistema com o número {noteNumber}.</p>
+                <div className="bg-amber-50 border border-amber-200 p-5 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4 text-amber-800">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-amber-600" />
+                    <div>
+                      <p className="text-sm font-black">Atenção: Nota de corretagem já importada!</p>
+                      <p className="text-xs font-bold opacity-90">Já existem registros no sistema com o número {noteNumber} para esta corretora e data.</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowDiffModal(true)}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-black text-xs px-4 py-2 rounded-xl transition-all shadow-md shadow-amber-200 flex items-center gap-1.5 self-start md:self-auto"
+                  >
+                    <ClipboardList className="w-4 h-4" />
+                    Reimportar e Ver Diferenças
+                  </button>
+                </div>
+              )}
+
+              {/* Card de Totais na Área Transitória */}
+              {auditResult && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-gradient-to-br from-amber-50 to-amber-100/30 p-5 rounded-2xl border border-amber-200 shadow-sm flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-black text-amber-800 uppercase tracking-widest block mb-1">Total de Compras</span>
+                      <span className="text-2xl font-black text-amber-700">
+                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(auditResult.totalPurchases)}
+                      </span>
+                    </div>
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-600">
+                      <TrendingDown className="w-5 h-5" />
+                    </div>
+                  </div>
+                  
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100/30 p-5 rounded-2xl border border-blue-200 shadow-sm flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-black text-blue-800 uppercase tracking-widest block mb-1">Total de Vendas</span>
+                      <span className="text-2xl font-black text-blue-700">
+                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(auditResult.totalSales)}
+                      </span>
+                    </div>
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-600">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
                   </div>
                 </div>
               )}
@@ -601,6 +948,146 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
           )}
         </div>
       </motion.div>
+
+      {/* Modal de Diferenças de Nota de Corretagem */}
+      {showDiffModal && differences && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl border border-blue-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] animate-slide-up">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-100 rounded-xl text-blue-600">
+                  <ClipboardList className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-800 tracking-tight">Comparativo de Diferenças</h3>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Nota Nº {noteNumber} — {tradeDate ? new Date(tradeDate).toLocaleDateString('pt-BR') : 'N/D'}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowDiffModal(false)}
+                className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {!differences.hasChanges ? (
+                <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl text-emerald-700 text-sm font-bold flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                  <span>Nenhuma diferença detectada! O conteúdo da importação é idêntico ao que já está salvo no sistema.</span>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <p className="text-sm font-medium text-slate-600">
+                    Encontramos as seguintes diferenças entre o arquivo que você subiu agora e o que já está salvo no banco de dados:
+                  </p>
+
+                  {/* Added Trades */}
+                  {differences.added.length > 0 && (
+                    <div className="space-y-2 border border-emerald-100 bg-emerald-50/20 p-4 rounded-2xl">
+                      <h4 className="text-xs font-black text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        Novas Operações a Adicionar ({differences.added.length})
+                      </h4>
+                      <div className="divide-y divide-emerald-100/50 text-xs text-slate-600">
+                        {differences.added.map((add, i) => (
+                          <div key={i} className="py-2 flex items-center justify-between">
+                            <span className="font-black text-slate-700">{add.ticker} ({add.type === 'BUY' ? 'Compra' : 'Venda'})</span>
+                            <span className="font-medium text-emerald-700">{add.quantity} un @ R$ {add.price.toFixed(2)} = <strong>R$ {add.total.toFixed(2)}</strong></span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Modified Trades */}
+                  {differences.modified.length > 0 && (
+                    <div className="space-y-2 border border-amber-100 bg-amber-50/20 p-4 rounded-2xl">
+                      <h4 className="text-xs font-black text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        Operações com Valores Alterados ({differences.modified.length})
+                      </h4>
+                      <div className="divide-y divide-amber-100/50 text-xs text-slate-600">
+                        {differences.modified.map((mod, i) => (
+                          <div key={i} className="py-2.5 space-y-1">
+                            <div className="flex items-center justify-between font-black text-slate-800">
+                              <span>{mod.ticker} ({mod.type === 'BUY' ? 'Compra' : 'Venda'})</span>
+                            </div>
+                            <div className="flex items-center justify-between text-slate-500 font-bold">
+                              <span>Anterior: {mod.oldQty} un @ R$ {mod.oldPrice.toFixed(2)} = R$ {mod.oldTotal.toFixed(2)}</span>
+                              <span className="text-amber-700 font-black">Novo: {mod.newQty} un @ R$ {mod.newPrice.toFixed(2)} = R$ {mod.newTotal.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Removed Trades */}
+                  {differences.removed.length > 0 && (
+                    <div className="space-y-2 border border-rose-100 bg-rose-50/20 p-4 rounded-2xl">
+                      <h4 className="text-xs font-black text-rose-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                        Operações Salvas que Não Existem no Arquivo Novo ({differences.removed.length})
+                      </h4>
+                      <div className="divide-y divide-rose-100/50 text-xs text-slate-600">
+                        {differences.removed.map((rem, i) => (
+                          <div key={i} className="py-2 flex items-center justify-between">
+                            <span className="font-black text-slate-700">{rem.ticker} ({rem.type === 'DEBIT' ? 'Compra' : 'Venda'})</span>
+                            <span className="font-bold text-rose-600">{rem.quantity} un @ R$ {rem.unitPrice.toFixed(2)} = R$ {rem.value.toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Fees Differences */}
+                  {differences.feeModified && (
+                    <div className="space-y-1 bg-slate-50 border border-slate-200 p-4 rounded-2xl text-xs text-slate-600 font-bold">
+                      <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider">Diferença de Taxas/Emolumentos</h4>
+                      <div className="flex justify-between py-1">
+                        <span className="text-slate-500 font-bold">Valor Salvo: R$ {differences.oldFee.toFixed(2)}</span>
+                        <span className="text-blue-700 font-black">Novo Valor: R$ {differences.newFee.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <button
+                onClick={() => setShowDiffModal(false)}
+                className="w-full sm:w-auto px-6 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <div className="w-full sm:w-auto flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={handleMergeImport}
+                  disabled={isProcessing}
+                  title="Apenas adiciona novas operações, apaga as removidas e atualiza as alteradas."
+                  className="w-full sm:w-auto px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-xl text-xs transition-all shadow-md shadow-amber-200"
+                >
+                  Mesclar Alterações
+                </button>
+                <button
+                  onClick={handleReplaceImport}
+                  disabled={isProcessing}
+                  title="Apaga por completo a nota salva e reinsere como nova importação."
+                  className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs transition-all shadow-md shadow-emerald-200"
+                >
+                  Substituir Tudo
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

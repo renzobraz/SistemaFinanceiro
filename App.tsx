@@ -2056,6 +2056,8 @@ const App: FC = () => {
                 <BrokerageNotesReport 
                   transactions={transactions} 
                   participants={registries.participants} 
+                  banks={registries.banks}
+                  onRefresh={loadAll}
                 />
               </div>
             </div>

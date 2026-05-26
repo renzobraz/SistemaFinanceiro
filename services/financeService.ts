@@ -341,6 +341,11 @@ const getSupabaseUserId = async (): Promise<string | null> => {
   }
 };
 
+const isUuid = (val: string | null | undefined): boolean => {
+  if (!val) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+};
+
 const formatSupabaseError = (error: any): string => {
     if (!error) return "Erro desconhecido";
     
@@ -1238,15 +1243,18 @@ export const financeService = {
 
   async deleteAssetAccrual(id: string): Promise<void> {
     const supabase = getSupabase();
-    if (supabase) {
-      let query = supabase.from('asset_accruals').delete().eq('id', id);
-      if (this.activeOrganizationId) {
-        query = query.eq('organization_id', this.activeOrganizationId);
-      }
-      const { error } = await query;
-      if (error) {
-        console.error("Erro ao excluir acréscimo no Supabase:", error);
-        throw new Error(formatSupabaseError(error));
+    if (supabase && isUuid(id)) {
+      try {
+        let query = supabase.from('asset_accruals').delete().eq('id', id);
+        if (this.activeOrganizationId) {
+          query = query.eq('organization_id', this.activeOrganizationId);
+        }
+        const { error } = await query;
+        if (error) {
+          console.error("Erro ao excluir acréscimo no Supabase, prosseguindo localmente:", error);
+        }
+      } catch (e) {
+        console.error("Exceção ao excluir acréscimo no Supabase, prosseguindo localmente:", e);
       }
     }
 
@@ -1451,6 +1459,7 @@ export const financeService = {
               }
             }
             if (filters.status && filters.status !== 'ALL') localData = localData.filter(t => t.status === filters.status);
+            if (filters.docNumber && filters.docNumber.trim()) localData = localData.filter(t => t.docNumber === filters.docNumber);
         }
 
     localData.sort((a, b) => {
@@ -1697,7 +1706,7 @@ export const financeService = {
     return transactionsWithIds;
   },
 
-  async deleteTransactions(ids: string[]): Promise<void> {
+  async deleteTransactions(ids: string[], onProgress?: (completed: number, total: number) => void): Promise<void> {
     const supabase = getSupabase();
     
     // Invalida cache de saldos
@@ -1705,39 +1714,68 @@ export const financeService = {
 
     if (supabase) {
       try {
-        let query = supabase.from('transactions').delete().in('id', ids);
-        if (this.activeOrganizationId) {
-          query = query.eq('organization_id', this.activeOrganizationId);
-        }
-        const { error } = await query;
-        if (error) throw new Error(formatSupabaseError(error));
-        return;
-      } catch (e: any) {
-        console.error("Supabase delete failed, falling back to local data", e);
-        
-        const isFallback = 
-          !e || 
-          e.name === 'TypeError' || 
-          e.message?.includes('fetch') || 
-          e.message?.includes('network') ||
-          e.code === '42501' ||
-          e.code === 'PGRST301' ||
-          e.message?.toLowerCase().includes('permission denied') ||
-          e.message?.toLowerCase().includes('permissão negada') ||
-          e.message?.toLowerCase().includes('refresh token') ||
-          e.message?.toLowerCase().includes('jwt');
+        const validUuidIds = ids.filter(isUuid);
+        if (validUuidIds.length > 0) {
+          const chunkSize = 100;
+          const total = validUuidIds.length;
+          let completed = 0;
 
-        if (isFallback) {
-          // Fall through to local fallback
-        } else {
-          throw e;
+          if (onProgress) {
+            onProgress(0, total);
+          }
+
+          for (let i = 0; i < total; i += chunkSize) {
+            const chunk = validUuidIds.slice(i, i + chunkSize);
+            let query = supabase.from('transactions').delete().in('id', chunk);
+            if (this.activeOrganizationId) {
+              query = query.eq('organization_id', this.activeOrganizationId);
+            }
+            const { error } = await query;
+            if (error) {
+              console.error("Supabase delete failed for batch:", error);
+              throw new Error(formatSupabaseError(error));
+            }
+            completed += chunk.length;
+            if (onProgress) {
+              onProgress(completed, total);
+            }
+          }
         }
+      } catch (e: any) {
+        console.error("Supabase delete exception, falling back to local data:", e);
       }
     }
     await delay(300);
     let list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
     list = list.filter(t => !ids.includes(t.id));
     saveEntityLocal(KEYS.TRANSACTIONS, list);
+  },
+
+  async deleteBrokerageNote(docNumber: string, onProgress?: (completed: number, total: number) => void): Promise<void> {
+    const supabase = getSupabase();
+    
+    // 1. Buscar transações vinculadas a esta nota
+    const txs = await this.getTransactions({ docNumber });
+    const txIds = txs.map(t => t.id);
+    if (txIds.length > 0) {
+      await this.deleteTransactions(txIds, onProgress);
+    } else if (onProgress) {
+      onProgress(100, 100);
+    }
+    
+    // 2. Buscar e excluir acréscimos/rendimentos associados por descrição
+    const accruals = await this.getAssetAccruals();
+    const targetAccruals = accruals.filter(acc => 
+      acc.description?.includes(docNumber)
+    );
+    const accrualIds = targetAccruals.map(acc => acc.id);
+    for (const accId of accrualIds) {
+      await this.deleteAssetAccrual(accId);
+    }
+    
+    // Invalida caches de saldos e registros
+    cache.balances = {};
+    cache.registries = {};
   },
 
   async updateTransactionsStatus(ids: string[], status: 'PAID' | 'PENDING'): Promise<void> {
@@ -2480,12 +2518,14 @@ export const financeService = {
           }
         }
 
-        let deleteQuery = supabase.from(tableMap[type]).delete().eq('id', id);
-        if (this.activeOrganizationId) {
-          deleteQuery = deleteQuery.eq('organization_id', this.activeOrganizationId);
+        if (isUuid(id)) {
+          let deleteQuery = supabase.from(tableMap[type]).delete().eq('id', id);
+          if (this.activeOrganizationId) {
+            deleteQuery = deleteQuery.eq('organization_id', this.activeOrganizationId);
+          }
+          const { error } = await deleteQuery;
+          if (error) throw new Error(formatSupabaseError(error));
         }
-        const { error } = await deleteQuery;
-        if (error) throw new Error(formatSupabaseError(error));
         
         // Sincroniza com localStorage para evitar que loadRegistries leia dados obsoletos
         const keyMap: any = { 
