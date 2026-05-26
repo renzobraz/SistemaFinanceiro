@@ -29,11 +29,28 @@ interface Registries {
 interface ReportsDashboardProps {
   transactions: Transaction[];
   registries: Registries;
+  userModulePermissions?: Record<string, any>;
+  userRole?: string;
 }
 
-const ReportsDashboard: React.FC<ReportsDashboardProps> = ({ transactions, registries }) => {
+const ReportsDashboard: React.FC<ReportsDashboardProps> = ({ 
+  transactions, 
+  registries,
+  userModulePermissions = {},
+  userRole = ""
+}) => {
   const { startDate, endDate, participantId, costCenterId, walletId, bankId, categoryId, excludeTransfers } = useReportStore();
   const [activeTab, setActiveTab] = useState<'general' | 'distribution'>('general');
+
+  const hasExportPermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['reports']?.can_export === true
+    );
+  }, [userModulePermissions, userRole]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {
@@ -144,20 +161,24 @@ const ReportsDashboard: React.FC<ReportsDashboardProps> = ({ transactions, regis
                 </button>
               </div>
 
-              <button 
-                onClick={exportToPDF}
-                className="flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
-              >
-                <FileText className="w-4 h-4 text-slate-400" />
-                <span>PDF</span>
-              </button>
-              <button 
-                onClick={exportToExcel}
-                className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl shadow-slate-200 translate-y-0 active:translate-y-0.5 transform"
-              >
-                <Download className="w-4 h-4 text-slate-400" />
-                <span>Excel</span>
-              </button>
+              {hasExportPermission && (
+                <>
+                  <button 
+                    onClick={exportToPDF}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
+                  >
+                    <FileText className="w-4 h-4 text-slate-400" />
+                    <span>PDF</span>
+                  </button>
+                  <button 
+                    onClick={exportToExcel}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl shadow-slate-200 translate-y-0 active:translate-y-0.5 transform"
+                  >
+                    <Download className="w-4 h-4 text-slate-400" />
+                    <span>Excel</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
 

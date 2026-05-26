@@ -76,6 +76,8 @@ interface AssetPerformanceReportProps {
   onOpenAccrualHistory?: (fn: () => void) => void;
   onExportExcel?: (fn: () => void) => void;
   onExportPDF?: (fn: () => void) => void;
+  userModulePermissions?: Record<string, any>;
+  userRole?: string;
 }
 
 interface AssetPerformance {
@@ -122,8 +124,20 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   onOpenManualAdjust,
   onOpenAccrualHistory,
   onExportExcel,
-  onExportPDF
+  onExportPDF,
+  userModulePermissions = {},
+  userRole = ""
 }) => {
+  const hasExportPermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['investments']?.can_export === true
+    );
+  }, [userModulePermissions, userRole]);
+
   const getSafeDate = (dateStr: string) => {
     if (!dateStr) return new Date();
     // Pega apenas a parte da data (YYYY-MM-DD) caso seja uma ISO string
@@ -1643,22 +1657,26 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
               </button>
             </div>
             
-            <button
-              onClick={exportToExcel}
-              className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-all shadow-sm active:scale-95"
-              title="Exportar para Excel"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Excel</span>
-            </button>
-            <button
-              onClick={exportToPDF}
-              className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-all shadow-sm active:scale-95"
-              title="Exportar para PDF"
-            >
-              <FileDown className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">PDF</span>
-            </button>
+            {hasExportPermission && (
+              <>
+                <button
+                  onClick={exportToExcel}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition-all shadow-sm active:scale-95"
+                  title="Exportar para Excel"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Excel</span>
+                </button>
+                <button
+                  onClick={exportToPDF}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-all shadow-sm active:scale-95"
+                  title="Exportar para PDF"
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">PDF</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

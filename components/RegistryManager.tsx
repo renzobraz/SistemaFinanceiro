@@ -24,6 +24,8 @@ interface RegistryManagerProps {
   foreignKey?: string;
   assetTypes?: BaseEntity[];
   assetSectors?: BaseEntity[];
+  userModulePermissions?: Record<string, any>;
+  userRole?: string;
 }
 
 export const RegistryManager: React.FC<RegistryManagerProps> = ({ 
@@ -45,7 +47,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   foreignLabel,
   foreignKey,
   assetTypes,
-  assetSectors
+  assetSectors,
+  userModulePermissions = {},
+  userRole = ""
 }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -78,6 +82,36 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [sortField, setSortField] = useState<string>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const hasEditPermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['registries']?.can_edit === true
+    );
+  }, [userModulePermissions, userRole]);
+
+  const hasDeletePermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['registries']?.can_delete === true
+    );
+  }, [userModulePermissions, userRole]);
+
+  const hasCreatePermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['registries']?.can_create === true
+    );
+  }, [userModulePermissions, userRole]);
 
   // Reset filters when changing registry type to prevent data "disappearing"
   // due to filters from the previous registry type still being active.
@@ -536,7 +570,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               </span>
             </h3>
             <div className="flex gap-2">
-              {onGetIgnored && (
+              {hasEditPermission && onGetIgnored && (
                 <button 
                   onClick={handleShowIgnored}
                   className="p-2 text-slate-400 bg-slate-50 hover:bg-slate-100 rounded-lg transition-colors" 
@@ -545,7 +579,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                   <X className="w-5 h-5" />
                 </button>
               )}
-              {onAutoFillTickers && (
+              {hasEditPermission && onAutoFillTickers && (
                 <button 
                   onClick={() => setConfirmModal({
                     isOpen: true,
@@ -561,7 +595,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                   {isAutoFilling ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
                 </button>
               )}
-              {onDeduplicate && (
+              {hasEditPermission && onDeduplicate && (
                 <button 
                   onClick={() => setConfirmModal({
                     isOpen: true,
@@ -576,7 +610,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                   <Wand2 className="w-5 h-5" />
                 </button>
               )}
-              {onFindSimilar && (
+              {hasEditPermission && onFindSimilar && (
                 <button 
                   onClick={handleFindSimilar}
                   disabled={isSearchingSimilar}
@@ -586,16 +620,22 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                   {isSearchingSimilar ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
                 </button>
               )}
-              <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".csv,.txt" />
-              <button onClick={handleImportClick} className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Importar TXT/CSV (Formato: Nome,Categoria)">
-                <Upload className="w-5 h-5" />
-              </button>
+              {hasCreatePermission && (
+                <>
+                  <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".csv,.txt" />
+                  <button onClick={handleImportClick} className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Importar TXT/CSV (Formato: Nome,Categoria)">
+                    <Upload className="w-5 h-5" />
+                  </button>
+                </>
+              )}
               <button onClick={handleExportCSV} className="p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Exportar para Excel (CSV)">
                 <Download className="w-5 h-5" />
               </button>
-              <button onClick={handleStartAdd} disabled={isAdding || isSaving} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm shadow-blue-100">
-                <Plus className="w-5 h-5" />
-              </button>
+              {hasCreatePermission && (
+                <button onClick={handleStartAdd} disabled={isAdding || isSaving} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm shadow-blue-100" title="Novo">
+                  <Plus className="w-5 h-5" />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1110,27 +1150,35 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                     )}
 
                     <div className="flex items-center gap-1 justify-end">
-                      <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                        {onToggleActive && (
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); onToggleActive(item.id, item.active === false); }} 
-                            className={`p-1.5 rounded-md transition-colors ${
-                              item.active === false 
-                                ? 'bg-amber-100 text-amber-600 hover:bg-amber-200 shadow-sm' 
-                                : 'text-slate-400 hover:text-blue-600 hover:bg-blue-100'
-                            }`}
-                            title={item.active === false ? "Restaurar (Ativar)" : "Arquivar (Desativar)"}
-                          >
-                            {item.active === false ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
-                          </button>
-                        )}
-                        <button onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-100 rounded-md transition-colors" title="Editar">
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); requestDelete(item.id); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-100 rounded-md transition-colors" title="Excluir">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      {(hasEditPermission || hasDeletePermission) ? (
+                        <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                          {onToggleActive && hasEditPermission && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); onToggleActive(item.id, item.active === false); }} 
+                              className={`p-1.5 rounded-md transition-colors ${
+                                item.active === false 
+                                  ? 'bg-amber-100 text-amber-600 hover:bg-amber-200 shadow-sm' 
+                                  : 'text-slate-400 hover:text-blue-600 hover:bg-blue-100'
+                              }`}
+                              title={item.active === false ? "Restaurar (Ativar)" : "Arquivar (Desativar)"}
+                            >
+                              {item.active === false ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                          {hasEditPermission && (
+                            <button onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-100 rounded-md transition-colors" title="Editar">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {hasDeletePermission && (
+                            <button onClick={(e) => { e.stopPropagation(); requestDelete(item.id); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-100 rounded-md transition-colors" title="Excluir">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-300 text-xs mr-2">-</span>
+                      )}
                     </div>
                   </>
                 )}

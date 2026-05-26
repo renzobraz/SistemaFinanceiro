@@ -42,7 +42,24 @@ interface BankBalance {
   isCash: boolean;
 }
 
-export const ProfitDistributionReport: React.FC<{ onNavigateToRegistries?: () => void }> = ({ onNavigateToRegistries }) => {
+export const ProfitDistributionReport: React.FC<{ 
+  onNavigateToRegistries?: () => void;
+  userModulePermissions?: Record<string, any>;
+  userRole?: string;
+}> = ({ 
+  onNavigateToRegistries,
+  userModulePermissions = {},
+  userRole = ""
+}) => {
+  const hasExportPermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['reports']?.can_export === true
+    );
+  }, [userModulePermissions, userRole]);
   const [activeSubTab, setActiveSubTab] = useState<'simulation' | 'history'>('simulation');
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [selectedWalletId, setSelectedWalletId] = useState<string>('');
@@ -259,9 +276,11 @@ export const ProfitDistributionReport: React.FC<{ onNavigateToRegistries?: () =>
             <button className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-slate-200" title="Imprimir Relatório">
               <Printer className="w-4 h-4" />
             </button>
-            <button className="p-2 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors border border-slate-200" title="Exportar CSV">
-              <Download className="w-4 h-4" />
-            </button>
+            {hasExportPermission && (
+              <button className="p-2 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors border border-slate-200" title="Exportar CSV">
+                <Download className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
       </div>

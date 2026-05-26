@@ -19,9 +19,26 @@ import { Transaction, Participant } from '../types';
 interface BrokerageNotesReportProps {
   transactions: Transaction[];
   participants: Participant[];
+  userModulePermissions?: Record<string, any>;
+  userRole?: string;
 }
 
-export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({ transactions, participants }) => {
+export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({ 
+  transactions, 
+  participants,
+  userModulePermissions = {},
+  userRole = ""
+}) => {
+  const hasExportPermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['reports']?.can_export === true
+    );
+  }, [userModulePermissions, userRole]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({
@@ -201,9 +218,11 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({ tran
           <button className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 rounded-xl text-sm font-bold border border-slate-100 hover:bg-slate-100 transition-all">
             <Filter className="w-4 h-4" /> Filtros Avançados
           </button>
-          <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-md shadow-blue-100 hover:bg-blue-700 transition-all">
-            <Download className="w-4 h-4" /> Exportar CSV
-          </button>
+          {hasExportPermission && (
+            <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-md shadow-blue-100 hover:bg-blue-700 transition-all">
+              <Download className="w-4 h-4" /> Exportar CSV
+            </button>
+          )}
         </div>
       </div>
 

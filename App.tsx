@@ -1401,6 +1401,12 @@ const App: FC = () => {
     userRole === 'admin' ||
     userModulePermissions['transactions']?.can_create === true;
 
+  const canImportBrokerage = !userModulePermissions ||
+    Object.keys(userModulePermissions).length === 0 ||
+    userRole === 'owner' ||
+    userRole === 'admin' ||
+    userModulePermissions['brokerage']?.can_create === true;
+
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
       <Sidebar 
@@ -1663,7 +1669,7 @@ const App: FC = () => {
 
             {!['registries', 'settings', 'manual'].includes(activeTab) && (
               <div className="flex gap-1.5 sm:gap-2">
-                {(activeTab === 'investments' || activeTab === 'bank-transactions' || activeTab === 'brokerage-notes') && (
+                {(activeTab === 'investments' || activeTab === 'bank-transactions' || activeTab === 'brokerage-notes') && (activeTab !== 'brokerage-notes' || canImportBrokerage) && (
                   <button 
                     onClick={() => setIsImportOpen(true)} 
                     className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors h-[38px] shadow-sm"
@@ -1827,7 +1833,12 @@ const App: FC = () => {
 
           {activeTab === 'reports' && (
             <div className="flex-1 overflow-hidden">
-               <ReportsDashboard transactions={transactions} registries={registries} />
+               <ReportsDashboard 
+                 transactions={transactions} 
+                 registries={registries} 
+                 userModulePermissions={userModulePermissions}
+                 userRole={userRole}
+               />
             </div>
           )}
 
@@ -1872,6 +1883,8 @@ const App: FC = () => {
                   onOpenAccrualHistory={(fn) => { accrualHistoryFn.current = fn; }}
                   onExportExcel={(fn) => { excelExportFn.current = fn; }}
                   onExportPDF={(fn) => { pdfExportFn.current = fn; }}
+                  userModulePermissions={userModulePermissions}
+                  userRole={userRole}
                 />
               </div>
             </div>
@@ -1879,10 +1892,14 @@ const App: FC = () => {
 
           {activeTab === 'distribution' && (
             <div className="flex-1 overflow-auto bg-slate-50">
-              <ProfitDistributionReport onNavigateToRegistries={() => {
-                setActiveTab('registries');
-                setActiveRegistryTab('participants');
-              }} />
+              <ProfitDistributionReport 
+                onNavigateToRegistries={() => {
+                  setActiveTab('registries');
+                  setActiveRegistryTab('participants');
+                }} 
+                userModulePermissions={userModulePermissions}
+                userRole={userRole}
+              />
             </div>
           )}
 
@@ -1953,6 +1970,8 @@ const App: FC = () => {
                     <RegistryManager 
                         title={registryTabs.find(t => t.id === activeRegistryTab)?.label || ''} 
                         items={registries[activeRegistryTab as keyof typeof registries]} 
+                        userModulePermissions={userModulePermissions}
+                        userRole={userRole}
                         // @ts-ignore
                         onAdd={(name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id:'', name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(true, selectedWalletId))}
                         onDelete={(id) => financeService.deleteRegistryItem(activeRegistryTab, id).then(() => loadRegistries(true, selectedWalletId))}
