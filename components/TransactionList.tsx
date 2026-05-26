@@ -42,6 +42,8 @@ interface TransactionListProps {
   externalBalanceMap?: Record<string, number>;
   initialSortByStatus?: 'PAID' | 'PENDING' | 'ALL';
   totalInDatabase?: number;
+  userModulePermissions?: Record<string, any>;
+  userRole?: string;
 }
 
 interface ColumnFilters {
@@ -77,7 +79,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   variant = 'card',
   externalBalanceMap,
   initialSortByStatus = 'ALL',
-  totalInDatabase = 0
+  totalInDatabase = 0,
+  userModulePermissions = {},
+  userRole = ''
 }) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -89,6 +93,36 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const [isBulkValueModalOpen, setIsBulkValueModalOpen] = useState(false);
   const [bulkDate, setBulkDate] = useState(new Date().toISOString().split('T')[0]);
   const [bulkValue, setBulkValue] = useState<string>('');
+
+  const hasEditPermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['transactions']?.can_edit === true
+    );
+  }, [userModulePermissions, userRole]);
+
+  const hasDeletePermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['transactions']?.can_delete === true
+    );
+  }, [userModulePermissions, userRole]);
+
+  const hasExportPermission = useMemo(() => {
+    return (
+      !userModulePermissions ||
+      Object.keys(userModulePermissions).length === 0 ||
+      userRole === 'owner' ||
+      userRole === 'admin' ||
+      userModulePermissions['transactions']?.can_export === true
+    );
+  }, [userModulePermissions, userRole]);
   
   const defaultSort: { key: keyof Transaction, direction: 'asc' | 'desc' } = useMemo(() => {
     if (initialSortByStatus === 'PENDING') return { key: 'date', direction: 'asc' };
@@ -118,7 +152,19 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   };
 
   const { filteredTransactions, balanceMap } = useMemo(() => {
-    let data = [...transactions];
+    // Evitar transações com IDs duplicados para prevenir avisos de chaves duplicadas no React
+    const seen = new Set<string>();
+    let data: typeof transactions = [];
+    for (const t of transactions) {
+      if (t && t.id) {
+        if (!seen.has(t.id)) {
+          seen.add(t.id);
+          data.push(t);
+        }
+      } else if (t) {
+        data.push(t);
+      }
+    }
 
     if (deferredSearchTerm) {
       const lowerTerm = deferredSearchTerm.toLowerCase();
@@ -359,15 +405,19 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
                 <div className="h-6 w-px bg-gray-300 mx-1 hidden sm:block"></div>
                 
+                {hasExportPermission && (
                 <button onClick={handleExportExcel} className="p-2 text-green-600 bg-white border border-gray-300 hover:bg-green-50 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium">
                     <FileSpreadsheet className="w-4 h-4" />
                     <span className="hidden lg:inline">Exportar Planilha</span>
                 </button>
+                )}
 
+                {hasDeletePermission && (
                 <button onClick={findDuplicates} className="p-2 text-blue-600 bg-white border border-gray-300 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium" title="Remover Duplicados">
                     <Zap className="w-4 h-4" />
                     <span className="hidden lg:inline">Limpar Duplicados</span>
                 </button>
+                )}
 
                 <button 
                     onClick={() => setShowLast5(!showLast5)} 
@@ -387,36 +437,42 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         <span>selecionados</span>
                     </div>
 
-                    <button 
-                        onClick={() => setConfirmModal({isOpen: true, ids: selectedIds, type: 'UNPAY', message: `Deseja desmarcar ${selectedIds.length} lançamentos como "Pago"? Eles voltarão para o status "Pendente".`})} 
-                        className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-sm hover:bg-amber-100 font-medium transition-colors border border-amber-100"
-                        title="Desmarcar como Pago"
-                    >
-                        <XCircle className="w-4 h-4" />
-                        <span className="hidden md:inline">Desmarcar Pago</span>
-                    </button>
+                    {hasEditPermission && (
+                      <>
+                        <button 
+                            onClick={() => setConfirmModal({isOpen: true, ids: selectedIds, type: 'UNPAY', message: `Deseja desmarcar ${selectedIds.length} lançamentos como "Pago"? Eles voltarão para o status "Pendente".`})} 
+                            className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-sm hover:bg-amber-100 font-medium transition-colors border border-amber-100"
+                            title="Desmarcar como Pago"
+                        >
+                            <XCircle className="w-4 h-4" />
+                            <span className="hidden md:inline">Desmarcar Pago</span>
+                        </button>
 
-                    <button 
-                        onClick={() => setIsBulkDateModalOpen(true)} 
-                        className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-sm hover:bg-blue-100 font-medium transition-colors border border-blue-100"
-                        title="Alterar Data em Massa"
-                    >
-                        <Calendar className="w-4 h-4" />
-                        <span className="hidden md:inline">Alterar Data</span>
-                    </button>
+                        <button 
+                            onClick={() => setIsBulkDateModalOpen(true)} 
+                            className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-sm hover:bg-blue-100 font-medium transition-colors border border-blue-100"
+                            title="Alterar Data em Massa"
+                        >
+                            <Calendar className="w-4 h-4" />
+                            <span className="hidden md:inline">Alterar Data</span>
+                        </button>
 
-                    <button 
-                        onClick={() => setIsBulkValueModalOpen(true)} 
-                        className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-sm hover:bg-emerald-100 font-medium transition-colors border border-emerald-100"
-                        title="Alterar Valor em Massa"
-                    >
-                        <Zap className="w-4 h-4" />
-                        <span className="hidden md:inline">Alterar Valor</span>
-                    </button>
+                        <button 
+                            onClick={() => setIsBulkValueModalOpen(true)} 
+                            className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-sm hover:bg-emerald-100 font-medium transition-colors border border-emerald-100"
+                            title="Alterar Valor em Massa"
+                        >
+                            <Zap className="w-4 h-4" />
+                            <span className="hidden md:inline">Alterar Valor</span>
+                        </button>
+                      </>
+                    )}
 
+                    {hasDeletePermission && (
                     <button onClick={() => setConfirmModal({isOpen: true, ids: selectedIds, type: 'DELETE', message: `Deseja realmente excluir ${selectedIds.length} registros?`})} className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100 font-medium transition-colors border border-red-100">
                         <Trash2 className="w-4 h-4" />
                     </button>
+                    )}
                 </div>
             )}
         </div>
@@ -624,10 +680,18 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${t.status === 'PAID' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{t.status === 'PAID' ? 'Pago' : 'Pendente'}</span>
                     </td>
                     <td className="p-3 text-right">
+                        {(hasEditPermission || hasDeletePermission) ? (
                         <div className="flex items-center justify-end gap-1">
+                            {hasEditPermission && (
                             <button onClick={(e) => { e.stopPropagation(); onEdit(t); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"><Edit2 className="w-4 h-4" /></button>
+                            )}
+                            {hasDeletePermission && (
                             <button onClick={(e) => { e.stopPropagation(); setConfirmModal({isOpen: true, ids: [t.id], type: 'DELETE', message: 'Deseja excluir este lançamento definitivamente?'}); }} className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 className="w-4 h-4" /></button>
+                            )}
                         </div>
+                        ) : (
+                          <span className="text-slate-300 text-xs">-</span>
+                        )}
                     </td>
                 </tr>
                 ))}
@@ -746,7 +810,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                             </div>
 
                             {/* Action Buttons with 44px min touch target */}
+                            {(hasEditPermission || hasDeletePermission) && (
                             <div className="flex items-center justify-end gap-1.5 border-t border-slate-100 pt-2.5 mt-2">
+                                {hasEditPermission && (
                                 <button 
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); onEdit(t); }} 
@@ -755,6 +821,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                                 >
                                     <Edit2 className="w-5 h-5" />
                                 </button>
+                                )}
+                                {hasDeletePermission && (
                                 <button 
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); setConfirmModal({isOpen: true, ids: [t.id], type: 'DELETE', message: 'Deseja excluir este lançamento definitivamente?'}); }} 
@@ -763,7 +831,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                                 >
                                     <Trash2 className="w-5 h-5" />
                                 </button>
+                                )}
                             </div>
+                            )}
                         </div>
                     );
                 })}

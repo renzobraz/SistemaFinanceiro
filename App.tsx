@@ -142,6 +142,12 @@ const App: FC = () => {
     return params.get('access_token') || '';
   });
 
+  const [inviteRefreshToken, setInviteRefreshToken] = useState<string>(() => {
+    const hash = window.location.hash || window.location.search || '';
+    const params = new URLSearchParams(hash.replace('#', '?'));
+    return params.get('refresh_token') || '';
+  });
+
   const [showCreatePassword, setShowCreatePassword] = useState<boolean>(() => {
     const hash = window.location.hash || window.location.search || '';
     const params = new URLSearchParams(hash.replace('#', '?'));
@@ -890,11 +896,8 @@ const App: FC = () => {
         if (Array.isArray(t)) {
             // Disparar criação remota
             const created = await financeService.createManyTransactions(t);
-            // Atualizar estado e re-ordenar localmente
-            setTransactions(prev => {
-              const updated = [...created, ...prev];
-              return updated.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-            });
+            // Recarregar do banco para sincronizar filtros, ordenação e saldos
+            await loadTransactions();
         } else {
             const isEditing = !!t.id;
             if (isEditing) {
@@ -904,17 +907,14 @@ const App: FC = () => {
                 // Grava remotamente
                 const saved = await financeService.saveTransaction(t);
                 
-                // Atualiza com os valores finais retornados
-                setTransactions(prev => prev.map(item => item.id === t.id ? saved : item));
+                // Recarregar para garantir o filtro de status correto (por exemplo, remover de PAID ou PENDING)
+                await loadTransactions();
             } else {
                 // Gravação remota imediata (pois precisa de ID gerado)
                 const saved = await financeService.saveTransaction(t);
                 
-                // Concatena no estado e re-ordena por data decrescente
-                setTransactions(prev => {
-                  const updated = [saved, ...prev];
-                  return updated.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-                });
+                // Recarregar do banco
+                await loadTransactions();
             }
         }
     } catch (e: any) {
@@ -932,6 +932,7 @@ const App: FC = () => {
     
     try {
         await financeService.deleteTransactions(ids);
+        await loadTransactions();
     } catch (e: any) {
         // Rollback em caso de erro
         setTransactions(previousTransactions);
@@ -949,6 +950,7 @@ const App: FC = () => {
     
     try {
         await financeService.updateTransactionsStatus(ids, status);
+        await loadTransactions();
     } catch (e: any) {
         // Rollback em caso de erro
         setTransactions(previousTransactions);
@@ -1013,6 +1015,7 @@ const App: FC = () => {
     return (
       <AcceptInvite
         inviteToken={inviteToken || ''}
+        inviteRefreshToken={inviteRefreshToken || ''}
         onSuccess={(activeUser) => {
           setShowCreatePassword(false);
           setInviteToken('');
@@ -1392,6 +1395,12 @@ const App: FC = () => {
     );
   }
 
+  const canCreateTransaction = !userModulePermissions || 
+    Object.keys(userModulePermissions).length === 0 || 
+    userRole === 'owner' ||
+    userRole === 'admin' ||
+    userModulePermissions['transactions']?.can_create === true;
+
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
       <Sidebar 
@@ -1662,9 +1671,11 @@ const App: FC = () => {
                     <FileUp className="w-4 h-4 text-blue-600" /> <span className="hidden sm:inline">Incluir nota</span>
                   </button>
                 )}
-                <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
-                    <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Lançar</span>
-                </button>
+                {canCreateTransaction && (
+                  <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
+                      <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Lançar</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1918,6 +1929,8 @@ const App: FC = () => {
                     externalBalanceMap={globalBalanceMap} 
                     initialSortByStatus={statusFilter === 'ALL' ? undefined : statusFilter as any}
                     totalInDatabase={transactions.length}
+                    userModulePermissions={userModulePermissions}
+                    userRole={userRole}
                    />
                </div>
             </div>

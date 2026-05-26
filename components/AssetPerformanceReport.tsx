@@ -534,14 +534,14 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           asset.lastPrice = marketData.current || 0;
           asset.targetPrice = manualTarget || marketData.target || undefined;
           asset.marketValue = (asset.currentQuantity * (asset.lastPrice || 0)) + totalAccruals;
-          asset.profit = (asset.marketValue + asset.totalSold) - asset.totalInvested;
+          asset.profit = (asset.marketValue + asset.totalSold) - asset.totalBoughtValue;
           asset.variation = asset.averagePrice > 0 ? ((asset.lastPrice || 0) / asset.averagePrice - 1) * 100 : 0;
           
-          // Rentabilidade: (Total Atual + Vendas) / Total Investido
-          asset.rentability = asset.totalInvested > 0 ? ((asset.marketValue + asset.totalSold) / asset.totalInvested - 1) * 100 : 0;
+          // Rentabilidade: (Total Atual + Vendas) / Total Comprado (histórico)
+          asset.rentability = asset.totalBoughtValue > 0 ? ((asset.marketValue + asset.totalSold) / asset.totalBoughtValue - 1) * 100 : 0;
           
-          // Total Return: (Total Atual + Vendas + Proventos) / Total Investido
-          asset.totalReturn = asset.totalInvested > 0 ? ((asset.marketValue + asset.totalSold + asset.totalReceived) / asset.totalInvested - 1) * 100 : 0;
+          // Total Return: (Total Atual + Vendas + Proventos) / Total Comprado (histórico)
+          asset.totalReturn = asset.totalBoughtValue > 0 ? ((asset.marketValue + asset.totalSold + asset.totalReceived) / asset.totalBoughtValue - 1) * 100 : 0;
 
           const netFinancial = asset.totalBoughtValue - asset.totalSold;
           asset.averagePriceNet = asset.currentQuantity > 0 ? netFinancial / asset.currentQuantity : 0;
@@ -552,10 +552,10 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             asset.lastPrice = manualPrice;
             asset.targetPrice = manualTarget;
             asset.marketValue = (asset.currentQuantity * asset.lastPrice) + totalAccruals;
-            asset.profit = (asset.marketValue + asset.totalSold) - asset.totalInvested;
+            asset.profit = (asset.marketValue + asset.totalSold) - asset.totalBoughtValue;
             asset.variation = asset.averagePrice > 0 ? (asset.lastPrice / asset.averagePrice - 1) * 100 : 0;
-            asset.rentability = asset.totalInvested > 0 ? ((asset.marketValue + asset.totalSold) / asset.totalInvested - 1) * 100 : 0;
-            asset.totalReturn = asset.totalInvested > 0 ? ((asset.marketValue + asset.totalSold + asset.totalReceived) / asset.totalInvested - 1) * 100 : 0;
+            asset.rentability = asset.totalBoughtValue > 0 ? ((asset.marketValue + asset.totalSold) / asset.totalBoughtValue - 1) * 100 : 0;
+            asset.totalReturn = asset.totalBoughtValue > 0 ? ((asset.marketValue + asset.totalSold + asset.totalReceived) / asset.totalBoughtValue - 1) * 100 : 0;
             
             const netFinancial = asset.totalBoughtValue - asset.totalSold;
             asset.averagePriceNet = asset.currentQuantity > 0 ? netFinancial / asset.currentQuantity : 0;

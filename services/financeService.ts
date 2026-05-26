@@ -1396,7 +1396,21 @@ export const financeService = {
               mappedData = mappedData.filter(t => t.walletId === filters.walletId);
             }
         }
-        return mappedData;
+
+        // Deduplicar pelo ID para evitar itens duplicados decorrentes de ordenação/paginação instável no servidor
+        const uniqueMapped: any[] = [];
+        const seenIds = new Set<string>();
+        for (const t of mappedData) {
+          if (t && t.id) {
+            if (!seenIds.has(t.id)) {
+              seenIds.add(t.id);
+              uniqueMapped.push(t);
+            }
+          } else if (t) {
+            uniqueMapped.push(t);
+          }
+        }
+        return uniqueMapped;
       } catch (e: any) {
         // Silencia o erro para aviso, pois o fallback local é o comportamento padrão sem configuração
         console.warn("Dica: Supabase não conectado (usando dados locais). Isso é normal se você ainda não configurou as chaves do banco de dados.");

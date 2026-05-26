@@ -4,11 +4,12 @@ import { Key, User, ShieldCheck, Loader2, AlertCircle, Eye, EyeOff } from 'lucid
 
 interface AcceptInviteProps {
   inviteToken: string;
+  inviteRefreshToken?: string;
   onSuccess: (user: any) => void;
   onCancel: () => void;
 }
 
-export const AcceptInvite: React.FC<AcceptInviteProps> = ({ inviteToken, onSuccess, onCancel }) => {
+export const AcceptInvite: React.FC<AcceptInviteProps> = ({ inviteToken, inviteRefreshToken, onSuccess, onCancel }) => {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -31,10 +32,20 @@ export const AcceptInvite: React.FC<AcceptInviteProps> = ({ inviteToken, onSucce
 
         // Se temos o token do convite, usa ele diretamente
         if (inviteToken) {
-          const { data, error: sessionError } = await supabase.auth.setSession({
-            access_token: inviteToken,
-            refresh_token: inviteToken,
-          });
+          let sessionData = null;
+          let sessionError = null;
+
+          try {
+            const { data, error: sErr } = await supabase.auth.setSession({
+              access_token: inviteToken,
+              refresh_token: inviteRefreshToken || inviteToken,
+            });
+            sessionData = data;
+            sessionError = sErr;
+          } catch (err: any) {
+            console.warn('[AcceptInvite] setSession falhou, tentando fallback com getUser:', err);
+            sessionError = err;
+          }
 
           if (sessionError) {
             // Tenta getUser com o token diretamente
@@ -44,7 +55,7 @@ export const AcceptInvite: React.FC<AcceptInviteProps> = ({ inviteToken, onSucce
             }
             setEmail(userData.user.email || null);
           } else {
-            const currentUser = data?.user || (await supabase.auth.getUser()).data.user;
+            const currentUser = sessionData?.user || (await supabase.auth.getUser()).data.user;
             if (currentUser) setEmail(currentUser.email || null);
             else throw new Error('Não foi possível carregar as informações do usuário.');
           }
