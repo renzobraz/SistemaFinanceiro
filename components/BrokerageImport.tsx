@@ -52,6 +52,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
 }) => {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingApi, setProcessingApi] = useState<'gemini' | 'claude' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [parsedNote, setParsedNote] = useState<BrokerageNote | null>(null);
   const [isDuplicate, setIsDuplicate] = useState(false);
@@ -278,7 +279,10 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       reader.readAsDataURL(file);
       const base64 = await base64Promise;
 
-      const result = await geminiService.parseBrokerageNote(base64, file.type);
+      setProcessingApi('gemini');
+      const result = await geminiService.parseBrokerageNote(base64, file.type, (api) => {
+        setProcessingApi(api);
+      });
       setParsedNote(result);
       
       // Initialize editable fields
@@ -297,6 +301,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       setError(err.message || "Erro ao processar a nota de corretagem.");
     } finally {
       setIsProcessing(false);
+      setProcessingApi(null);
     }
   };
 
@@ -657,7 +662,12 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                     disabled={isProcessing}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-xl font-bold text-sm transition-all shadow-md shadow-blue-200 disabled:opacity-50 disabled:shadow-none flex items-center gap-2"
                   >
-                    {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Processar Agora'}
+                    {isProcessing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>{processingApi === 'claude' ? 'Processando com Claude...' : 'Processando com Gemini...'}</span>
+                      </>
+                    ) : 'Processar Agora'}
                   </button>
                 </motion.div>
               )}

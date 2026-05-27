@@ -378,9 +378,8 @@ export const geminiService = {
     }
   },
 
-  async parseBrokerageNote(fileBase64: string, mimeType: string): Promise<any> {
+  async parseBrokerageNote(fileBase64: string, mimeType: string, onProgress?: (api: 'gemini' | 'claude') => void): Promise<any> {
     const ai = getAi();
-    if (!ai) throw new Error("IA não configurada.");
     
     const prompt = `Analise esta Nota de Corretagem (Padrão SINACOR) e extraia os dados de forma estruturada em JSON.
     
@@ -421,59 +420,89 @@ export const geminiService = {
     - "totalPurchases" é a soma de todos os itens com 'C' (Compra).
     - "costs.total" deve ser a soma de TODAS as taxas (Liquidação, Registro, Emolumentos, Corretagem, ISS, IRRF).
     
-    REGRAS DE VALIDAÇÃO:
+    REGRAS DE VALINAÇÂO:
     - O valor de cada linha deve ser (quantidade * preço).
     - O valor líquido final deve ser (Vendas - Compras - Taxas). Se vendas > compras+taxas, é Crédito (C). Caso contrário, Débito (D).
     
     Responda APENAS o JSON puro.`;
 
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [{
-          parts: [
-            { inlineData: { data: fileBase64, mimeType } },
-            { text: prompt }
-          ]
-        }],
-        config: { 
-          responseMimeType: "application/json",
-          temperature: 0.1
+    // 1. Tenta processar com o Gemini se estiver configurado
+    if (ai) {
+      try {
+        if (onProgress) onProgress('gemini');
+        console.log("[Gemini] Tentando processar nota de corretagem com Gemini...");
+        const response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: [{
+            parts: [
+              { inlineData: { data: fileBase64, mimeType } },
+              { text: prompt }
+            ]
+          }],
+          config: { 
+            responseMimeType: "application/json",
+            temperature: 0.1
+          }
+        });
+
+        const rawText = response.text || "";
+        
+        let cleanedText = rawText.trim();
+        if (cleanedText.includes("```")) {
+          cleanedText = cleanedText.replace(/```json|```/g, "").trim();
         }
+        
+        const firstBrace = cleanedText.indexOf("{");
+        const lastBrace = cleanedText.lastIndexOf("}");
+        
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          cleanedText = cleanedText.substring(firstBrace, lastBrace + 1);
+        }
+
+        try {
+          return JSON.parse(cleanedText);
+        } catch (parseError) {
+          console.error("Erro de parse inicial com Gemini, tentando limpeza agressiva:", parseError);
+          const aggressiveClean = cleanedText
+            .replace(/,\s*([\]}])/g, "$1") 
+            .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, ""); 
+          return JSON.parse(aggressiveClean);
+        }
+      } catch (geminiError: any) {
+        console.warn("[Gemini] Falha ao processar com Gemini. Ativando fallback automático para Claude...", geminiError.message || geminiError);
+      }
+    } else {
+      console.warn("[Gemini] Gemini não inicializado. Ativando fallback automático para Claude...");
+    }
+
+    // 2. Fallback automático para Claude
+    try {
+      if (onProgress) onProgress('claude');
+      console.log("[Claude] Tentando processar nota de corretagem com Claude...");
+      
+      const response = await fetch("/api/parse-pdf-claude", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          base64: fileBase64,
+          mimeType,
+          prompt
+        })
       });
 
-      const rawText = response.text || "";
-      
-      // Limpeza profunda para encontrar o bloco JSON
-      let cleanedText = rawText.trim();
-      
-      // Remove blocos de código se existirem
-      if (cleanedText.includes("```")) {
-        cleanedText = cleanedText.replace(/```json|```/g, "").trim();
-      }
-      
-      // Tenta localizar o primeiro '{' e o último '}' para garantir que temos apenas o objeto
-      const firstBrace = cleanedText.indexOf("{");
-      const lastBrace = cleanedText.lastIndexOf("}");
-      
-      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        cleanedText = cleanedText.substring(firstBrace, lastBrace + 1);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Erro HTTP ${response.status} na API do Claude`);
       }
 
-      try {
-        return JSON.parse(cleanedText);
-      } catch (parseError) {
-        console.error("Erro de parse inicial, tentando limpeza agressiva:", parseError);
-        // Tenta remover possíveis comentários ou vírgulas pendentes que quebram o JSON
-        const aggressiveClean = cleanedText
-          .replace(/,\s*([\]}])/g, "$1") // Remove vírgulas antes de fechar colchetes/chaves
-          .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, ""); // Remove comentários
-        
-        return JSON.parse(aggressiveClean);
-      }
-    } catch (e: any) {
-      console.error("Erro ao processar nota com Gemini:", e);
-      throw new Error(`Falha no processamento: ${e.message || "IA retornou dados inválidos"}. Tente subir apenas uma página por vez se a nota for muito grande.`);
+      const result = await response.json();
+      console.log("[Claude] Processamento concluído com sucesso.");
+      return result;
+    } catch (claudeError: any) {
+      console.error("[Claude] Falha também no fallback do Claude:", claudeError.message || claudeError);
+      throw new Error(`Ambos os processamentos inteligentes falharam. Gemini e Claude estão indisponíveis: ${claudeError.message || claudeError}`);
     }
   }
 };

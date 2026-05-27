@@ -326,7 +326,7 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
 
 // =========================================================================
 // M1 — CONFIGURAÇÃO DE RATE LIMITING
@@ -1283,6 +1283,89 @@ app.get("/api/rates", async (req, res) => {
       rates: { BRL: 1, USD: 0.19, EUR: 0.17, GBP: 0.15 },
       base: "BRL"
     });
+  }
+});
+
+// API Claude PDF Parser
+app.post("/api/parse-pdf-claude", async (req: any, res: any) => {
+  try {
+    const { base64, mimeType, prompt } = req.body;
+    if (!base64 || !mimeType || !prompt) {
+      return res.status(400).json({ error: "Parâmetros 'base64', 'mimeType' e 'prompt' são obrigatórios." });
+    }
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return res.status(400).json({ error: "Chave ANTHROPIC_API_KEY não configurada no servidor." });
+    }
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "document",
+                source: {
+                  type: "base64",
+                  media_type: mimeType,
+                  data: base64
+                }
+              },
+              {
+                type: "text",
+                text: prompt
+              }
+            ]
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      return res.status(response.status).json({ error: `Erro na API do Claude: ${errText}` });
+    }
+
+    const data: any = await response.json();
+    const rawText = data.content?.[0]?.text || "";
+    
+    // Clean and parse JSON
+    let cleanedText = rawText.trim();
+    if (cleanedText.includes("```")) {
+      cleanedText = cleanedText.replace(/```json|```/g, "").trim();
+    }
+    
+    const firstBrace = cleanedText.indexOf("{");
+    const lastBrace = cleanedText.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      cleanedText = cleanedText.substring(firstBrace, lastBrace + 1);
+    }
+
+    try {
+      const parsed = JSON.parse(cleanedText);
+      return res.json(parsed);
+    } catch (parseError) {
+      console.error("Erro ao analisar resposta JSON do Claude, tentando limpeza agressiva:", parseError);
+      // Tenta limpeza agressiva de possíveis comentários e vírgulas pendentes
+      const aggressiveClean = cleanedText
+        .replace(/,\s*([\]}])/g, "$1")
+        .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, "");
+      const parsed = JSON.parse(aggressiveClean);
+      return res.json(parsed);
+    }
+  } catch (error: any) {
+    console.error("Erro interno no parse Claude:", error);
+    return res.status(500).json({ error: error.message || "Erro interno ao chamar Claude" });
   }
 });
 
