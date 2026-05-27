@@ -19,7 +19,8 @@ import {
   AlertCircle,
   CheckSquare,
   Square,
-  Check
+  Check,
+  TrendingUp
 } from 'lucide-react';
 import { Transaction, Participant } from '../types';
 import { financeService } from '../services/financeService';
@@ -244,6 +245,47 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [brokerageData]);
 
+  // Identifica se há um único ticker específico filtrado
+  const activeTicker = useMemo(() => {
+    // Coleta todos os tickers únicos listados (ignorando 'N/A')
+    const uniqueTickers = Array.from(
+      new Set(brokerageData.map(item => item.ticker?.toUpperCase().trim()).filter(t => t && t !== 'N/A'))
+    );
+
+    const hasSearchActive = searchTerm.trim() !== '';
+    const hasAdvancedFilterActive = filterTicker.trim() !== '';
+
+    if (uniqueTickers.length === 1 && (hasSearchActive || hasAdvancedFilterActive)) {
+      return uniqueTickers[0];
+    }
+    return null;
+  }, [filterTicker, searchTerm, brokerageData]);
+
+  // Calcula o resumo do ativo (Saldo Líquido e Preço Médio)
+  const assetSummary = useMemo(() => {
+    if (!activeTicker) return null;
+
+    // Filtra especificamente as linhas desse ticker
+    const activeData = brokerageData.filter(item => item.ticker?.toUpperCase().trim() === activeTicker);
+    const buyOps = activeData.filter(t => t.type === 'DEBIT');
+    const sellOps = activeData.filter(t => t.type === 'CREDIT');
+
+    const totalBuyVal = buyOps.reduce((acc, t) => acc + t.value, 0);
+    const totalBuyQty = buyOps.reduce((acc, t) => acc + (t.quantity || 0), 0);
+    const totalSellQty = sellOps.reduce((acc, t) => acc + (t.quantity || 0), 0);
+
+    const saldoLiquido = totalBuyQty - totalSellQty;
+    const precoMedio = totalBuyQty > 0 ? totalBuyVal / totalBuyQty : 0;
+
+    return {
+      ticker: activeTicker,
+      saldoLiquido,
+      precoMedio,
+      totalBuyQty,
+      totalSellQty
+    };
+  }, [activeTicker, brokerageData]);
+
   const requestSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc';
     if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -311,7 +353,7 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
   return (
     <div className="space-y-6 animate-fade-in relative">
       {/* Cabeçalho e Resumo */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${assetSummary ? 'lg:grid-cols-5' : 'md:grid-cols-4'} gap-4`}>
         <button 
           onClick={() => setIsNotesModalOpen(true)}
           className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm hover:border-blue-300 hover:shadow-md transition-all text-left group overflow-hidden relative"
@@ -368,6 +410,43 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
             Qtd Total: <span className="text-emerald-500 ml-1">{summary.totalSellQty.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
           </p>
         </div>
+
+        {assetSummary && (
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm border-l-4 border-l-blue-600 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-blue-50 rounded-lg text-blue-600">
+                  <TrendingUp className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block leading-none">Resumo do Ativo</span>
+                  <span className="text-xs font-black text-blue-700 font-mono tracking-tight">{assetSummary.ticker}</span>
+                </div>
+              </div>
+              
+              <div className="space-y-1.5 mt-2">
+                <div>
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter block leading-none">Saldo Líquido</span>
+                  <div className="text-xl font-black text-slate-800">
+                    {assetSummary.saldoLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 4 })}
+                    <span className="text-[10px] text-slate-400 font-extrabold ml-1 uppercase">unidades</span>
+                  </div>
+                </div>
+                
+                <div className="border-t border-slate-100 pt-1.5">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter block leading-none">Preço Médio Compra</span>
+                  <div className="text-xl font-black text-blue-600">
+                    {formatCurrency(assetSummary.precoMedio)}
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase tracking-tighter leading-none">
+              Ações: <span className="text-blue-600 font-extrabold">{assetSummary.totalBuyQty.toLocaleString('pt-BR')}</span> comp. / <span className="text-emerald-600 font-extrabold">{assetSummary.totalSellQty.toLocaleString('pt-BR')}</span> vend.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Filtros e Busca */}
