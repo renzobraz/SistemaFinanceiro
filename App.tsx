@@ -481,8 +481,8 @@ const App: FC = () => {
     setRefreshing(true);
     
     try {
-      // Na aba de investimentos, precisamos de TODO o histórico para calcular preço médio e quantidade corretamente
-      const isInvestmentsTab = activeTab === 'investments';
+      // Na aba de investimentos e notas de corretagem, precisamos de TODO o histórico para calcular retrospectiva e preço médio corretamente
+      const isInvestmentsTab = activeTab === 'investments' || activeTab === 'brokerage-notes';
 
       // 1. Busca transações filtradas
       const trPromise = financeService.getTransactions({

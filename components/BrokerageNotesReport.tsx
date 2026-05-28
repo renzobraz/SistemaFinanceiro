@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { 
   FileText, 
@@ -81,6 +81,15 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
   const [filterEndDate, setFilterEndDate] = useState('');
   const [filterBankId, setFilterBankId] = useState('ALL');
 
+  // Paginação State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(50);
+
+  // Redefine para a primeira página se algum filtro mudar
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterTicker, filterType, filterStartDate, filterEndDate, filterBankId]);
+
   const handleDeleteConfirm = async () => {
     if (!noteToDelete) return;
     setDeletingNote(noteToDelete);
@@ -136,7 +145,9 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
     return transactions
       .filter(t => {
         const participant = participants.find(p => p.id === t.participantId);
-        const isInvestment = !!participant?.category; // Assumindo que participantes com categoria são ativos investíveis
+        // Mecanismo de Reconciliação: qualquer transação com docNumber de nota é um investimento em potencial para a nota (exceto taxa geral de corretagem)
+        const isFee = participant?.name === 'Taxas Corretagem' || t.description.toLowerCase().includes('taxas/emolumentos');
+        const isInvestment = !!participant?.category || !!participant?.ticker || (!!t.docNumber && t.docNumber.trim() !== '' && !isFee);
         const hasDoc = !!t.docNumber && t.docNumber.trim() !== '';
         
         const matchesSearch = 
@@ -186,22 +197,38 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
     });
   }, [brokerageData, sortConfig]);
 
-  // Multi-Selection Checkbox States
+  // Paginação dos dados ordenados
+  const totalItems = sortedData.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
+  const paginatedData = useMemo(() => {
+    return sortedData.slice(startIndex, endIndex);
+  }, [sortedData, startIndex, endIndex]);
+
+  // Garante limite seguro para página atual
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [totalPages, currentPage]);
+
+  // Multi-Selection Checkbox States (com base nos itens paginados visíveis)
   const isAllSelected = useMemo(() => {
-    if (sortedData.length === 0) return false;
-    return sortedData.every(item => selectedTxIds.includes(item.id));
-  }, [sortedData, selectedTxIds]);
+    if (paginatedData.length === 0) return false;
+    return paginatedData.every(item => selectedTxIds.includes(item.id));
+  }, [paginatedData, selectedTxIds]);
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
-      const allFilteredIds = sortedData.map(item => item.id);
+      const allPageIds = paginatedData.map(item => item.id);
       setSelectedTxIds(prev => {
-        const unique = new Set([...prev, ...allFilteredIds]);
+        const unique = new Set([...prev, ...allPageIds]);
         return Array.from(unique);
       });
     } else {
-      const filteredIdsSet = new Set(sortedData.map(item => item.id));
-      setSelectedTxIds(prev => prev.filter(id => !filteredIdsSet.has(id)));
+      const pageIdsSet = new Set(paginatedData.map(item => item.id));
+      setSelectedTxIds(prev => prev.filter(id => !pageIdsSet.has(id)));
     }
   };
 
@@ -604,9 +631,9 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
       )}
 
       {/* Tabela de Detalhamento */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden min-h-[400px]">
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden min-h-[400px] flex flex-col justify-between">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full min-w-[950px] text-left border-collapse">
             <thead>
               <tr className="bg-slate-50/50 border-b border-slate-100">
                 {/* Opção B - Coluna Checkbox Selecionar Todos */}
@@ -643,8 +670,8 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {sortedData.length > 0 ? (
-                sortedData.map((item, index) => {
+              {paginatedData.length > 0 ? (
+                paginatedData.map((item, index) => {
                   const unitPrice = item.quantity && item.quantity > 0 ? item.value / item.quantity : 0;
                   
                   return (
@@ -711,6 +738,123 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Controles de Paginação no Rodapé */}
+        <div className="bg-slate-50/50 px-6 py-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 rounded-b-2xl">
+          <div className="text-xs font-bold text-slate-500 font-sans">
+            Exibindo <span className="font-extrabold text-slate-700">{totalItems === 0 ? 0 : startIndex + 1}</span> a <span className="font-extrabold text-slate-700">{endIndex}</span> de <span className="font-extrabold text-slate-700">{totalItems}</span> itens
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-500">Itens por página:</span>
+              <select
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+                <option value={400}>400</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-bold transition-all disabled:opacity-40 disabled:hover:bg-white cursor-pointer"
+              >
+                Anterior
+              </button>
+              
+              <div className="flex items-center gap-1">
+                {totalPages <= 5 ? (
+                  Array.from({ length: totalPages }, (_, i) => i + 1).map(pageNumber => (
+                    <button
+                      key={pageNumber}
+                      onClick={() => setCurrentPage(pageNumber)}
+                      className={`w-8 h-8 rounded-lg text-xs font-bold transition-all flex items-center justify-center cursor-pointer ${
+                        currentPage === pageNumber
+                          ? 'bg-blue-600 text-white font-extrabold shadow-md'
+                          : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600'
+                      }`}
+                    >
+                      {pageNumber}
+                    </button>
+                  ))
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setCurrentPage(1)}
+                      className={`w-8 h-8 rounded-lg text-xs font-bold transition-all flex items-center justify-center cursor-pointer ${
+                        currentPage === 1
+                          ? 'bg-blue-600 text-white font-extrabold shadow-md'
+                          : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600'
+                      }`}
+                    >
+                      1
+                    </button>
+                    
+                    {currentPage > 3 && <span className="text-slate-400 text-xs px-1 font-bold">...</span>}
+                    
+                    {Array.from({ length: 3 }, (_, i) => {
+                      let pageNumber = currentPage;
+                      if (currentPage <= 2) {
+                        pageNumber = 2 + i;
+                      } else if (currentPage >= totalPages - 1) {
+                        pageNumber = totalPages - 3 + i;
+                      } else {
+                        pageNumber = currentPage - 1 + i;
+                      }
+                      if (pageNumber > 1 && pageNumber < totalPages) {
+                        return (
+                          <button
+                            key={pageNumber}
+                            onClick={() => setCurrentPage(pageNumber)}
+                            className={`w-8 h-8 rounded-lg text-xs font-bold transition-all flex items-center justify-center cursor-pointer ${
+                              currentPage === pageNumber
+                                ? 'bg-blue-600 text-white font-extrabold shadow-md'
+                                : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600'
+                            }`}
+                          >
+                            {pageNumber}
+                          </button>
+                        );
+                      }
+                      return null;
+                    })}
+                    
+                    {currentPage < totalPages - 2 && <span className="text-slate-400 text-xs px-1 font-bold">...</span>}
+                    
+                    <button
+                      onClick={() => setCurrentPage(totalPages)}
+                      className={`w-8 h-8 rounded-lg text-xs font-bold transition-all flex items-center justify-center cursor-pointer ${
+                        currentPage === totalPages
+                          ? 'bg-blue-600 text-white font-extrabold shadow-md'
+                          : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600'
+                      }`}
+                    >
+                      {totalPages}
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-bold transition-all disabled:opacity-40 disabled:hover:bg-white cursor-pointer"
+              >
+                Próxima
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
