@@ -392,9 +392,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       const isConfirmed = t.status === 'PAID';
       
       const participant = registries.participants.find(p => String(p.id).trim() === String(t.participantId).trim());
-      // Consideramos investimento se tiver Tipo (category) OU Ticker, ou se tiver docNumber (reconciliação de notas de corretagem)
-      const isFee = participant?.name === 'Taxas Corretagem';
-      const isInvestmentParticipant = !!participant?.category || !!participant?.ticker || (!!t.docNumber && t.docNumber.trim() !== '' && !isFee);
+      // Consideramos investimento se tiver Tipo (category) OU Ticker
+      const isInvestmentParticipant = !!participant?.category || !!participant?.ticker;
       
       const bank = registries.banks.find(b => String(b.id) === String(t.bankId));
       

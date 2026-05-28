@@ -145,9 +145,7 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
     return transactions
       .filter(t => {
         const participant = participants.find(p => p.id === t.participantId);
-        // Mecanismo de Reconciliação: qualquer transação com docNumber de nota é um investimento em potencial para a nota (exceto taxa geral de corretagem)
-        const isFee = participant?.name === 'Taxas Corretagem' || t.description.toLowerCase().includes('taxas/emolumentos');
-        const isInvestment = !!participant?.category || !!participant?.ticker || (!!t.docNumber && t.docNumber.trim() !== '' && !isFee);
+        const isInvestment = !!participant?.category || !!participant?.ticker;
         const hasDoc = !!t.docNumber && t.docNumber.trim() !== '';
         
         const matchesSearch = 
@@ -657,6 +655,9 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                 >
                   <div className="flex items-center gap-1">Número da Nota {getSortIcon('docNumber')}</div>
                 </th>
+                <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Banco/Corretora
+                </th>
                 <th 
                   className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors"
                   onClick={() => requestSort('ticker')}
@@ -697,6 +698,9 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                           {item.docNumber}
                         </span>
                       </td>
+                      <td className="p-4 text-xs font-semibold text-slate-700 truncate max-w-[150px]">
+                        {banks?.find(b => String(b.id) === String(item.bankId))?.name || 'Vago'}
+                      </td>
                       <td className="p-4">
                         <div className="flex flex-col">
                           <span className="text-xs font-black text-blue-700 tracking-tight">{item.ticker}</span>
@@ -726,7 +730,7 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="p-20 text-center">
+                  <td colSpan={9} className="p-20 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <div className="p-4 bg-slate-50 rounded-full text-slate-300">
                         <FileText className="w-10 h-10" />
@@ -868,7 +872,7 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                   <Hash className="w-6 h-6 text-blue-600" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-black text-slate-800 tracking-tight">Relação de Notas Fiscais</h3>
+                  <h3 className="text-lg font-black text-slate-800 tracking-tight">Notas de Corretagem</h3>
                   <p className="text-xs text-slate-500 font-medium">Foram identificadas {uniqueNotesList.length} notas únicas</p>
                 </div>
               </div>
