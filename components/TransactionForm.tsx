@@ -176,6 +176,56 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [isAddingParticipant, setIsAddingParticipant] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const dropdownMenuRef = useRef<HTMLDivElement>(null);
+  const [dropdownCoords, setDropdownCoords] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+  }>({
+    left: 0,
+    width: 0,
+  });
+
+  useEffect(() => {
+    if (!isParticipantDropdownOpen) return;
+
+    function updateCoords() {
+      if (dropdownRef.current) {
+        const rect = dropdownRef.current.getBoundingClientRect();
+        const inputEl = dropdownRef.current.querySelector("input");
+        const targetRect = inputEl ? inputEl.getBoundingClientRect() : rect;
+
+        // Limiar de 450px para abrir para cima caso não haja espaço abaixo na viewport
+        const maxDropdownHeight = 450;
+        const fitsBelow = targetRect.bottom + maxDropdownHeight <= window.innerHeight;
+
+        if (fitsBelow) {
+          setDropdownCoords({
+            top: targetRect.bottom + 4,
+            left: targetRect.left,
+            width: targetRect.width,
+          });
+        } else {
+          setDropdownCoords({
+            bottom: window.innerHeight - targetRect.top + 4,
+            left: targetRect.left,
+            width: targetRect.width,
+          });
+        }
+      }
+    }
+
+    updateCoords();
+
+    window.addEventListener("scroll", updateCoords, true);
+    window.addEventListener("resize", updateCoords);
+
+    return () => {
+      window.removeEventListener("scroll", updateCoords, true);
+      window.removeEventListener("resize", updateCoords);
+    };
+  }, [isParticipantDropdownOpen]);
 
   const sourceBanks = useMemo(
     () => [...registries.banks]
@@ -275,18 +325,48 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsParticipantDropdownOpen(false);
+      const targetNode = event.target as Node;
+
+      // Se o click foi em um elemento dentro de dropdownRef (input)
+      if (dropdownRef.current && dropdownRef.current.contains(targetNode)) {
+        return;
       }
+
+      // Se o click foi em um elemento dentro de dropdownMenuRef (dropdown fixed)
+      if (dropdownMenuRef.current && dropdownMenuRef.current.contains(targetNode)) {
+        return;
+      }
+
+      // Fallback de bounding box para cliques em barras de rolagem nativas e quirks de navegadores
+      if (dropdownRef.current) {
+        const rect = dropdownRef.current.getBoundingClientRect();
+        const isInParentBoundingBox = (
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom
+        );
+        if (isInParentBoundingBox) return;
+      }
+
+      if (dropdownMenuRef.current) {
+        const rect = dropdownMenuRef.current.getBoundingClientRect();
+        const isInMenuBoundingBox = (
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom
+        );
+        if (isInMenuBoundingBox) return;
+      }
+
+      setIsParticipantDropdownOpen(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [dropdownRef]);
+  }, [dropdownRef, dropdownMenuRef]);
 
   useEffect(() => {
     if (exchangeRate > 0) {
@@ -1283,7 +1363,19 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               </div>
 
               {isParticipantDropdownOpen && !isSaving && (
-                <div className="absolute z-50 w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden transform origin-top animate-fade-in">
+                <div
+                  ref={dropdownMenuRef}
+                  style={{
+                    position: "fixed",
+                    top: dropdownCoords.top !== undefined ? `${dropdownCoords.top}px` : "auto",
+                    bottom: dropdownCoords.bottom !== undefined ? `${dropdownCoords.bottom}px` : "auto",
+                    left: `${dropdownCoords.left}px`,
+                    width: `${dropdownCoords.width}px`,
+                  }}
+                  className={`z-50 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden transform animate-fade-in ${
+                    dropdownCoords.top !== undefined ? "origin-top" : "origin-bottom"
+                  }`}
+                >
                   {deferredParticipantSearch.trim() && !exactMatchExists && (
                       <button
                         type="button"
@@ -1321,7 +1413,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                   <div className="py-1">
                     {filteredParticipants.length > 0 ? (
                       <List
-                        height={Math.min(filteredParticipants.length * 64, 320)}
+                        height={Math.min(filteredParticipants.length * 64, 400)}
                         itemCount={filteredParticipants.length}
                         itemSize={64}
                         width="100%"
@@ -1376,8 +1468,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               )}
             </div>
 
-            {/* Espaçador dinâmico para evitar que o dropdown de participantes seja cortado pelo rodapé */}
-            <div className={`transition-all duration-300 ${isParticipantDropdownOpen ? 'h-64' : 'h-0'}`} />
+            {/* O espaçador dinâmico antigo foi removido ja que o dropdown em position fixed não afeta o fluxo normal do conteúdo */}
 
         </form>
 

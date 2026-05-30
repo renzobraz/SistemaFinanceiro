@@ -390,7 +390,8 @@ export const geminiService = {
         "noteNumber": "string", 
         "liquidValue": number, 
         "settlementDate": "YYYY-MM-DD",
-        "isCredit": boolean (true se o valor líquido for C, false se for D)
+        "isCredit": boolean (true se o valor líquido for C, false se for D),
+        "expectedTradesCount": number
       },
       "summary": {
         "totalSales": number,
@@ -412,13 +413,25 @@ export const geminiService = {
       "costs": { "total": number, "details": "string" }
     }
 
-    INSTRUÇÕES CRÍTICAS PARA NOTAS LONGAS:
-    - Esta nota pode ter MUITAS páginas ou linhas. NÃO OMITA NENHUMA LINHA de "Negócios Realizados".
-    - Se a tabela de negócios continuar em outra página, continue extraindo todos os itens.
+    INSTRUÇÕES EXTRAÇÃO DE TICKERS (CRÍTICO):
+    - No campo "ticker", retorne SEMPRE e OBRIGATORIAMENTE o código de negociação oficial da B3 (geralmente composto por 4 letras maiúsculas seguidas por um ou dois números, ex: RBRP11, GZIT11, PETR4, WEGE3).
+    - NUNCA retorne o nome descritivo ou a razão social do ativo no campo "ticker".
+    - Exemplos de mapeamento para guiar a extração e conversão de nomes descritivos para códigos B3 reais:
+      * "FII RBRP PAX CI" ou "FII RBRP" ou "RBRP CI" ou variações -> "RBRP11"
+      * "FII RBRR PAX CI" ou "RBRR" ou "FII RBRR" -> "RBRR11"
+      * "FII GAZIT CI ER" ou "GAZIT" ou "GZIT" -> "GZIT11"
+      * "XP LOG FII" ou "XPLG" -> "XPLG11"
+      * Se encontrar termos descritivos de corretora/nota contendo o ativo, extraia apenas o ticker de negociação de 5 ou 6 caracteres da B3 correspondentes!
+
+    INSTRUÇÕES CRÍTICAS PARA NOTAS LONGAS E COMPLETUDE:
+    - O campo "expectedTradesCount" em "metadata" DEVE ser a quantidade total absoluta e exata de transações/linhas listadas fisicamente na seção "Negócios Realizados" ou "Transações" da nota. Conte cada negócio com extremo rigor. Se existirem 13 negócios listados fisicamente, este valor DEVE ser 13.
+    - Esta nota pode ter MUITAS páginas ou linhas. NÃO OMITA NENHUMA LINHA de "Negócios Realizados". Adicione todos os ativos vendidos ou comprados no array "trades".
+    - Se a tabela de negócios continuar em outra página, continue extraindo todos os itens sem truncar ou resumir.
     - O "liquidValue" deve ser o valor exato encontrado no campo "Líquido para [Data]" ou "Total Líquido da Nota".
     - "totalSales" é a soma de todos os itens com 'V' (Venda).
     - "totalPurchases" é a soma de todos os itens com 'C' (Compra).
     - "costs.total" deve ser a soma de TODAS as taxas (Liquidação, Registro, Emolumentos, Corretagem, ISS, IRRF).
+    - No campo "assetName", pode reter o nome descritivo completo lido na nota (ex: "FII RBRP PAX CI").
     
     REGRAS DE VALINAÇÂO:
     - O valor de cada linha deve ser (quantidade * preço).
@@ -426,83 +439,115 @@ export const geminiService = {
     
     Responda APENAS o JSON puro.`;
 
-    // 1. Tenta processar com o Gemini se estiver configurado
+    const attempts = [];
+
     if (ai) {
-      try {
-        if (onProgress) onProgress('gemini');
-        console.log("[Gemini] Tentando processar nota de corretagem com Gemini...");
-        const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: [{
-            parts: [
-              { inlineData: { data: fileBase64, mimeType } },
-              { text: prompt }
-            ]
-          }],
-          config: { 
-            responseMimeType: "application/json",
-            temperature: 0.1
+      attempts.push({
+        name: 'gemini' as const,
+        fn: async () => {
+          console.log("[Gemini] Tentando processar nota de corretagem com Gemini...");
+          const response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: [{
+              parts: [
+                { inlineData: { data: fileBase64, mimeType } },
+                { text: prompt }
+              ]
+            }],
+            config: { 
+              responseMimeType: "application/json",
+              temperature: 0.1,
+              maxOutputTokens: 8192
+            }
+          });
+
+          const rawText = response.text || "";
+          let cleanedText = rawText.trim();
+          if (cleanedText.includes("```")) {
+            cleanedText = cleanedText.replace(/```json|```/g, "").trim();
           }
+
+          const firstBrace = cleanedText.indexOf("{");
+          const lastBrace = cleanedText.lastIndexOf("}");
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            cleanedText = cleanedText.substring(firstBrace, lastBrace + 1);
+          }
+
+          try {
+            return JSON.parse(cleanedText);
+          } catch (parseError) {
+            console.error("Erro de parse inicial com Gemini, tentando limpeza agressiva:", parseError);
+            const aggressiveClean = cleanedText
+              .replace(/,\s*([\]}])/g, "$1") 
+              .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, ""); 
+            return JSON.parse(aggressiveClean);
+          }
+        }
+      });
+    }
+
+    attempts.push({
+      name: 'claude' as const,
+      fn: async () => {
+        console.log("[Claude] Tentando processar nota de corretagem com Claude...");
+        const response = await fetch("/api/parse-pdf-claude", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            base64: fileBase64,
+            mimeType,
+            prompt
+          })
         });
 
-        const rawText = response.text || "";
-        
-        let cleanedText = rawText.trim();
-        if (cleanedText.includes("```")) {
-          cleanedText = cleanedText.replace(/```json|```/g, "").trim();
-        }
-        
-        const firstBrace = cleanedText.indexOf("{");
-        const lastBrace = cleanedText.lastIndexOf("}");
-        
-        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-          cleanedText = cleanedText.substring(firstBrace, lastBrace + 1);
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `Erro HTTP ${response.status} na API do Claude`);
         }
 
-        try {
-          return JSON.parse(cleanedText);
-        } catch (parseError) {
-          console.error("Erro de parse inicial com Gemini, tentando limpeza agressiva:", parseError);
-          const aggressiveClean = cleanedText
-            .replace(/,\s*([\]}])/g, "$1") 
-            .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, ""); 
-          return JSON.parse(aggressiveClean);
-        }
-      } catch (geminiError: any) {
-        console.warn("[Gemini] Falha ao processar com Gemini. Ativando fallback automático para Claude...", geminiError.message || geminiError);
+        return await response.json();
       }
-    } else {
-      console.warn("[Gemini] Gemini não inicializado. Ativando fallback automático para Claude...");
+    });
+
+    let lastValidationError = "";
+    let lastGenericError = "";
+
+    for (let i = 0; i < attempts.length; i++) {
+      const attempt = attempts[i];
+      try {
+        if (onProgress) onProgress(attempt.name);
+        const result = await attempt.fn();
+
+        // Validação de completude unificada
+        const expectedCount = Number(result?.metadata?.expectedTradesCount || result?.metadata?.expected_trades_count || 0);
+        const actualCount = Array.isArray(result?.trades) ? result.trades.length : 0;
+
+        console.log(`[Diagnostic - ${attempt.name.toUpperCase()}] Ativos extraídos (${actualCount}):`, result?.trades?.map((t: any) => t.ticker || t.assetName));
+        console.log(`[Diagnostic - ${attempt.name.toUpperCase()}] Quantidade esperada de negócios: ${expectedCount}`);
+
+        if (expectedCount > 0 && actualCount !== expectedCount) {
+          const errorMsg = `Atenção: a nota possui ${expectedCount} negócios mas apenas ${actualCount} foram identificados. A importação foi cancelada para evitar dados incorretos. Tente importar novamente ou entre em contato com o suporte.`;
+          lastValidationError = errorMsg;
+          throw new Error(errorMsg);
+        }
+
+        return result;
+      } catch (err: any) {
+        console.warn(`[${attempt.name.toUpperCase()}] Falha ou incompletude detectada:`, err.message || err);
+        if (err.message && err.message.includes("Atenção: a nota possui")) {
+          lastValidationError = err.message;
+        } else {
+          lastGenericError = err.message || String(err);
+        }
+      }
     }
 
-    // 2. Fallback automático para Claude
-    try {
-      if (onProgress) onProgress('claude');
-      console.log("[Claude] Tentando processar nota de corretagem com Claude...");
-      
-      const response = await fetch("/api/parse-pdf-claude", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          base64: fileBase64,
-          mimeType,
-          prompt
-        })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Erro HTTP ${response.status} na API do Claude`);
-      }
-
-      const result = await response.json();
-      console.log("[Claude] Processamento concluído com sucesso.");
-      return result;
-    } catch (claudeError: any) {
-      console.error("[Claude] Falha também no fallback do Claude:", claudeError.message || claudeError);
-      throw new Error(`Ambos os processamentos inteligentes falharam. Gemini e Claude estão indisponíveis: ${claudeError.message || claudeError}`);
+    // Se saiu do loop, significa que todas as tentativas falharam
+    if (lastValidationError) {
+      throw new Error(lastValidationError);
     }
+    throw new Error(`Ambos os processamentos inteligentes falharam. Gemini e Claude estão indisponíveis: ${lastGenericError}`);
   }
 };

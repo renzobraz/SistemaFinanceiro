@@ -50,6 +50,7 @@ export interface Participant extends BaseEntity {
   category?: string; // Ex: 'Ação', 'FII', 'ETF', 'Cripto'
   sector?: string;   // Ex: 'Tecnologia', 'Financeiro', 'Energia'
   ticker?: string;   // Símbolo (ex: PETR4, AAPL)
+  sinacorName?: string; // Nome oficial B3/Sinacor (ex: FII KINEA UN CI)
   currency?: Currency; // Moeda do ativo
   currentPrice?: number; // Preço atual (mercado)
   targetPrice?: number;  // Preço alvo para compra/venda
@@ -170,6 +171,7 @@ export interface BrokerageNote {
     liquidValue: number;
     settlementDate: string;
     isCredit?: boolean;
+    expectedTradesCount?: number;
   };
   summary?: {
     totalSales: number;

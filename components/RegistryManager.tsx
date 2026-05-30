@@ -59,6 +59,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [tempCurrency, setTempCurrency] = useState<Currency>('BRL');
   const [tempWalletType, setTempWalletType] = useState<WalletType>('CHECKING');
   const [tempTicker, setTempTicker] = useState('');
+  const [tempSinacorName, setTempSinacorName] = useState('');
   const [tempCurrentPrice, setTempCurrentPrice] = useState<number>(0);
   const [tempIsPartner, setTempIsPartner] = useState(false);
   const [tempSharePercent, setTempSharePercent] = useState<number>(0);
@@ -142,7 +143,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const isBankRegistry = title.toLowerCase().includes('banco');
   
   const gridClasses = isAssetRegistry 
-    ? 'grid grid-cols-[minmax(200px,2fr)_120px_120px_100px_80px_280px]' 
+    ? 'grid grid-cols-[minmax(180px,2fr)_110px_110px_90px_140px_80px_260px]' 
     : 'grid grid-cols-[minmax(200px,1fr)_120px_100px]';
 
   const filteredItems = useMemo(() => {
@@ -200,6 +201,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
     setTempCurrency('BRL');
     setTempWalletType('CHECKING');
     setTempTicker('');
+    setTempSinacorName('');
     setTempCurrentPrice(0);
     setTempIsPartner(false);
     setTempSharePercent(0);
@@ -217,6 +219,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
           extra.category = tempCategory;
           extra.sector = tempSector;
           extra.ticker = tempTicker;
+          extra.sinacorName = tempSinacorName;
           extra.currency = tempCurrency;
           extra.currentPrice = tempCurrentPrice;
           extra.isPartner = tempIsPartner;
@@ -236,6 +239,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         setTempSector('');
         setTempCurrency('BRL');
         setTempTicker('');
+        setTempSinacorName('');
         setTempCurrentPrice(0);
         setTempForeignKey('');
         setIsAdding(false);
@@ -253,6 +257,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
     setTempCurrency(item.currency || 'BRL');
     setTempWalletType(item.type || 'CHECKING');
     setTempTicker(item.ticker || '');
+    setTempSinacorName(item.sinacorName || '');
     setTempCurrentPrice(item.currentPrice || 0);
     setTempIsPartner(item.isPartner || false);
     setTempSharePercent(item.sharePercent || 0);
@@ -273,6 +278,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
           extra.category = tempCategory;
           extra.sector = tempSector;
           extra.ticker = tempTicker;
+          extra.sinacorName = tempSinacorName;
           extra.currency = tempCurrency;
           extra.currentPrice = tempCurrentPrice;
           extra.isPartner = tempIsPartner;
@@ -293,6 +299,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         setTempSector('');
         setTempCurrency('BRL');
         setTempTicker('');
+        setTempSinacorName('');
         setTempCurrentPrice(0);
         setTempForeignKey('');
       } finally {
@@ -672,6 +679,12 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                     Ticker {getSortIcon('ticker')}
                   </button>
                   <button 
+                    onClick={() => toggleSort('sinacorName')}
+                    className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
+                  >
+                    Nome Sinacor B3 {getSortIcon('sinacorName')}
+                  </button>
+                  <button 
                     onClick={() => toggleSort('currency')}
                     className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
                   >
@@ -862,6 +875,14 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                       className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 uppercase shadow-sm"
                       placeholder="Ticker..."
                     />
+                    <input
+                      type="text"
+                      disabled={isSaving}
+                      value={tempSinacorName}
+                      onChange={(e) => setTempSinacorName(e.target.value)}
+                      className="w-full bg-white border border-blue-200 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                      placeholder="Nome Sinacor..."
+                    />
                     <select
                       disabled={isSaving}
                       value={tempCurrency}
@@ -979,6 +1000,14 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                             onChange={(e) => setTempTicker(e.target.value)}
                             className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 uppercase shadow-sm"
                             placeholder="Ticker..."
+                          />
+                          <input
+                            type="text"
+                            disabled={isSaving}
+                            value={tempSinacorName}
+                            onChange={(e) => setTempSinacorName(e.target.value)}
+                            className="w-full bg-white border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 shadow-sm"
+                            placeholder="Nome Sinacor..."
                           />
                           <select
                             disabled={isSaving}
@@ -1127,6 +1156,15 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                             <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded-lg border border-slate-200 font-black uppercase tracking-widest">
                               {item.ticker}
                             </span>
+                          )}
+                        </div>
+                        <div className="flex items-center">
+                          {item.sinacorName ? (
+                            <span className="text-[10px] text-slate-500 font-medium whitespace-nowrap overflow-hidden text-ellipsis max-w-[130px]" title={item.sinacorName}>
+                              {item.sinacorName}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-300 italic">Preencher...</span>
                           )}
                         </div>
                         <div className="flex items-center">

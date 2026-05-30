@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileUp, 
@@ -39,7 +39,81 @@ interface BrokerageImportProps {
   categories: Category[];
   participants: Participant[];
   costCenters: CostCenter[];
+  preSelectedBankId?: string;
+  preSelectedWalletId?: string;
 }
+
+const findParticipantByPartialMatch = (ticker: string, assetName: string, list: Participant[]) => {
+  if (!ticker && !assetName) return null;
+  
+  const cleanTicker = (ticker || '').trim().toUpperCase();
+  const cleanName = (assetName || '').trim().toUpperCase();
+  
+  // 1. Match exato pelo ticker
+  if (cleanTicker) {
+    const exactTicker = list.find(p => p.ticker && p.ticker.toUpperCase() === cleanTicker);
+    if (exactTicker) return exactTicker;
+  }
+  
+  // 2. Match exato pelo sinacor_name
+  if (cleanName || cleanTicker) {
+    const exactSinacor = list.find(p => {
+      if (!p.sinacorName) return false;
+      const pSinacorUpper = p.sinacorName.trim().toUpperCase();
+      return (cleanName && pSinacorUpper === cleanName) || (cleanTicker && pSinacorUpper === cleanTicker);
+    });
+    if (exactSinacor) return exactSinacor;
+  }
+  
+  // 3. Match exato por nome do participante
+  if (cleanName) {
+    const exactName = list.find(p => p.name && p.name.toUpperCase() === cleanName);
+    if (exactName) return exactName;
+  }
+
+  // 4. Match parcial / inteligente
+  const getTickerRoot = (t: string) => {
+    const m = t.match(/[A-Z]{4}/i);
+    return m ? m[0].toUpperCase() : '';
+  };
+
+  const parsedTickerRoot = cleanTicker ? getTickerRoot(cleanTicker) : '';
+  const parsedNameRoot = cleanName ? getTickerRoot(cleanName) : '';
+
+  if (parsedTickerRoot || parsedNameRoot) {
+    const rootToSearch = parsedTickerRoot || parsedNameRoot;
+    
+    for (const p of list) {
+      if (!p.ticker) continue;
+      const pTickerUpper = p.ticker.toUpperCase();
+      const pTickerRoot = getTickerRoot(pTickerUpper);
+
+      if (pTickerRoot && rootToSearch && pTickerRoot === rootToSearch) {
+        return p;
+      }
+      
+      if (pTickerUpper.length >= 4 && (cleanName.includes(pTickerUpper) || cleanTicker.includes(pTickerUpper))) {
+        return p;
+      }
+    }
+  }
+
+  // 5. Fallback de busca parcial mais genérico
+  for (const p of list) {
+    if (!p.ticker) continue;
+    const pTickerUpper = p.ticker.toUpperCase();
+    const pNameUpper = p.name ? p.name.toUpperCase() : '';
+
+    const words = cleanName.split(/[\s-]+/).filter(w => w.length >= 4 && w !== 'FUNDO' && w !== 'INVESTIMENTO' && w !== 'INVESTIMENTOS' && w !== 'IMOBILIARIO');
+    for (const word of words) {
+      if (pNameUpper.includes(word) || pTickerUpper.includes(word)) {
+        return p;
+      }
+    }
+  }
+  
+  return null;
+};
 
 export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   onClose,
@@ -48,7 +122,9 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   wallets,
   categories,
   participants,
-  costCenters
+  costCenters,
+  preSelectedBankId,
+  preSelectedWalletId
 }) => {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -59,10 +135,30 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
   
   // Settings for import
-  const [selectedBankId, setSelectedBankId] = useState(banks[0]?.id || '');
-  const [selectedWalletId, setSelectedWalletId] = useState(wallets[0]?.id || '');
-  const [selectedCostCenterId, setSelectedCostCenterId] = useState(costCenters[0]?.id || '');
+  const [selectedBankId, setSelectedBankId] = useState(() => {
+    if (preSelectedBankId && preSelectedBankId !== 'ALL') {
+      const exists = banks.some(b => b.id === preSelectedBankId);
+      if (exists) return preSelectedBankId;
+    }
+    return banks[0]?.id || '';
+  });
+  
+  const [selectedWalletId, setSelectedWalletId] = useState(() => {
+    if (preSelectedWalletId && preSelectedWalletId !== 'ALL') {
+      const exists = wallets.some(w => w.id === preSelectedWalletId);
+      if (exists) return preSelectedWalletId;
+    }
+    return wallets[0]?.id || '';
+  });
+  
+  const [selectedCostCenterId, setSelectedCostCenterId] = useState(() => {
+    const invCc = costCenters.find(c => c.name.toLowerCase() === 'investimentos' || c.name.toLowerCase().includes('investimento'));
+    return invCc?.id || costCenters[0]?.id || '';
+  });
+  
   const [investmentCategoryId, setInvestmentCategoryId] = useState(() => {
+    const defaultCat = categories.find(c => c.name.toLowerCase() === 'compra/venda de ativos' || c.name.toLowerCase().includes('compra/venda'));
+    if (defaultCat) return defaultCat.id;
     const inv = categories.find(c => c.name.toLowerCase().includes('investimento'));
     return inv?.id || categories[0]?.id || '';
   });
@@ -71,6 +167,84 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   const [tradeDate, setTradeDate] = useState('');
   const [settlementDate, setSettlementDate] = useState('');
   const [noteNumber, setNoteNumber] = useState('');
+
+  // Helpers for interactive ticker review
+  const registeredTickers = useMemo(() => {
+    const list = participants
+      .map(p => p.ticker)
+      .filter((t): t is string => !!t);
+    return Array.from(new Set(list)).sort();
+  }, [participants]);
+
+  const isTradeTickerValid = (ticker: string) => {
+    if (!ticker) return false;
+    const cleanT = ticker.trim().toUpperCase();
+    return participants.some(p => {
+      const matchTicker = p.ticker && p.ticker.toUpperCase() === cleanT;
+      const matchSinacor = p.sinacorName && p.sinacorName.toUpperCase() === cleanT;
+      return matchTicker || matchSinacor;
+    });
+  };
+
+  const handleUpdateTradeTicker = (index: number, newTicker: string) => {
+    if (!parsedNote) return;
+    const updatedTrades = [...(parsedNote.trades || [])];
+    updatedTrades[index] = {
+      ...updatedTrades[index],
+      ticker: newTicker.trim().toUpperCase()
+    };
+    setParsedNote({
+      ...parsedNote,
+      trades: updatedTrades
+    });
+  };
+
+  const hasInvalidTickers = useMemo(() => {
+    return parsedNote?.trades?.some(t => !isTradeTickerValid(t.ticker)) ?? false;
+  }, [parsedNote, participants]);
+
+  // States for unregistered assets modal
+  const [showUnregisteredModal, setShowUnregisteredModal] = useState(false);
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [importActionToExecute, setImportActionToExecute] = useState<'pure' | 'replace' | 'merge' | null>(null);
+  const [registeredAssets, setRegisteredAssets] = useState<Record<string, { name: string; category: string }>>({});
+  const [skippedAssets, setSkippedAssets] = useState<Set<string>>(new Set());
+  const [quickFormInputs, setQuickFormInputs] = useState<Record<string, { name: string; category: string }>>({});
+
+  const modalMissingTickers = React.useMemo(() => {
+    if (!parsedNote) return [];
+    return Array.from(new Set(
+      (parsedNote.trades || [])
+        .filter(t => t.ticker && !findParticipantByPartialMatch(t.ticker, t.assetName, participants) && !registeredAssets[t.ticker])
+        .map(t => t.ticker)
+    ));
+  }, [parsedNote, participants, registeredAssets]);
+
+  useEffect(() => {
+    if (!parsedNote) {
+      setShowUnregisteredModal(false);
+      setIsRegisterMode(false);
+      setImportActionToExecute(null);
+      setRegisteredAssets({});
+      setSkippedAssets(new Set());
+      setQuickFormInputs({});
+    } else {
+      const missing = (parsedNote.trades || [])
+        .filter(t => t.ticker && !findParticipantByPartialMatch(t.ticker, t.assetName, participants))
+        .map(t => t.ticker)
+        .filter((v, i, a) => a.indexOf(v) === i);
+      
+      const inputs: Record<string, { name: string; category: string }> = {};
+      missing.forEach(ticker => {
+        const trade = parsedNote.trades.find(t => t.ticker === ticker);
+        const name = trade?.assetName || ticker;
+        const isFII = name.toLowerCase().includes('fii') || ticker.endsWith('11');
+        const category = isFII ? 'FII' : 'Ação';
+        inputs[ticker] = { name, category };
+      });
+      setQuickFormInputs(inputs);
+    }
+  }, [parsedNote, participants]);
 
   // Auto-audit logic
   const auditResult = React.useMemo(() => {
@@ -283,6 +457,27 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       const result = await geminiService.parseBrokerageNote(base64, file.type, (api) => {
         setProcessingApi(api);
       });
+
+      const expected = result.metadata?.expectedTradesCount;
+      const identified = result.trades?.length || 0;
+      if (expected !== undefined && expected !== null && expected > 0 && expected !== identified) {
+        setParsedNote(null);
+        setError(`Atenção: a nota possui ${expected} negócios mas apenas ${identified} foram identificados. A importação foi cancelada para evitar dados incorretos. Tente importar novamente ou entre em contato com o suporte.`);
+        setIsProcessing(false);
+        setProcessingApi(null);
+        return;
+      }
+
+      if (result.trades && result.trades.length > 0) {
+        result.trades = result.trades.map((trade: any) => {
+          const match = findParticipantByPartialMatch(trade.ticker, trade.assetName, participants);
+          return {
+            ...trade,
+            ticker: (match?.ticker || trade.ticker || '').toUpperCase()
+          };
+        });
+      }
+
       setParsedNote(result);
       
       // Initialize editable fields
@@ -308,26 +503,53 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   const executePureImport = async () => {
     if (!parsedNote) return;
     
+    // Check if there are unregistered assets (tickers) that have neither been registered nor skipped
+    const missing = Array.from(new Set(
+      (parsedNote.trades || [])
+        .filter(t => t.ticker && !findParticipantByPartialMatch(t.ticker, t.assetName, participants) && !registeredAssets[t.ticker] && !skippedAssets.has(t.ticker))
+        .map(t => t.ticker)
+    ));
+      
+    if (missing.length > 0) {
+      setImportActionToExecute('pure');
+      setShowUnregisteredModal(true);
+      return;
+    }
+    
     // 1. Ensure all participants (assets) exist
     const updatedParticipants = [...participants];
     
     const createParticipantIfMissing = async (trade: BrokerageTrade) => {
-      let p = updatedParticipants.find(p => p.ticker === trade.ticker || p.name.toLowerCase() === trade.assetName.toLowerCase());
+      // Usar a busca parcial por nome e ticker para encontrar o participante
+      let p = findParticipantByPartialMatch(trade.ticker, trade.assetName, updatedParticipants);
       
-      if (!p) {
-        // Identify if it's a FII or Stock (Simple heuristic)
-        const isFII = trade.assetName.toLowerCase().includes('fii') || trade.ticker.endsWith('11');
-        const category = isFII ? 'FII' : 'Ação';
-        
-        const newP = await financeService.saveRegistryItem<Participant>('participants', {
+      if (!p && registeredAssets[trade.ticker]) {
+        const reg = registeredAssets[trade.ticker];
+        p = await financeService.saveRegistryItem<Participant>('participants', {
           id: '',
-          name: trade.assetName,
+          name: reg.name,
           ticker: trade.ticker,
-          category: category,
+          category: reg.category,
           currency: 'BRL'
         });
-        updatedParticipants.push(newP);
-        return newP;
+        updatedParticipants.push(p);
+      }
+      
+      if (!p) {
+        // Se pular, a importação continua mas aquele ativo fica marcado como 'sem cadastro'
+        // Criamos participante básico sem ticker e sem categoria (não aparece na Performance)
+        let skeleton = updatedParticipants.find(p => p.name === trade.assetName && !p.ticker);
+        if (!skeleton) {
+          skeleton = await financeService.saveRegistryItem<Participant>('participants', {
+            id: '',
+            name: trade.assetName,
+            ticker: '',
+            category: '',
+            currency: 'BRL'
+          });
+          updatedParticipants.push(skeleton);
+        }
+        return skeleton;
       }
       return p;
     };
@@ -430,6 +652,20 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
 
   const handleReplaceImport = async () => {
     if (!parsedNote) return;
+
+    // Check if there are unregistered assets (tickers) that have neither been registered nor skipped
+    const missing = Array.from(new Set(
+      (parsedNote.trades || [])
+        .filter(t => t.ticker && !findParticipantByPartialMatch(t.ticker, t.assetName, participants) && !registeredAssets[t.ticker] && !skippedAssets.has(t.ticker))
+        .map(t => t.ticker)
+    ));
+      
+    if (missing.length > 0) {
+      setImportActionToExecute('replace');
+      setShowUnregisteredModal(true);
+      return;
+    }
+
     setIsProcessing(true);
     setShowDiffModal(false);
     try {
@@ -445,26 +681,55 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
 
   const handleMergeImport = async () => {
     if (!parsedNote || !differences) return;
+
+    // Check if there are unregistered assets (tickers) that have neither been registered nor skipped
+    const missing = Array.from(new Set(
+      (parsedNote.trades || [])
+        .filter(t => t.ticker && !findParticipantByPartialMatch(t.ticker, t.assetName, participants) && !registeredAssets[t.ticker] && !skippedAssets.has(t.ticker))
+        .map(t => t.ticker)
+    ));
+      
+    if (missing.length > 0) {
+      setImportActionToExecute('merge');
+      setShowUnregisteredModal(true);
+      return;
+    }
+
     setIsProcessing(true);
     setShowDiffModal(false);
     try {
       const updatedParticipants = [...participants];
       
       const createParticipantIfMissing = async (ticker: string, assetName: string) => {
-        let p = updatedParticipants.find(p => p.ticker === ticker || p.name.toLowerCase() === assetName.toLowerCase());
-        if (!p) {
-          const isFII = assetName.toLowerCase().includes('fii') || ticker.endsWith('11');
-          const category = isFII ? 'FII' : 'Ação';
-          
-          const newP = await financeService.saveRegistryItem<Participant>('participants', {
+        // Usar a busca parcial por nome e ticker para encontrar o participante
+        let p = findParticipantByPartialMatch(ticker, assetName, updatedParticipants);
+        
+        if (!p && registeredAssets[ticker]) {
+          const reg = registeredAssets[ticker];
+          p = await financeService.saveRegistryItem<Participant>('participants', {
             id: '',
-            name: assetName,
+            name: reg.name,
             ticker: ticker,
-            category: category,
+            category: reg.category,
             currency: 'BRL'
           });
-          updatedParticipants.push(newP);
-          return newP;
+          updatedParticipants.push(p);
+        }
+        
+        if (!p) {
+          // Se pular, criamos um participante sem ticker nem categoria para que fique "sem cadastro"
+          let skeleton = updatedParticipants.find(p => p.name === assetName && !p.ticker);
+          if (!skeleton) {
+            skeleton = await financeService.saveRegistryItem<Participant>('participants', {
+              id: '',
+              name: assetName,
+              ticker: '',
+              category: '',
+              currency: 'BRL'
+            });
+            updatedParticipants.push(skeleton);
+          }
+          return skeleton;
         }
         return p;
       };
@@ -592,6 +857,56 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleSkipUnregistered = () => {
+    const missing = Array.from(new Set(
+      (parsedNote?.trades || [])
+        .filter(t => t.ticker && !findParticipantByPartialMatch(t.ticker, t.assetName, participants) && !registeredAssets[t.ticker])
+        .map(t => t.ticker)
+    )) || [];
+    
+    const newSkipped = new Set(skippedAssets);
+    missing.forEach(t => newSkipped.add(t));
+    setSkippedAssets(newSkipped);
+    setShowUnregisteredModal(false);
+    setIsRegisterMode(false);
+    
+    // Resume action
+    const action = importActionToExecute;
+    setImportActionToExecute(null);
+    
+    setTimeout(() => {
+      if (action === 'pure') {
+        executePureImport();
+      } else if (action === 'replace') {
+        handleReplaceImport();
+      } else if (action === 'merge') {
+        handleMergeImport();
+      }
+    }, 50);
+  };
+
+  const handleSaveAndImportUnregistered = () => {
+    // Fill registeredAssets with current quickFormInputs
+    const updatedRegistered = { ...registeredAssets, ...quickFormInputs };
+    setRegisteredAssets(updatedRegistered);
+    setShowUnregisteredModal(false);
+    setIsRegisterMode(false);
+    
+    // Resume action
+    const action = importActionToExecute;
+    setImportActionToExecute(null);
+    
+    setTimeout(() => {
+      if (action === 'pure') {
+        executePureImport();
+      } else if (action === 'replace') {
+        handleReplaceImport();
+      } else if (action === 'merge') {
+        handleMergeImport();
+      }
+    }, 50);
   };
 
   return (
@@ -794,13 +1109,17 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
               <div className="space-y-4">
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
                   <TrendingUp className="w-4 h-4 text-blue-600" />
-                  Operações Identificadas
+                  Revisão das Operações Identificadas
                 </h3>
+                <p className="text-xs text-slate-500 font-medium mb-3">
+                  Revise e corrija os tickers mapeados abaixo. Linhas destacadas em vermelho indicam tickers vazios ou não cadastrados nos Participantes.
+                </p>
                 <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Ticker</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Nome Sinacor (PDF)</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Ticker Mapeado</th>
                         <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Operação</th>
                         <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Qtd</th>
                         <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Preço</th>
@@ -808,23 +1127,73 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {(parsedNote.trades || []).map((trade, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-6 py-4 font-black text-slate-800">{trade.ticker}</td>
-                          <td className="px-6 py-4">
-                            <span className={`text-[10px] font-black px-2 py-1 rounded-lg border ${
-                              trade.type === 'BUY' 
-                                ? 'bg-amber-50 text-amber-600 border-amber-200' 
-                                : 'bg-blue-50 text-blue-600 border-blue-200'
-                            }`}>
-                              {trade.type === 'BUY' ? 'COMPRA' : 'VENDA'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-right font-bold text-slate-600">{trade.quantity}</td>
-                          <td className="px-6 py-4 text-right font-bold text-slate-600">R$ {(trade.price || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                          <td className="px-6 py-4 text-right font-black text-slate-800">R$ {(trade.total || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                        </tr>
-                      ))}
+                      {(parsedNote.trades || []).map((trade, idx) => {
+                        const isInvalid = !isTradeTickerValid(trade.ticker);
+                        return (
+                          <tr 
+                            key={idx} 
+                            className={isInvalid 
+                              ? "bg-rose-50/70 hover:bg-rose-100/70 border-l-4 border-rose-500 transition-colors" 
+                              : "hover:bg-slate-50 transition-colors"
+                            }
+                          >
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col">
+                                <span className="font-bold text-slate-800 text-xs sm:text-sm">{trade.assetName}</span>
+                                <span className="text-[10px] text-slate-400 font-mono">Original: {trade.ticker || "N/A"}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col gap-1.5 min-w-[210px]">
+                                <div className="flex gap-2 items-center">
+                                  <input
+                                    type="text"
+                                    value={trade.ticker}
+                                    onChange={(e) => handleUpdateTradeTicker(idx, e.target.value)}
+                                    className={`w-24 bg-white border rounded-lg px-2 py-1 text-xs font-black uppercase text-center outline-none focus:ring-2 focus:ring-blue-500 shadow-sm ${
+                                      isInvalid ? 'border-rose-400 focus:ring-rose-500 animate-pulse' : 'border-slate-300'
+                                    }`}
+                                    placeholder="TICKER"
+                                  />
+                                  <select
+                                    value={registeredTickers.includes(trade.ticker) ? trade.ticker : ""}
+                                    onChange={(e) => {
+                                      if (e.target.value) {
+                                        handleUpdateTradeTicker(idx, e.target.value);
+                                      }
+                                    }}
+                                    className={`text-xs bg-slate-50 border rounded-lg px-2 py-1 outline-none text-slate-600 font-medium ${
+                                      isInvalid ? 'border-rose-300 focus:ring-rose-500' : 'border-slate-300'
+                                    }`}
+                                  >
+                                    <option value="">Vincular...</option>
+                                    {registeredTickers.map(ticker => (
+                                      <option key={ticker} value={ticker}>{ticker}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                {isInvalid && (
+                                  <span className="text-[10px] text-rose-600 font-black block leading-none select-none">
+                                    ⚠️ Ticker em branco ou não cadastrado
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`text-[10px] font-black px-2 py-1 rounded-lg border ${
+                                trade.type === 'BUY' 
+                                  ? 'bg-amber-50 text-amber-600 border-amber-200' 
+                                  : 'bg-blue-50 text-blue-600 border-blue-200'
+                              }`}>
+                                {trade.type === 'BUY' ? 'COMPRA' : 'VENDA'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right font-bold text-slate-600">{trade.quantity}</td>
+                            <td className="px-6 py-4 text-right font-bold text-slate-600">R$ {(trade.price || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                            <td className="px-6 py-4 text-right font-black text-slate-800">R$ {(trade.total || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                          </tr>
+                        );
+                      })}
                       {(parsedNote.costs?.total || 0) > 0 && (
                          <tr className="bg-slate-50/50">
                            <td colSpan={4} className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Taxas / Emolumentos / IRRF</td>
@@ -923,6 +1292,18 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
             </motion.div>
           )}
 
+          {hasInvalidTickers && (
+            <div className="mt-6 bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start gap-3 text-amber-800 animate-pulse">
+              <AlertCircle className="w-5 h-5 flex-shrink-0 text-amber-600 mt-0.5" />
+              <div>
+                <p className="text-sm font-black">Atenção: Tickers Pendentes de Correção</p>
+                <p className="text-xs text-slate-600 mt-1">
+                  Existem linhas com tickers vazios ou não cadastrados no sistema (destacadas em vermelho). Por favor, digite o ticker correto ou selecione um ativo válido na caixa de seleção para poder efetivar.
+                </p>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mt-6 bg-rose-50 border border-rose-100 p-4 rounded-2xl flex items-center gap-3 text-rose-600 animate-shake">
               <AlertCircle className="w-5 h-5 flex-shrink-0" />
@@ -949,7 +1330,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
               </button>
               <button 
                 onClick={handleConfirmImport}
-                disabled={isProcessing || isDuplicate || isCheckingDuplicate}
+                disabled={isProcessing || isDuplicate || isCheckingDuplicate || hasInvalidTickers}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-sm transition-all shadow-lg shadow-emerald-200 disabled:opacity-50 flex items-center gap-2"
               >
                 {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Save className="w-4 h-4" /> Efetivar Lançamentos</>}
@@ -1094,6 +1475,151 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                   Substituir Tudo
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmação de ativos não cadastrados */}
+      {showUnregisteredModal && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl border border-blue-200 w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh] animate-slide-up">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-100 rounded-xl text-amber-600">
+                  <AlertCircle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-800 tracking-tight">Ativos não Encontrados</h3>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Cadastro Pendente</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowUnregisteredModal(false);
+                  setIsRegisterMode(false);
+                  setImportActionToExecute(null);
+                }}
+                className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {!isRegisterMode ? (
+                // Modo Alerta Inicial
+                <div className="space-y-6">
+                  <p className="text-sm font-semibold text-slate-700 leading-relaxed">
+                    Os seguintes ativos não foram encontrados no cadastro: {modalMissingTickers.join(', ')}. Deseja cadastrá-los agora antes de importar?
+                  </p>
+                  
+                  <div className="flex flex-wrap gap-2 py-2">
+                    {modalMissingTickers.map(ticker => (
+                      <span key={ticker} className="px-4 py-2 bg-slate-100 border border-slate-200 rounded-xl text-sm font-black text-slate-800">
+                        {ticker}
+                      </span>
+                    ))}
+                  </div>
+
+                  <p className="text-xs font-bold text-slate-400">
+                    Dica: Se pular, a importação continua, mas esses ativos ficarão "sem cadastro" e não aparecerão na tela de Performance por Ativo.
+                  </p>
+                </div>
+              ) : (
+                // Modo Formulário Inline de Cadastro rápido
+                <div className="space-y-4">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    Preencha as informações para o cadastro rápido:
+                  </p>
+                  <div className="space-y-4 max-h-[45vh] overflow-y-auto pr-1">
+                    {modalMissingTickers.map(ticker => {
+                      const input = quickFormInputs[ticker] || { name: ticker, category: 'Ação' };
+                      return (
+                        <div key={ticker} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                          <div className="flex items-center justify-between border-b border-slate-200/50 pb-2">
+                            <span className="text-sm font-black text-blue-600">{ticker}</span>
+                            <span className="text-[10px] uppercase font-bold text-slate-400">Novo Participante</span>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            <div>
+                              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1">Nome do Ativo</label>
+                              <input 
+                                type="text"
+                                value={input.name}
+                                onChange={(e) => {
+                                  setQuickFormInputs(prev => ({
+                                    ...prev,
+                                    [ticker]: { ...prev[ticker], name: e.target.value }
+                                  }));
+                                }}
+                                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-2 focus:ring-blue-500 outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1">Categoria</label>
+                              <select 
+                                value={input.category}
+                                onChange={(e) => {
+                                  setQuickFormInputs(prev => ({
+                                    ...prev,
+                                    [ticker]: { ...prev[ticker], category: e.target.value }
+                                  }));
+                                }}
+                                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-2 focus:ring-blue-500 outline-none"
+                              >
+                                <option value="Ação">Ações (Stocks)</option>
+                                <option value="FII">Fundos Imobiliários (FII)</option>
+                                <option value="ETF">ETFs</option>
+                                <option value="Cripto">Criptomoedas</option>
+                                <option value="Renda Fixa">Renda Fixa</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+              {!isRegisterMode ? (
+                <>
+                  <button
+                    onClick={handleSkipUnregistered}
+                    className="px-6 py-2 rounded-xl text-sm font-black text-slate-400 hover:text-slate-600 hover:bg-slate-200 transition-colors"
+                  >
+                    Pular
+                  </button>
+                  <button
+                    onClick={() => setIsRegisterMode(true)}
+                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl text-sm transition-all shadow-md shadow-blue-200"
+                  >
+                    Ir ao Cadastro
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setIsRegisterMode(false)}
+                    className="px-6 py-2 rounded-xl text-sm font-black text-slate-400 hover:text-slate-600 hover:bg-slate-200 transition-colors"
+                  >
+                    Voltar
+                  </button>
+                  <button
+                    onClick={handleSaveAndImportUnregistered}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-sm transition-all shadow-md shadow-emerald-200"
+                  >
+                    Confirmar e Importar
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

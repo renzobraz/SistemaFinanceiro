@@ -2098,6 +2098,8 @@ const App: FC = () => {
           categories={registries.categories}
           participants={registries.participants}
           costCenters={registries.costCenters}
+          preSelectedBankId={activeTab === 'investments' ? performanceBankId : selectedBankId}
+          preSelectedWalletId={activeTab === 'investments' ? performanceWalletId : selectedWalletId}
         />
       )}
 

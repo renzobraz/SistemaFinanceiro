@@ -2122,6 +2122,7 @@ export const financeService = {
             category: d.category,
             sector: d.sector,
             ticker: d.ticker,
+            sinacorName: d.sinacor_name,
             currency: d.currency || 'BRL',
             currentPrice: d.current_price,
             targetPrice: d.target_price !== undefined ? d.target_price : virtualTargetPrices[d.id],
@@ -2263,6 +2264,7 @@ export const financeService = {
             payload.category = (item as any).category || null;
             payload.sector = (item as any).sector || null;
             payload.ticker = (item as any).ticker || null;
+            payload.sinacor_name = (item as any).sinacorName || null;
             payload.currency = (item as any).currency || 'BRL';
             payload.current_price = (item as any).currentPrice || null;
             payload.target_price = (item as any).targetPrice || null;
