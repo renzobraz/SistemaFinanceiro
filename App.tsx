@@ -48,6 +48,7 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
+import { ManagedPortfolios } from './components/ManagedPortfolios';
 
 // Implementação segura e à prova de sandbox do window.localStorage para o ambiente de IFrames do AI Studio
 const safeStorage = (() => {
@@ -359,6 +360,22 @@ const App: FC = () => {
   const excelExportFn = useRef<(() => void) | null>(null);
   const pdfExportFn = useRef<(() => void) | null>(null);
   const manualAdjustFn = useRef<(() => void) | null>(null);
+  const managedPortfoliosRef = useRef<{ id: string; name: string; color: string; active: boolean }[]>([]);
+
+  // Load managed portfolios
+  useEffect(() => {
+    const loadManagedPortfolios = async () => {
+      const supabase = financeService.getSupabase();
+      if (!supabase || !financeService.activeOrganizationId) return;
+      const { data } = await supabase
+        .from('managed_portfolios')
+        .select('id, name, color, active')
+        .eq('organization_id', financeService.activeOrganizationId)
+        .eq('active', true);
+      if (data) managedPortfoliosRef.current = data;
+    };
+    loadManagedPortfolios();
+  }, [financeService.activeOrganizationId]);
   const accrualHistoryFn = useRef<(() => void) | null>(null);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -1010,6 +1027,7 @@ const App: FC = () => {
     { id: 'participants', label: 'Participantes', icon: Users },
     { id: 'assetTypes', label: 'Tipos de Ativos', icon: PieChart },
     { id: 'assetSectors', label: 'Setores', icon: LayoutGrid },
+    { id: 'managed_portfolios', label: 'Cart. Gerenciadas', icon: Scaling },
   ];
 
   if (showCreatePassword) {
@@ -1420,7 +1438,7 @@ const App: FC = () => {
       />
       
       <main className="flex-1 flex flex-col overflow-hidden relative">
-        <header className="py-2.5 bg-white border-b border-gray-200 flex flex-wrap items-center justify-between px-6 flex-shrink-0 z-10 gap-3 shadow-sm">
+        <header className="py-2 bg-white border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0 z-10 gap-2 shadow-sm">
           <div className="flex items-center gap-4">
               {/* Botão Hambúrguer Mobile/Tablet */}
               <button 
@@ -1670,7 +1688,7 @@ const App: FC = () => {
 
             {!['registries', 'settings', 'manual'].includes(activeTab) && (
               <div className="flex gap-1.5 sm:gap-2">
-                {(activeTab === 'investments' || activeTab === 'bank-transactions' || activeTab === 'brokerage-notes') && (activeTab !== 'brokerage-notes' || canImportBrokerage) && (
+                {(activeTab === 'bank-transactions' || activeTab === 'brokerage-notes') && (activeTab !== 'brokerage-notes' || canImportBrokerage) && (
                   <button 
                     onClick={() => setIsImportOpen(true)} 
                     className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors h-[38px] shadow-sm"
@@ -1678,7 +1696,7 @@ const App: FC = () => {
                     <FileUp className="w-4 h-4 text-blue-600" /> <span className="hidden sm:inline">Incluir nota</span>
                   </button>
                 )}
-                {canCreateTransaction && (
+                {canCreateTransaction && activeTab !== 'investments' && (
                   <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
                       <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Lançar</span>
                   </button>
@@ -1886,6 +1904,7 @@ const App: FC = () => {
                   onExportPDF={(fn) => { pdfExportFn.current = fn; }}
                   userModulePermissions={userModulePermissions}
                   userRole={userRole}
+                  managedPortfolios={managedPortfoliosRef.current}
                 />
               </div>
             </div>
@@ -1968,6 +1987,15 @@ const App: FC = () => {
                   </div>
 
                   <div className="flex-1 min-h-0">
+                    {activeRegistryTab === 'managed_portfolios' ? (
+                      <div className="p-4 h-full overflow-auto">
+                        <ManagedPortfolios
+                          wallets={registries.wallets}
+                          organizationId={financeService.activeOrganizationId || ''}
+                          userRole={userRole}
+                        />
+                      </div>
+                    ) : (
                     <RegistryManager 
                         title={registryTabs.find(t => t.id === activeRegistryTab)?.label || ''} 
                         items={registries[activeRegistryTab as keyof typeof registries]} 
@@ -2045,6 +2073,7 @@ const App: FC = () => {
                         assetTypes={registries.assetTypes}
                         assetSectors={registries.assetSectors}
                     />
+                    )}
                   </div>
                 </div>
             </div>
@@ -2100,6 +2129,7 @@ const App: FC = () => {
           costCenters={registries.costCenters}
           preSelectedBankId={activeTab === 'investments' ? performanceBankId : selectedBankId}
           preSelectedWalletId={activeTab === 'investments' ? performanceWalletId : selectedWalletId}
+          managedPortfolios={managedPortfoliosRef.current}
         />
       )}
 

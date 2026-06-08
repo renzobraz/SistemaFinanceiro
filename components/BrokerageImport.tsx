@@ -41,6 +41,7 @@ interface BrokerageImportProps {
   costCenters: CostCenter[];
   preSelectedBankId?: string;
   preSelectedWalletId?: string;
+  managedPortfolios?: { id: string; name: string; color: string; active: boolean }[];
 }
 
 const findParticipantByPartialMatch = (ticker: string, assetName: string, list: Participant[]) => {
@@ -124,12 +125,14 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   participants,
   costCenters,
   preSelectedBankId,
-  preSelectedWalletId
+  preSelectedWalletId,
+  managedPortfolios = []
 }) => {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingApi, setProcessingApi] = useState<'gemini' | 'claude' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [parsedNote, setParsedNote] = useState<BrokerageNote | null>(null);
   const [isDuplicate, setIsDuplicate] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
@@ -167,6 +170,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   const [tradeDate, setTradeDate] = useState('');
   const [settlementDate, setSettlementDate] = useState('');
   const [noteNumber, setNoteNumber] = useState('');
+  const [selectedManagedPortfolioId, setSelectedManagedPortfolioId] = useState('');
 
   // Helpers for interactive ticker review
   const registeredTickers = useMemo(() => {
@@ -196,6 +200,94 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     setParsedNote({
       ...parsedNote,
       trades: updatedTrades
+    });
+  };
+
+  const handleUpdateTradeQuantity = (index: number, newQtyStr: string) => {
+    if (!parsedNote) return;
+    const cleanQtyStr = newQtyStr.replace(',', '.');
+    const newQty = parseFloat(cleanQtyStr) || 0;
+    const updatedTrades = [...(parsedNote.trades || [])];
+    const currentPrice = updatedTrades[index].price || 0;
+    updatedTrades[index] = {
+      ...updatedTrades[index],
+      quantity: newQty,
+      total: Number((newQty * currentPrice).toFixed(2))
+    };
+    setParsedNote({
+      ...parsedNote,
+      trades: updatedTrades
+    });
+  };
+
+  const handleUpdateTradePrice = (index: number, newPriceStr: string) => {
+    if (!parsedNote) return;
+    const cleanPriceStr = newPriceStr.replace(',', '.');
+    const newPrice = parseFloat(cleanPriceStr) || 0;
+    const updatedTrades = [...(parsedNote.trades || [])];
+    const currentQty = updatedTrades[index].quantity || 0;
+    updatedTrades[index] = {
+      ...updatedTrades[index],
+      price: newPrice,
+      total: Number((currentQty * newPrice).toFixed(2))
+    };
+    setParsedNote({
+      ...parsedNote,
+      trades: updatedTrades
+    });
+  };
+
+  const handleUpdateTradeTotal = (index: number, newTotalStr: string) => {
+    if (!parsedNote) return;
+    const cleanTotalStr = newTotalStr.replace(',', '.');
+    const newTotal = parseFloat(cleanTotalStr) || 0;
+    const updatedTrades = [...(parsedNote.trades || [])];
+    const currentQty = updatedTrades[index].quantity || 0;
+    const calculatedPrice = currentQty > 0 ? Number((newTotal / currentQty).toFixed(4)) : 0;
+    updatedTrades[index] = {
+      ...updatedTrades[index],
+      total: newTotal,
+      price: calculatedPrice
+    };
+    setParsedNote({
+      ...parsedNote,
+      trades: updatedTrades
+    });
+  };
+
+  const handleUpdateCosts = (newCostsStr: string) => {
+    if (!parsedNote) return;
+    const cleanCostsStr = newCostsStr.replace(',', '.');
+    const newCosts = parseFloat(cleanCostsStr) || 0;
+    setParsedNote({
+      ...parsedNote,
+      costs: {
+        ...(parsedNote.costs || { details: "" }),
+        total: newCosts
+      }
+    });
+  };
+
+  const handleUpdateLiquidValue = (newValueStr: string) => {
+    if (!parsedNote) return;
+    const cleanVal = parseFloat(newValueStr.replace(',', '.')) || 0;
+    setParsedNote({
+      ...parsedNote,
+      metadata: {
+        ...(parsedNote.metadata || { isCredit: false, date: "", settlementDate: "", noteNumber: "", expectedTradesCount: 0 }),
+        liquidValue: cleanVal
+      }
+    });
+  };
+
+  const handleUpdateIsCredit = (newIsCredit: boolean) => {
+    if (!parsedNote) return;
+    setParsedNote({
+      ...parsedNote,
+      metadata: {
+        ...(parsedNote.metadata || { liquidValue: 0, date: "", settlementDate: "", noteNumber: "", expectedTradesCount: 0 }),
+        isCredit: newIsCredit
+      }
     });
   };
 
@@ -432,6 +524,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     if (selectedFile) {
       setFile(selectedFile);
       setError(null);
+      setWarning(null);
     }
   };
 
@@ -440,6 +533,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
 
     setIsProcessing(true);
     setError(null);
+    setWarning(null);
 
     try {
       // Convert to base64
@@ -461,11 +555,8 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       const expected = result.metadata?.expectedTradesCount;
       const identified = result.trades?.length || 0;
       if (expected !== undefined && expected !== null && expected > 0 && expected !== identified) {
-        setParsedNote(null);
-        setError(`Atenção: a nota possui ${expected} negócios mas apenas ${identified} foram identificados. A importação foi cancelada para evitar dados incorretos. Tente importar novamente ou entre em contato com o suporte.`);
-        setIsProcessing(false);
-        setProcessingApi(null);
-        return;
+        setWarning(`Atenção: A nota indica ${expected} negócios consolidados por ativo/operação, mas interpretamos ${identified} negócios distintos.
+💡 Isso costuma acontecer porque a nossa IA consolida compras ou vendas sucessivas de um mesmo ativo no mesmo dia em uma única linha para cálculo correto e automático do preço médio ponderado, o que reduz o número físico de registros. Por favor, revise as transações listadas abaixo e faça quaisquer ajustes antes de confirmar.`);
       }
 
       if (result.trades && result.trades.length > 0) {
@@ -575,7 +666,8 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
         categoryId: investmentCategoryId,
         participantId: participant.id,
         costCenterId: selectedCostCenterId,
-        walletId: selectedWalletId
+        walletId: selectedWalletId,
+        managedPortfolioId: selectedManagedPortfolioId || undefined
       };
       
       await financeService.saveTransaction(transaction);
@@ -910,14 +1002,14 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
       <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        initial={{ opacity: 0, scale: 0.98, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200"
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-[96vw] xl:max-w-7xl max-h-[96vh] flex flex-col overflow-hidden border border-slate-200"
       >
         {/* Header */}
-        <div className="px-8 py-6 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-200">
               <FileUp className="w-6 h-6 text-white" />
@@ -935,7 +1027,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-8">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-6">
           {!parsedNote ? (
             <div className="flex flex-col items-center justify-center py-12">
               <div className="w-full max-w-md border-2 border-dashed border-slate-200 rounded-3xl p-12 text-center hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer group relative">
@@ -1010,9 +1102,24 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                 </div>
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
                   <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">Líquido da Nota</p>
-                  <p className={`text-lg font-black ${(parsedNote.metadata?.liquidValue || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(parsedNote.metadata?.liquidValue || 0)}
-                  </p>
+                  <div className="flex items-center gap-1 mt-1">
+                    <span className="text-[10px] font-bold text-slate-400">R$</span>
+                    <input
+                      type="number"
+                      step="any"
+                      value={parsedNote.metadata?.liquidValue || 0}
+                      onChange={(e) => handleUpdateLiquidValue(e.target.value)}
+                      className={`w-28 bg-white border border-slate-300 rounded-lg px-2 py-0.5 text-xs font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm ${(parsedNote.metadata?.liquidValue || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}
+                    />
+                    <select
+                      value={parsedNote.metadata?.isCredit ? "C" : "D"}
+                      onChange={(e) => handleUpdateIsCredit(e.target.value === "C")}
+                      className="text-xs bg-white border border-slate-300 rounded-lg px-1 py-0.5 outline-none font-bold text-slate-600"
+                    >
+                      <option value="D">D</option>
+                      <option value="C">C</option>
+                    </select>
+                  </div>
                 </div>
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
                   <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">Liquidação</p>
@@ -1076,6 +1183,20 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                 </div>
               )}
 
+              {warning && (
+                <div className="bg-amber-50/50 border border-amber-200 p-5 rounded-3xl text-amber-900 space-y-2">
+                  <div className="flex items-start gap-3">
+                    <Info className="w-5 h-5 flex-shrink-0 mt-0.5 text-amber-600" />
+                    <div>
+                      <p className="text-sm font-black">Aviso de Conciliação de Operações</p>
+                      <p className="text-xs font-medium leading-relaxed mt-1 text-slate-700 whitespace-pre-line">
+                        {warning}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Card de Totais na Área Transitória */}
               {auditResult && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1115,93 +1236,140 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                   Revise e corrija os tickers mapeados abaixo. Linhas destacadas em vermelho indicam tickers vazios ou não cadastrados nos Participantes.
                 </p>
                 <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Nome Sinacor (PDF)</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Ticker Mapeado</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Operação</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Qtd</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Preço</th>
-                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {(parsedNote.trades || []).map((trade, idx) => {
-                        const isInvalid = !isTradeTickerValid(trade.ticker);
-                        return (
-                          <tr 
-                            key={idx} 
-                            className={isInvalid 
-                              ? "bg-rose-50/70 hover:bg-rose-100/70 border-l-4 border-rose-500 transition-colors" 
-                              : "hover:bg-slate-50 transition-colors"
-                            }
-                          >
-                            <td className="px-6 py-4">
-                              <div className="flex flex-col">
-                                <span className="font-bold text-slate-800 text-xs sm:text-sm">{trade.assetName}</span>
-                                <span className="text-[10px] text-slate-400 font-mono">Original: {trade.ticker || "N/A"}</span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex flex-col gap-1.5 min-w-[210px]">
-                                <div className="flex gap-2 items-center">
-                                  <input
-                                    type="text"
-                                    value={trade.ticker}
-                                    onChange={(e) => handleUpdateTradeTicker(idx, e.target.value)}
-                                    className={`w-24 bg-white border rounded-lg px-2 py-1 text-xs font-black uppercase text-center outline-none focus:ring-2 focus:ring-blue-500 shadow-sm ${
-                                      isInvalid ? 'border-rose-400 focus:ring-rose-500 animate-pulse' : 'border-slate-300'
-                                    }`}
-                                    placeholder="TICKER"
-                                  />
-                                  <select
-                                    value={registeredTickers.includes(trade.ticker) ? trade.ticker : ""}
-                                    onChange={(e) => {
-                                      if (e.target.value) {
-                                        handleUpdateTradeTicker(idx, e.target.value);
-                                      }
-                                    }}
-                                    className={`text-xs bg-slate-50 border rounded-lg px-2 py-1 outline-none text-slate-600 font-medium ${
-                                      isInvalid ? 'border-rose-300 focus:ring-rose-500' : 'border-slate-300'
-                                    }`}
-                                  >
-                                    <option value="">Vincular...</option>
-                                    {registeredTickers.map(ticker => (
-                                      <option key={ticker} value={ticker}>{ticker}</option>
-                                    ))}
-                                  </select>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[850px]">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Nome Sinacor (PDF)</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Ticker Mapeado</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Operação</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Qtd</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Preço</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(parsedNote.trades || []).map((trade, idx) => {
+                          const isInvalid = !isTradeTickerValid(trade.ticker);
+                          return (
+                            <tr 
+                              key={idx} 
+                              className={isInvalid 
+                                ? "bg-rose-50/70 hover:bg-rose-100/70 border-l-4 border-rose-500 transition-colors" 
+                                : "hover:bg-slate-50 transition-colors"
+                              }
+                            >
+                              <td className="px-6 py-4">
+                                <div className="flex flex-col">
+                                  <span className="font-bold text-slate-800 text-xs sm:text-sm">{trade.assetName}</span>
+                                  <span className="text-[10px] text-slate-400 font-mono">Original: {trade.ticker || "N/A"}</span>
                                 </div>
-                                {isInvalid && (
-                                  <span className="text-[10px] text-rose-600 font-black block leading-none select-none">
-                                    ⚠️ Ticker em branco ou não cadastrado
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className={`text-[10px] font-black px-2 py-1 rounded-lg border ${
-                                trade.type === 'BUY' 
-                                  ? 'bg-amber-50 text-amber-600 border-amber-200' 
-                                  : 'bg-blue-50 text-blue-600 border-blue-200'
-                              }`}>
-                                {trade.type === 'BUY' ? 'COMPRA' : 'VENDA'}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-right font-bold text-slate-600">{trade.quantity}</td>
-                            <td className="px-6 py-4 text-right font-bold text-slate-600">R$ {(trade.price || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                            <td className="px-6 py-4 text-right font-black text-slate-800">R$ {(trade.total || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                          </tr>
-                        );
-                      })}
-                      {(parsedNote.costs?.total || 0) > 0 && (
-                         <tr className="bg-slate-50/50">
-                           <td colSpan={4} className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Taxas / Emolumentos / IRRF</td>
-                           <td className="px-6 py-4 text-right font-black text-rose-600">R$ {parsedNote.costs.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                         </tr>
-                      )}
-                    </tbody>
-                  </table>
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="flex flex-col gap-1.5 min-w-[210px]">
+                                  <div className="flex gap-2 items-center">
+                                    <input
+                                      type="text"
+                                      value={trade.ticker}
+                                      onChange={(e) => handleUpdateTradeTicker(idx, e.target.value)}
+                                      className={`w-24 bg-white border rounded-lg px-2 py-1 text-xs font-black uppercase text-center outline-none focus:ring-2 focus:ring-blue-500 shadow-sm ${
+                                        isInvalid ? 'border-rose-400 focus:ring-rose-500 animate-pulse' : 'border-slate-300'
+                                      }`}
+                                      placeholder="TICKER"
+                                    />
+                                    <select
+                                      value={registeredTickers.includes(trade.ticker) ? trade.ticker : ""}
+                                      onChange={(e) => {
+                                        if (e.target.value) {
+                                          handleUpdateTradeTicker(idx, e.target.value);
+                                        }
+                                      }}
+                                      className={`text-xs bg-slate-50 border rounded-lg px-2 py-1 outline-none text-slate-600 font-medium ${
+                                        isInvalid ? 'border-rose-300 focus:ring-rose-500' : 'border-slate-300'
+                                      }`}
+                                    >
+                                      <option value="">Vincular...</option>
+                                      {registeredTickers.map(ticker => (
+                                        <option key={ticker} value={ticker}>{ticker}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  {isInvalid && (
+                                    <span className="text-[10px] text-rose-600 font-black block leading-none select-none">
+                                      ⚠️ Ticker em branco ou não cadastrado
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className={`text-[10px] font-black px-2 py-1 rounded-lg border ${
+                                  trade.type === 'BUY' 
+                                    ? 'bg-amber-50 text-amber-600 border-amber-200' 
+                                    : 'bg-blue-50 text-blue-600 border-blue-200'
+                                }}`}>
+                                  {trade.type === 'BUY' ? 'COMPRA' : 'VENDA'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <input
+                                  type="number"
+                                  val-type="quantity"
+                                  value={trade.quantity}
+                                  onChange={(e) => handleUpdateTradeQuantity(idx, e.target.value)}
+                                  className="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:ring-1 focus:ring-blue-500 shadow-sm"
+                                  placeholder="Qtd"
+                                />
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="inline-flex items-center gap-1">
+                                  <span className="text-[10px] text-slate-400">R$</span>
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    val-type="price"
+                                    value={trade.price}
+                                    onChange={(e) => handleUpdateTradePrice(idx, e.target.value)}
+                                    className="w-24 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:ring-1 focus:ring-blue-500 shadow-sm"
+                                    placeholder="Preço"
+                                  />
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="inline-flex items-center gap-1">
+                                  <span className="text-[10px] text-slate-400">R$</span>
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    val-type="total"
+                                    value={trade.total}
+                                    onChange={(e) => handleUpdateTradeTotal(idx, e.target.value)}
+                                    className="w-24 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:ring-1 focus:ring-blue-500 shadow-sm text-slate-800"
+                                    placeholder="Total"
+                                  />
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        <tr className="bg-slate-50/50">
+                          <td colSpan={5} className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Taxas / Emolumentos / IRRF</td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="inline-flex items-center gap-1">
+                              <span className="text-[10px] text-rose-400">R$</span>
+                              <input
+                                type="number"
+                                step="any"
+                                value={parsedNote.costs?.total || 0}
+                                onChange={(e) => handleUpdateCosts(e.target.value)}
+                                className="w-24 bg-white border border-rose-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:ring-1 focus:ring-blue-500 shadow-sm text-rose-600"
+                                placeholder="Taxas"
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
 
@@ -1288,6 +1456,38 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                     </select>
                   </div>
                 </div>
+
+                {/* Carteira Gerenciada */}
+                {managedPortfolios.filter(p => p.active).length > 0 && (
+                  <div className="mt-3">
+                    <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1">
+                      Atribuir à Carteira Gerenciada <span className="text-blue-400 font-normal normal-case">(opcional)</span>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => setSelectedManagedPortfolioId('')}
+                        type="button"
+                        className={`px-3 py-1.5 rounded-full text-[11px] font-bold transition-all border-2 ${!selectedManagedPortfolioId ? 'border-slate-700 bg-slate-100 text-slate-700' : 'border-transparent bg-slate-100 text-slate-500'}`}
+                      >
+                        Nenhuma (manual)
+                      </button>
+                      {managedPortfolios.filter(p => p.active).map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => setSelectedManagedPortfolioId(p.id === selectedManagedPortfolioId ? '' : p.id)}
+                          type="button"
+                          className={`px-3 py-1.5 rounded-full text-[11px] font-bold transition-all border-2 ${selectedManagedPortfolioId === p.id ? 'border-slate-700 scale-105' : 'border-transparent'}`}
+                          style={{
+                            background: p.color === 'blue' ? '#E6F1FB' : p.color === 'green' ? '#EAF3DE' : p.color === 'amber' ? '#FAEEDA' : p.color === 'purple' ? '#EEEDFE' : p.color === 'teal' ? '#E1F5EE' : '#FBEAF0',
+                            color: p.color === 'blue' ? '#0C447C' : p.color === 'green' ? '#27500A' : p.color === 'amber' ? '#633806' : p.color === 'purple' ? '#26215C' : p.color === 'teal' ? '#04342C' : '#4B1528',
+                          }}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -1313,7 +1513,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-8 py-6 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
           <button 
             onClick={onClose}
             className="px-6 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-200 transition-colors"

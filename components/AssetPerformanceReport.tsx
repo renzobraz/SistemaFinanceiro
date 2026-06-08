@@ -31,7 +31,9 @@ import {
   LayoutGrid,
   Calculator,
   History as HistoryIcon,
-  Trash2
+  Trash2,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -78,6 +80,7 @@ interface AssetPerformanceReportProps {
   onExportPDF?: (fn: () => void) => void;
   userModulePermissions?: Record<string, any>;
   userRole?: string;
+  managedPortfolios?: { id: string; name: string; color: string; active: boolean }[];
 }
 
 interface AssetPerformance {
@@ -110,6 +113,7 @@ interface AssetPerformance {
   totalInvestedBRL: number;
   transactions: Transaction[];
   isWatchlist?: boolean;
+  managedPortfolioIds?: string[];
 }
 
 export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({ 
@@ -126,7 +130,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   onExportExcel,
   onExportPDF,
   userModulePermissions = {},
-  userRole = ""
+  userRole = "",
+  managedPortfolios = []
 }) => {
   const hasExportPermission = useMemo(() => {
     return (
@@ -164,6 +169,11 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   const [chartView, setChartView] = useState<'TYPE' | 'SECTOR' | 'ASSET' | 'INSTITUTION'>('TYPE');
   const [equityTimeRange, setEquityTimeRange] = useState<'12M' | '24M' | '5Y' | 'ALL'>('12M');
   const [equityTypeFilter, setEquityTypeFilter] = useState<string>('ALL');
+  const [showCharts, setShowCharts] = useState<boolean>(() => {
+    try { return localStorage.getItem('fincontrol_showCharts') !== 'false'; } catch { return true; }
+  });
+  const [selectedManagedPortfolioFilter, setSelectedManagedPortfolioFilter] = useState<string>('ALL');
+  const [groupByGestao, setGroupByGestao] = useState(false);
   
   const [chartTicker, setChartTicker] = useState<string | null>(null);
   const [chartHistory, setChartHistory] = useState<{date: string, close: number}[]>([]);
@@ -439,12 +449,18 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           averagePrice: 0,
           averagePriceBRL: 0,
           targetPrice: participant?.targetPrice,
-          transactions: []
+          transactions: [],
+          managedPortfolioIds: []
         });
       }
 
       const asset = assetMap.get(t.participantId)!;
       asset.transactions.push(t);
+
+      // Registrar managed portfolio desta transação
+      if (t.managedPortfolioId && !asset.managedPortfolioIds?.includes(t.managedPortfolioId)) {
+        asset.managedPortfolioIds = [...(asset.managedPortfolioIds || []), t.managedPortfolioId];
+      }
 
       const participant = registries.participants.find(p => String(p.id).trim() === String(t.participantId).trim());
       // Regra: Tipo ou Ticker preenchido = Investimento
@@ -545,6 +561,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           asset.totalInvested -= (qtyToUse * currentAvg);
           asset.totalInvestedBRL -= (qtyToUse * currentAvgBRL);
           asset.currentQuantity -= qtyToUse;
+          asset.totalSold += valueInAsset;
           
           if (asset.currentQuantity <= 0) {
             asset.currentQuantity = 0;
@@ -554,16 +571,30 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             asset.averagePriceBRL = 0;
           }
         } else if (isInvestmentParticipant && !t.quantity) {
-          // Se for crédito sem quantidade, apenas reduzimos o custo investido (amortização/ajuste) sem mexer na quantidade 
-          // a menos que seja um provento (já tratado acima). Isso evita que o ativo "suma" por ter quantidade zero.
+          // CREDIT sem quantidade em ativo de investimento = ajuste de caixa ou amortização
+          const participantForCredit = registries.participants.find(p => String(p.id).trim() === String(t.participantId).trim());
+          const hasRealTicker = !!(participantForCredit?.ticker && participantForCredit.ticker.trim().length > 0);
+
+          if (hasRealTicker) {
+            // Ações/FIIs com ticker real: CREDIT sem qty é puro ajuste de caixa.
+            // Ignorar completamente — não afeta totalInvested, totalBoughtValue, totalSold nem preço médio.
+            return;
+          }
+
+          // Renda Fixa / Manuais sem ticker: CREDIT sem qty = resgate parcial
+          // totalBoughtValue permanece intacto (valor bruto aplicado historicamente)
+          // totalSold acumula os resgates — rawMarketValue = totalBoughtValue - totalSold
           asset.totalInvested -= valueInAsset;
           asset.totalInvestedBRL -= valueInBRL;
-          
+          asset.totalSold += valueInAsset;
+
           // Recalcula preço médio
           asset.averagePrice = asset.currentQuantity > 0 ? asset.totalInvested / asset.currentQuantity : 0;
           asset.averagePriceBRL = asset.currentQuantity > 0 ? asset.totalInvestedBRL / asset.currentQuantity : 0;
+        } else {
+          // CREDIT genérico sem qty e sem ser investmentParticipant — registrar como saída
+          asset.totalSold += valueInAsset;
         }
-        asset.totalSold += valueInAsset;
       }
     });
 
@@ -589,7 +620,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           asset.lastPrice = marketData.current || 0;
           asset.targetPrice = manualTarget || marketData.target || undefined;
           asset.marketValue = (asset.currentQuantity * (asset.lastPrice || 0)) + totalAccruals;
-          asset.profit = (asset.marketValue + asset.totalSold) - asset.totalBoughtValue;
+          asset.profit = asset.marketValue - asset.totalInvested;
           asset.variation = asset.averagePrice > 0 ? ((asset.lastPrice || 0) / asset.averagePrice - 1) * 100 : 0;
           
           // Rentabilidade: (Total Atual + Vendas) / Total Comprado (histórico)
@@ -607,7 +638,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             asset.lastPrice = manualPrice;
             asset.targetPrice = manualTarget;
             asset.marketValue = (asset.currentQuantity * asset.lastPrice) + totalAccruals;
-            asset.profit = (asset.marketValue + asset.totalSold) - asset.totalBoughtValue;
+            asset.profit = asset.marketValue - asset.totalInvested;
             asset.variation = asset.averagePrice > 0 ? (asset.lastPrice / asset.averagePrice - 1) * 100 : 0;
             asset.rentability = asset.totalBoughtValue > 0 ? ((asset.marketValue + asset.totalSold) / asset.totalBoughtValue - 1) * 100 : 0;
             asset.totalReturn = asset.totalBoughtValue > 0 ? ((asset.marketValue + asset.totalSold + asset.totalReceived) / asset.totalBoughtValue - 1) * 100 : 0;
@@ -631,7 +662,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             } else {
               asset.marketValue = rawMarketValue;
               asset.totalInvested = Math.max(0, asset.totalBoughtValue - asset.totalSold);
-              asset.profit = (asset.marketValue + asset.totalSold) - asset.totalBoughtValue;
+              asset.profit = asset.marketValue - asset.totalInvested;
             }
 
             // Rentabilidade % solicitada
@@ -649,12 +680,10 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     });
 
     // Nova Lógica: Incluir itens do Radar (Participantes com Ticker mas sem investimentos)
-    const isFiltered = (selectedBankId && selectedBankId !== 'ALL') || (selectedWalletId && selectedWalletId !== 'ALL');
-    
-    if (!isFiltered) {
-      registries.participants.forEach(p => {
-        const cleanTicker = (p.ticker || '').trim();
-        if (cleanTicker && !assetMap.has(p.id)) {
+    // Radar sempre aparece independente do filtro de banco/carteira pois itens sem lançamentos não têm banco/carteira associado
+    registries.participants.forEach(p => {
+      const cleanTicker = (p.ticker || '').trim();
+      if (cleanTicker && !assetMap.has(p.id)) {
         const resultItem: AssetPerformance = {
           participantId: p.id,
           name: p.name,
@@ -693,7 +722,6 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
         result.push(resultItem);
       }
     });
-    }
 
     return result.sort((a, b) => {
       const rateA = exchangeRates[a.currency] || 1;
@@ -1241,8 +1269,14 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                            a.ticker.toLowerCase().includes(searchTerm.toLowerCase());
       
       const matchesSector = sectorFilter === 'ALL' || a.sector === sectorFilter;
+
+      // Filtro de carteira gerenciada
+      const matchesGestao = selectedManagedPortfolioFilter === 'ALL' ||
+        (selectedManagedPortfolioFilter === 'MANUAL' 
+          ? (!a.managedPortfolioIds || a.managedPortfolioIds.length === 0)
+          : (a.managedPortfolioIds || []).includes(selectedManagedPortfolioFilter));
       
-      if (!matchesSearch || !matchesSector) return false;
+      if (!matchesSearch || !matchesSector || !matchesGestao) return false;
 
       // Ativos Ativos vs Zerados (Histórico)
       if (!a.isWatchlist) {
@@ -1314,7 +1348,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     }
 
     return data;
-  }, [performanceData, searchTerm, selectedTab, sortConfig, sectorFilter, showClosedPositions]);
+  }, [performanceData, searchTerm, selectedTab, sortConfig, sectorFilter, showClosedPositions, selectedManagedPortfolioFilter]);
 
   const groupedData = useMemo(() => {
     const groups: Record<string, AssetPerformance[]> = {};
@@ -1325,6 +1359,26 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     });
     return groups;
   }, [filteredData]);
+
+  const groupedByGestao = useMemo(() => {
+    const groups: Record<string, { label: string; color: string; assets: AssetPerformance[] }> = {};
+    groups['MANUAL'] = { label: 'Manual', color: 'slate', assets: [] };
+    managedPortfolios.forEach(p => {
+      groups[p.id] = { label: p.name, color: p.color, assets: [] };
+    });
+    filteredData.forEach(asset => {
+      const ids = asset.managedPortfolioIds || [];
+      if (ids.length === 0) {
+        groups['MANUAL'].assets.push(asset);
+      } else {
+        ids.forEach(id => {
+          if (groups[id]) groups[id].assets.push(asset);
+          else groups['MANUAL'].assets.push(asset);
+        });
+      }
+    });
+    return groups;
+  }, [filteredData, managedPortfolios]);
 
   const totalsByCurrency = useMemo(() => {
     const map: Record<string, { invested: number, received: number, market: number, profit: number }> = {};
@@ -1408,6 +1462,18 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   }, [cashBalanceByCurrency, exchangeRates]);
 
   const safeBaseRate = useMemo(() => exchangeRates[baseCurrency] || 1, [exchangeRates, baseCurrency]);
+
+  const getPortfolioStyle = (color: string) => {
+    const map: Record<string, { bg: string; text: string }> = {
+      blue:   { bg: '#E6F1FB', text: '#0C447C' },
+      green:  { bg: '#EAF3DE', text: '#27500A' },
+      amber:  { bg: '#FAEEDA', text: '#633806' },
+      purple: { bg: '#EEEDFE', text: '#26215C' },
+      teal:   { bg: '#E1F5EE', text: '#04342C' },
+      pink:   { bg: '#FBEAF0', text: '#4B1528' },
+    };
+    return map[color] || map['blue'];
+  };
   
   const simulationSummary = useMemo(() => {
     if (!isSimulatorMode) return null;
@@ -1789,50 +1855,33 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
         </div>
       )}
 
-      {/* Cards de Resumo */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-blue-50 rounded-lg">
-              <DollarSign className="w-5 h-5 text-blue-600" />
-            </div>
-            <span className="text-sm font-medium text-slate-500">Total Investido</span>
+      {/* Cards de Resumo — Barra Horizontal */}
+      <div className="flex flex-wrap items-stretch gap-2">
+        
+        {/* Total Investido */}
+        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm flex-1 min-w-[140px]">
+          <div className="p-1 bg-blue-50 rounded-lg shrink-0">
+            <DollarSign className="w-3.5 h-3.5 text-blue-600" />
           </div>
-          <div className="space-y-1">
-            <div className="text-2xl font-black text-slate-800 tracking-tight">
-              {formatCurrency(totals.invested / safeBaseRate, baseCurrency)}
+          <div className="min-w-0">
+            <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider leading-none mb-0.5">{showClosedPositions ? 'Total Comprado' : 'Investido'}</div>
+            <div className="text-sm font-black text-slate-800 tracking-tight leading-none truncate">
+              {formatCurrency((showClosedPositions ? totals.boughtValue : totals.invested) / safeBaseRate, baseCurrency)}
             </div>
-            {Object.keys(totalsByCurrency).length > 1 && selectedBankId === 'ALL' && (
-              <div className="flex flex-wrap gap-x-2 text-[10px] text-slate-400 font-medium">
-                {Object.entries(totalsByCurrency).map(([cur, data]) => (
-                  <span key={cur}>{formatCurrency(data.invested, cur as Currency)}</span>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm group relative">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-amber-50 rounded-lg">
-              <WalletIcon className="w-5 h-5 text-amber-600" />
-            </div>
-            <span className="text-sm font-medium text-slate-500">Saldo em Conta</span>
+        {/* Saldo em Conta */}
+        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm flex-1 min-w-[140px] group relative">
+          <div className="p-1 bg-amber-50 rounded-lg shrink-0">
+            <WalletIcon className="w-3.5 h-3.5 text-amber-600" />
           </div>
-          <div className="space-y-1">
-            <div className="text-2xl font-black text-amber-600 tracking-tight">
+          <div className="min-w-0">
+            <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Saldo Conta</div>
+            <div className="text-sm font-black text-amber-600 tracking-tight leading-none truncate">
               {formatCurrency(cashBalance / safeBaseRate, baseCurrency)}
             </div>
-            {Object.keys(cashBalanceByCurrency).length > 1 && selectedBankId === 'ALL' && (
-              <div className="flex flex-wrap gap-x-2 text-[10px] text-slate-400 font-medium">
-                {Object.entries(cashBalanceByCurrency).map(([cur, val]) => (
-                  <span key={cur}>{formatCurrency(val, cur as Currency)}</span>
-                ))}
-              </div>
-            )}
           </div>
-          
-          {/* Tooltip com detalhamento por banco se estiver em "Todos os Bancos" */}
           {selectedBankId === 'ALL' && (
             <div className="absolute top-full left-0 mt-2 w-64 p-4 bg-slate-800 text-white text-[10px] rounded-xl opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none shadow-xl border border-white/10">
               <div className="font-bold mb-2 border-b border-white/10 pb-1 uppercase tracking-wider">Saldo por Instituição</div>
@@ -1840,12 +1889,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                 {registries.banks.map(bank => {
                   const balance = transactions
                     .filter(t => t.status === 'PAID' && t.bankId === bank.id && (selectedWalletId === 'ALL' || t.walletId === selectedWalletId))
-                    .reduce((acc, t) => {
-                      return acc + (t.type === 'CREDIT' ? t.value : -t.value);
-                    }, 0);
-                  
+                    .reduce((acc, t) => acc + (t.type === 'CREDIT' ? t.value : -t.value), 0);
                   if (Math.abs(balance) < 0.01) return null;
-
                   return (
                     <div key={bank.id} className="flex justify-between items-center">
                       <span className="text-slate-300 truncate mr-2">{bank.name}</span>
@@ -1858,109 +1903,98 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           )}
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-emerald-50 rounded-lg">
-              <TrendingUp className="w-5 h-5 text-emerald-600" />
-            </div>
-            <span className="text-sm font-medium text-slate-500">Proventos Recebidos</span>
+        {/* Proventos Recebidos */}
+        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm flex-1 min-w-[140px]">
+          <div className="p-1 bg-emerald-50 rounded-lg shrink-0">
+            <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
           </div>
-          <div className="space-y-1">
-            <div className="text-2xl font-black text-emerald-600 tracking-tight">
+          <div className="min-w-0">
+            <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Proventos</div>
+            <div className="text-sm font-black text-emerald-600 tracking-tight leading-none truncate">
               {formatCurrency(totals.received / safeBaseRate, baseCurrency)}
             </div>
-            {Object.keys(totalsByCurrency).length > 1 && selectedBankId === 'ALL' && (
-              <div className="flex flex-wrap gap-x-2 text-[10px] text-slate-400 font-medium">
-                {Object.entries(totalsByCurrency).map(([cur, data]) => (
-                  <span key={cur}>{formatCurrency(data.received, cur as Currency)}</span>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-purple-50 rounded-lg">
-              <Activity className="w-5 h-5 text-purple-600" />
-            </div>
-            <span className="text-sm font-medium text-slate-500">Valor de Mercado</span>
+        {/* Valor de Mercado */}
+        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm flex-1 min-w-[140px]">
+          <div className="p-1 bg-purple-50 rounded-lg shrink-0">
+            <Activity className="w-3.5 h-3.5 text-purple-600" />
           </div>
-          <div className="space-y-1">
-            <div className="text-2xl font-black text-purple-600 tracking-tight">
-              {formatCurrency(totals.market / safeBaseRate, baseCurrency)}
+          <div className="min-w-0">
+            <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider leading-none mb-0.5">{showClosedPositions ? 'Total Vendido' : 'Mercado'}</div>
+            <div className="text-sm font-black text-purple-600 tracking-tight leading-none truncate">
+              {formatCurrency((showClosedPositions ? totals.soldValue : totals.market) / safeBaseRate, baseCurrency)}
             </div>
-            {Object.keys(totalsByCurrency).length > 1 && selectedBankId === 'ALL' && (
-              <div className="flex flex-wrap gap-x-2 text-[10px] text-slate-400 font-medium">
-                {Object.entries(totalsByCurrency).map(([cur, data]) => (
-                  <span key={cur}>{formatCurrency(data.market, cur as Currency)}</span>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-slate-50 rounded-lg">
-              {totals.profit >= -0.005 ? <TrendingUp className="w-5 h-5 text-emerald-600" /> : <TrendingDown className="w-5 h-5 text-red-600" />}
-            </div>
-            <span className="text-sm font-medium text-slate-500">Lucro Total</span>
+        {/* Lucro Total */}
+        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm flex-1 min-w-[140px]">
+          <div className="p-1 bg-slate-50 rounded-lg shrink-0">
+            {totals.profit >= -0.005 ? <TrendingUp className="w-3.5 h-3.5 text-emerald-600" /> : <TrendingDown className="w-3.5 h-3.5 text-red-600" />}
           </div>
-          <div className="space-y-1">
-            <div className={`text-2xl font-black tracking-tight ${totals.profit >= -0.005 ? 'text-emerald-600' : 'text-red-600'}`}>
+          <div className="min-w-0">
+            <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Lucro</div>
+            <div className={`text-sm font-black tracking-tight leading-none truncate ${totals.profit >= -0.005 ? 'text-emerald-600' : 'text-red-600'}`}>
               {formatCurrency(totals.profit / safeBaseRate, baseCurrency)}
             </div>
-            {Object.keys(totalsByCurrency).length > 1 && selectedBankId === 'ALL' && (
-              <div className="flex flex-wrap gap-x-2 text-[10px] text-slate-400 font-medium">
-                {Object.entries(totalsByCurrency).map(([cur, data]) => (
-                  <span key={cur} className={data.profit >= -0.005 ? 'text-emerald-600/70' : 'text-red-600/70'}>
-                    {formatCurrency(data.profit, cur as Currency)}
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-6 rounded-2xl border border-blue-500 shadow-lg relative overflow-hidden group cursor-pointer active:scale-95 transition-all"
-             onClick={getAiSuggestions}>
-          <div className="absolute -right-4 -top-4 opacity-10 group-hover:scale-110 transition-transform">
-            <Brain className="w-24 h-24 text-white" />
+        {/* Lucro c/ Proventos */}
+        <div className="flex items-center gap-2 bg-white border border-teal-200 rounded-xl px-3 py-2 shadow-sm flex-1 min-w-[140px]">
+          <div className="p-1 bg-teal-50 rounded-lg shrink-0">
+            <TrendingUp className="w-3.5 h-3.5 text-teal-600" />
           </div>
-          <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
-                <Brain className={`w-5 h-5 text-white ${loadingSuggestions ? 'animate-pulse' : ''}`} />
-              </div>
-              <span className="text-sm font-medium text-blue-50">Insights da IA</span>
+          <div className="min-w-0">
+            <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Lucro + Prov.</div>
+            <div className={`text-sm font-black tracking-tight leading-none truncate ${(totals.profit + totals.received) >= -0.005 ? 'text-teal-600' : 'text-red-600'}`}>
+              {formatCurrency((totals.profit + totals.received) / safeBaseRate, baseCurrency)}
             </div>
-            <div className="text-lg font-bold text-white flex items-center gap-2">
-              {loadingSuggestions ? 'Analisando...' : 'Gerar Sugestões'}
-              {!loadingSuggestions && <ArrowUpRight className="w-4 h-4" />}
+            <div className="text-[9px] text-slate-400 leading-none mt-0.5">
+              {totals.invested > 0 ? ((totals.profit + totals.received) / totals.invested * 100).toFixed(2) : '0.00'}%
             </div>
           </div>
         </div>
+
       </div>
 
-      {/* Navegação por Abas */}
-      <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl w-fit">
-        {['TUDO', 'AÇÕES', 'FIIS', 'RENDA FIXA', 'PREVIDÊNCIA', 'RADAR', 'OUTROS'].map(tab => (
-          <button
-            key={tab}
-            onClick={() => setSelectedTab(tab)}
-            className={`px-4 py-2 text-[10px] font-black rounded-lg transition-all ${
-              selectedTab === tab 
-                ? 'bg-white text-blue-600 shadow-sm' 
-                : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
+      {/* Navegação por Abas + Toggle Gráficos */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
+          {['TUDO', 'AÇÕES', 'FIIS', 'RENDA FIXA', 'PREVIDÊNCIA', 'RADAR', 'OUTROS'].map(tab => (
+            <button
+              key={tab}
+              onClick={() => setSelectedTab(tab)}
+              className={`px-4 py-2 text-[10px] font-black rounded-lg transition-all ${
+                selectedTab === tab 
+                  ? 'bg-white text-blue-600 shadow-sm' 
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => {
+            const next = !showCharts;
+            setShowCharts(next);
+            try { localStorage.setItem('fincontrol_showCharts', String(next)); } catch {}
+          }}
+          className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition-all shadow-sm cursor-pointer whitespace-nowrap"
+          title={showCharts ? 'Ocultar gráficos' : 'Mostrar gráficos'}
+        >
+          {showCharts ? (
+            <><EyeOff className="w-3.5 h-3.5" /> Ocultar Gráficos</>
+          ) : (
+            <><Eye className="w-3.5 h-3.5" /> Mostrar Gráficos</>
+          )}
+        </button>
       </div>
 
-      {/* Gráficos Principais: Evolução e Alocação */}
+      {showCharts && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Gráfico de Evolução Patrimonial */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all duration-300">
@@ -2184,99 +2218,141 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* Tabela de Ativos */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div className="space-y-1">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Activity className="w-5 h-5 text-blue-600" />
-                Performance por Ativo
-                <span className="ml-2 px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] rounded-full">
-                  {filteredData.length} {filteredData.length === 1 ? 'Ativo' : 'Ativos'}
-                </span>
-              </h3>
-              <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">
-                Exibindo: <span className="text-blue-600">{showClosedPositions ? 'Histórico de Operações Encerradas' : 'Carteira Posição Ativa'}</span>
-              </p>
+          <div className="px-4 py-2.5 border-b border-slate-100 flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 mr-2 shrink-0">
+              <Activity className="w-4 h-4 text-blue-600" />
+              <span className="text-sm font-black text-slate-800 whitespace-nowrap">Performance por Ativo</span>
+              <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] rounded-full font-bold">
+                {filteredData.length}
+              </span>
+              <span className="text-[9px] text-slate-400 font-medium uppercase tracking-wider hidden lg:inline">
+                {showClosedPositions ? 'Encerradas' : 'Posição Ativa'}
+              </span>
             </div>
             
-            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-1.5 flex-1">
               {/* Toggle de Posições Ativas / Encerradas */}
-              <div className="flex bg-slate-100 p-1 rounded-lg">
+              <div className="flex bg-slate-100 p-0.5 rounded-lg">
                 <button
                   onClick={() => setShowClosedPositions(false)}
-                  className={`px-3 py-1.5 text-[10px] font-black rounded-md transition-all flex items-center gap-2 ${!showClosedPositions ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  className={`px-2 py-1 text-[9px] font-black rounded-md transition-all flex items-center gap-1 ${!showClosedPositions ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  title="Carteira Posição Ativa"
                 >
                   <Target className="w-3 h-3" />
                   CARTEIRA
                 </button>
                 <button
                   onClick={() => setShowClosedPositions(true)}
-                  className={`px-3 py-1.5 text-[10px] font-black rounded-md transition-all flex items-center gap-2 ${showClosedPositions ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  className={`px-2 py-1 text-[9px] font-black rounded-md transition-all flex items-center gap-1 ${showClosedPositions ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  title="Histórico de Operações Encerradas"
                 >
                   <Clock className="w-3 h-3" />
                   HISTÓRICO
                 </button>
               </div>
 
-              {/* Toggle de Visualização Agrupada / Unificada */}
-              <div className="flex bg-slate-100 p-1 rounded-lg">
+              {/* Toggle de Visualização Agrupada / Unificada / Por Gestão */}
+              <div className="flex bg-slate-100 p-0.5 rounded-lg">
                 <button
-                  onClick={() => setIsUnifiedView(false)}
-                  className={`px-3 py-1.5 text-[10px] font-black rounded-md transition-all flex items-center gap-2 ${!isUnifiedView ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  onClick={() => { setIsUnifiedView(false); setGroupByGestao(false); }}
+                  className={`px-2 py-1 text-[9px] font-black rounded-md transition-all flex items-center gap-1 ${!isUnifiedView && !groupByGestao ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                   title="Visualização Agrupada por Tipo"
                 >
                   <LayoutGrid className="w-3 h-3" />
                   AGRUPADO
                 </button>
                 <button
-                  onClick={() => setIsUnifiedView(true)}
-                  className={`px-3 py-1.5 text-[10px] font-black rounded-md transition-all flex items-center gap-2 ${isUnifiedView ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  onClick={() => { setIsUnifiedView(true); setGroupByGestao(false); }}
+                  className={`px-2 py-1 text-[9px] font-black rounded-md transition-all flex items-center gap-1 ${isUnifiedView && !groupByGestao ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                   title="Visualização Unificada (Lista Única)"
                 >
                   <List className="w-3 h-3" />
                   UNIFICADO
                 </button>
+                {managedPortfolios.length > 0 && (
+                  <button
+                    onClick={() => { setGroupByGestao(true); setIsUnifiedView(false); }}
+                    className={`px-2 py-1 text-[9px] font-black rounded-md transition-all flex items-center gap-1 ${groupByGestao ? 'bg-white text-purple-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    title="Agrupar por Carteira Gerenciada"
+                  >
+                    <Brain className="w-3 h-3" />
+                    GESTÃO
+                  </button>
+                )}
               </div>
 
               <button
                 onClick={() => setIsSimulatorMode(!isSimulatorMode)}
-                className={`px-3 py-1.5 text-[10px] font-black rounded-lg transition-all flex items-center gap-2 border ${
+                className={`px-2 py-1 text-[9px] font-black rounded-lg transition-all flex items-center gap-1 border ${
                   isSimulatorMode 
                   ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100' 
                   : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50'
                 }`}
                 title="Ativar Simulador de Compras"
               >
-                <Calculator className={`w-3.5 h-3.5 ${isSimulatorMode ? 'animate-pulse' : ''}`} />
+                <Calculator className={`w-3 h-3 ${isSimulatorMode ? 'animate-pulse' : ''}`} />
                 {isSimulatorMode ? 'SIMULADOR ATIVO' : 'SIMULADOR'}
               </button>
 
-              <div className="relative flex-1 sm:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <button
+                onClick={getAiSuggestions}
+                className={`px-2 py-1 text-[9px] font-black rounded-lg transition-all flex items-center gap-1 border cursor-pointer ${
+                  loadingSuggestions
+                    ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100 animate-pulse'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 border-blue-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-sm'
+                }`}
+                title="Gerar Insights da IA"
+                disabled={loadingSuggestions}
+              >
+                <Brain className={`w-3 h-3 ${loadingSuggestions ? 'animate-spin' : ''}`} />
+                {loadingSuggestions ? 'ANALISANDO...' : 'INSIGHTS IA'}
+              </button>
+
+              <div className="relative flex-1 min-w-[140px] max-w-[220px]">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
                 <input 
                   type="text"
-                  placeholder="Filtrar ticker ou nome..."
+                  placeholder="Filtrar ticker..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  className="w-full pl-8 pr-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[10px] focus:ring-1 focus:ring-blue-500 outline-none transition-all"
                 />
               </div>
 
               <div className="relative">
-                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Filter className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
                 <select
                   value={sectorFilter}
                   onChange={(e) => setSectorFilter(e.target.value)}
-                  className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer"
+                  className="pl-7 pr-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[10px] focus:ring-1 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer"
                 >
-                  <option value="ALL">Todos os Setores</option>
+                  <option value="ALL">Todos Setores</option>
                   {sectors.map(s => (
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
               </div>
+
+              {managedPortfolios.length > 0 && (
+                <div className="relative">
+                  <Brain className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                  <select
+                    value={selectedManagedPortfolioFilter}
+                    onChange={(e) => setSelectedManagedPortfolioFilter(e.target.value)}
+                    className="pl-7 pr-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[10px] focus:ring-1 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer"
+                  >
+                    <option value="ALL">Todas Gestões</option>
+                    <option value="MANUAL">Manual</option>
+                    {managedPortfolios.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           </div>
 
@@ -2298,10 +2374,10 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                       <td className="p-3 border-l border-slate-800"></td>
                       
                       <td className="p-3 text-sm font-black text-blue-400 text-right font-mono border-l border-slate-800">
-                        {formatCurrency(totals.invested / safeBaseRate, baseCurrency)}
+                        {formatCurrency((showClosedPositions ? totals.boughtValue : totals.invested) / safeBaseRate, baseCurrency)}
                       </td>
                       <td className="p-3 text-sm font-black text-emerald-400 text-right font-mono">
-                        {formatCurrency(totals.market / safeBaseRate, baseCurrency)}
+                        {formatCurrency((showClosedPositions ? totals.soldValue : totals.market) / safeBaseRate, baseCurrency)}
                       </td>
 
                       <td className="p-3 text-sm font-black text-slate-700 text-right font-mono border-l border-slate-100">
@@ -2405,7 +2481,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                     onClick={() => setSortConfig(prev => ({ key: 'marketValue', direction: prev?.key === 'marketValue' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
                   >
                     <div className="flex items-center justify-end gap-1">
-                      Total Atual
+                      {showClosedPositions ? 'RECEBIDO' : 'Total Atual'}
                       {sortConfig?.key === 'marketValue' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 text-blue-600" /> : <ChevronDown className="w-3 h-3 text-blue-600" />) : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
                     </div>
                   </th>
@@ -2434,15 +2510,40 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {(isUnifiedView ? [['UNIFICADO', filteredData]] as [string, AssetPerformance[]][] : Object.entries(groupedData)).map(([category, assets]) => (
+                {(groupByGestao
+                  ? Object.entries(groupedByGestao).filter(([, g]) => g.assets.length > 0).map(([id, g]) => [id, g.assets] as [string, AssetPerformance[]])
+                  : isUnifiedView
+                    ? [['UNIFICADO', filteredData]] as [string, AssetPerformance[]][]
+                    : Object.entries(groupedData)
+                ).map(([category, assets]) => (
                   <React.Fragment key={category}>
-                    {selectedTab === 'TUDO' && !isUnifiedView && (
+                    {(selectedTab === 'TUDO' && !isUnifiedView) || groupByGestao ? (
                       <tr className="bg-slate-50/80">
                         <td colSpan={14} className="px-3 py-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest border-y border-slate-100">
-                          {category}
+                          {groupByGestao ? (() => {
+                            const g = groupedByGestao[category];
+                            if (!g) return category;
+                            const style = g.color !== 'slate' ? getPortfolioStyle(g.color) : null;
+                            const totalBuy = g.assets.reduce((s, a) => s + (a.totalInvested * (exchangeRates[a.currency] || 1)), 0);
+                            const totalMkt = g.assets.reduce((s, a) => s + ((a.marketValue || 0) * (exchangeRates[a.currency] || 1)), 0);
+                            const totalPft = g.assets.reduce((s, a) => s + ((a.profit || 0) * (exchangeRates[a.currency] || 1)), 0);
+                            return (
+                              <div className="flex items-center gap-3">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black" style={style ? { background: style.bg, color: style.text } : { background: '#f1f5f9', color: '#475569' }}>
+                                  {g.label}
+                                </span>
+                                <span className="text-slate-400 font-medium">{g.assets.length} ativos</span>
+                                <span className="ml-auto text-slate-600">Investido: {formatCurrency(totalBuy / safeBaseRate, baseCurrency)}</span>
+                                <span className="text-slate-600">Mercado: {formatCurrency(totalMkt / safeBaseRate, baseCurrency)}</span>
+                                <span className={totalPft >= 0 ? 'text-emerald-600 font-black' : 'text-red-600 font-black'}>
+                                  Resultado: {totalPft >= 0 ? '+' : ''}{formatCurrency(totalPft / safeBaseRate, baseCurrency)}
+                                </span>
+                              </div>
+                            );
+                          })() : category}
                         </td>
                       </tr>
-                    )}
+                    ) : null}
                     {assets.map((asset, assetIndex) => {
                       const absoluteIndex = filteredData.indexOf(asset) + 1;
                       const suggestion = getSuggestion(asset);
@@ -2450,9 +2551,16 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                       const assetRate = exchangeRates[asset.currency] || 1;
                       
                       // Conversão para a Moeda Base selecionada utilizando os valores já calculados e tratados no loop de performance
-                      const totalInvestedDisplay = (asset.totalInvested * assetRate) / baseRate;
-                      const marketValueDisplay = (asset.marketValue * assetRate) / baseRate;
-                      const profitDisplay = (asset.profit * assetRate) / baseRate;
+                      // No Histórico (posições encerradas), usar valores realizados
+                      const totalInvestedDisplay = showClosedPositions && asset.totalInvested === 0
+                        ? (asset.totalBoughtValue * assetRate) / baseRate
+                        : (asset.totalInvested * assetRate) / baseRate;
+                      const marketValueDisplay = showClosedPositions && asset.totalInvested === 0
+                        ? (asset.totalSold * assetRate) / baseRate
+                        : (asset.marketValue * assetRate) / baseRate;
+                      const profitDisplay = showClosedPositions && asset.totalInvested === 0
+                        ? ((asset.totalSold - asset.totalBoughtValue) * assetRate) / baseRate
+                        : (asset.profit * assetRate) / baseRate;
                       const avgPriceDisplay = (asset.averagePrice * assetRate) / baseRate;
                       const lastPriceDisplay = (asset.lastPrice || 0) * assetRate / baseRate;
                       const targetPriceDisplay = (asset.targetPrice || 0) * assetRate / baseRate;
@@ -2468,7 +2576,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                             {absoluteIndex}
                           </td>
                           <td className="p-3 sticky left-12 bg-white group-hover:bg-slate-50/50 z-10">
-                            <div className="flex flex-col">
+                            <div className="flex flex-col gap-1">
                               <div className="flex items-center gap-1.5">
                                 <span className="text-[12px] font-bold text-slate-800">{asset.ticker}</span>
                                 <button
@@ -2482,6 +2590,20 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                                   <TrendingUp className="w-3 h-3" />
                                 </button>
                               </div>
+                              {(asset.managedPortfolioIds || []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(asset.managedPortfolioIds || []).map(pid => {
+                                    const p = managedPortfolios.find(mp => mp.id === pid);
+                                    if (!p) return null;
+                                    const style = getPortfolioStyle(p.color);
+                                    return (
+                                      <span key={pid} className="text-[8px] font-black px-1.5 py-0.5 rounded-full leading-none" style={{ background: style.bg, color: style.text }}>
+                                        {p.name}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
                           </td>
                           <td className="p-3">
@@ -2495,11 +2617,33 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                             </span>
                           </td>
                           <td className="p-3 text-xs text-slate-800 text-right font-black font-mono border-l border-slate-100">
-                            {isBalanceBased(asset) ? '---' : formatValue(asset.currentQuantity, 2)}
+                            {isBalanceBased(asset) ? '---' : (
+                              <div className="flex flex-col items-end">
+                                <span>{formatValue(showClosedPositions && asset.currentQuantity === 0 ? asset.totalSoldQty : asset.currentQuantity, 2)}</span>
+                                {showClosedPositions && asset.currentQuantity === 0 && (
+                                  <span className="text-[8px] text-slate-400 font-bold">VENDIDAS</span>
+                                )}
+                              </div>
+                            )}
                           </td>
                           
                           <td className="p-3 text-xs text-blue-600 text-right font-mono border-l border-slate-100 group/pm relative">
-                            {isBalanceBased(asset) ? (
+                            {showClosedPositions && asset.currentQuantity === 0 && !isBalanceBased(asset) ? (
+                              <div className="flex flex-col items-end">
+                                <div className="flex flex-col items-end">
+                                  <span className="text-[8px] text-slate-400 font-bold leading-none">COMPRA</span>
+                                  <span className="text-blue-600 font-bold font-mono text-xs">
+                                    {formatValue(asset.totalBoughtQty > 0 ? (asset.totalBoughtValue * assetRate) / baseRate / asset.totalBoughtQty : 0, 2)}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col items-end mt-0.5">
+                                  <span className="text-[8px] text-orange-400 font-bold leading-none">VENDA</span>
+                                  <span className="text-orange-500 font-bold font-mono text-xs">
+                                    {formatValue(asset.totalSoldQty > 0 ? (asset.totalSold * assetRate) / baseRate / asset.totalSoldQty : 0, 2)}
+                                  </span>
+                                </div>
+                              </div>
+                            ) : isBalanceBased(asset) ? (
                               <div className="flex flex-col items-end">
                                 <span className="text-[8px] text-slate-400 font-bold block leading-none mb-0.5">RESGATADO</span>
                                 <span className="text-slate-600 font-bold font-mono">

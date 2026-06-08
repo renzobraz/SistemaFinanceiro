@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import YahooFinance from "yahoo-finance2";
+import yahooFinance from "yahoo-finance2";
 import { GoogleGenAI } from "@google/genai";
 
-const yahoo = new YahooFinance();
+const yahoo = new yahooFinance({ suppressNotices: ['yahooSurvey'], validation: { logErrors: false, logOptionsErrors: false } });
 
 try {
   if (typeof (yahoo as any).setGlobalConfig === 'function') {
@@ -35,7 +35,7 @@ function sanitizeYahooError(e: any): any {
 
 async function robustQuote(symbols: string | string[]) {
   try {
-    return await yahoo.quote(symbols);
+    return await yahoo.quote(symbols, {}, { validateResult: false });
   } catch (e: any) {
     if (e.result) return e.result;
     throw sanitizeYahooError(e);
@@ -44,7 +44,7 @@ async function robustQuote(symbols: string | string[]) {
 
 async function robustSummary(symbol: string, modules: any[]) {
   try {
-    return await yahoo.quoteSummary(symbol, { modules });
+    return await yahoo.quoteSummary(symbol, { modules }, { validateResult: false });
   } catch (e: any) {
     if (e.result) return e.result;
     throw sanitizeYahooError(e);

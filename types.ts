@@ -99,6 +99,7 @@ export interface Transaction {
   // Link for transfers
   linkedId?: string;
   createdAt?: string;
+  managedPortfolioId?: string;
 }
 
 export interface AssetAccrual {

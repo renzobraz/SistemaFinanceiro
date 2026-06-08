@@ -1,10 +1,12 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import fs from "fs";
 import YahooFinance from "yahoo-finance2";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
+import { PDFParse } from "pdf-parse";
 import { rateLimit } from "express-rate-limit";
 import crypto from "crypto";
 import helmet from "helmet";
@@ -195,6 +197,7 @@ async function robustChart(symbol: string, options: any) {
 }
 
 const app = express();
+app.set("trust proxy", 1);
 
 // Helmet para cabeçalhos de segurança HTTP (I4)
 if (process.env.NODE_ENV === "production") {
@@ -337,6 +340,7 @@ const inviteRateLimiter = rateLimit({
   message: { error: "Muitos convites enviados de forma recente. Aguarde alguns minutos." },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 const emailTestRateLimiter = rateLimit({
@@ -345,6 +349,16 @@ const emailTestRateLimiter = rateLimit({
   message: { error: "Muitos testes efetuados. Aguarde alguns minutos." },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
+});
+
+const pdfLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 30,
+  message: { error: "Muitas requisições de leitura de PDF. Aguarde alguns minutos." },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 // MIDDLEWARE DE AUTENTICAÇÃO VIA JWT DO SUPABASE (C2)
@@ -1286,6 +1300,45 @@ app.get("/api/rates", async (req, res) => {
   }
 });
 
+// API PDF Text Extractor for Programmatic Parsing
+app.post("/api/extract-pdf-text", pdfLimiter, async (req: any, res: any) => {
+  try {
+    const { base64 } = req.body;
+    if (!base64) {
+      return res.status(400).json({ error: "O parâmetro 'base64' é obrigatório." });
+    }
+
+    const buffer = Buffer.from(base64, "base64");
+    const pdfParser = new PDFParse({ data: buffer });
+    const textResult = await pdfParser.getText();
+    const extractedText = textResult.text || "";
+
+    // DEBUG TEMPORÁRIO
+    console.log("=== PRIMEIRAS 50 LINHAS DO PDF ===");
+    const lines = extractedText.split('\n');
+    const debugBlock = lines.slice(0, 50).map((line: string, i: number) => {
+      const formatted = `${i}: "${line}"`;
+      console.log(formatted);
+      return formatted;
+    }).join('\n');
+
+    // Persistir o dump em arquivo para que o agente AI consiga visualizar no sandboxed workspace
+    try {
+      const dumpContent = `=== PRIMEIRAS 50 LINHAS DO PDF ===\n${debugBlock}\n\n=== TEXTO COMPLETO DO PDF ===\n${extractedText}`;
+      fs.writeFileSync(path.join(process.cwd(), "extracted-pdf-debug.txt"), dumpContent, "utf-8");
+      console.log("[DEBUG] Dump do PDF gravado localmente com sucesso em extracted-pdf-debug.txt");
+    } catch (dumpErr: any) {
+      console.error("[DEBUG] Falha ao gravar dump local:", dumpErr.message);
+    }
+    // FIM DEBUG
+
+    return res.json({ text: extractedText });
+  } catch (error: any) {
+    console.error("Erro ao extrair texto do PDF:", error);
+    return res.status(500).json({ error: error.message || "Erro ao extrair texto do PDF" });
+  }
+});
+
 // API Claude PDF Parser
 app.post("/api/parse-pdf-claude", async (req: any, res: any) => {
   try {
@@ -1307,7 +1360,7 @@ app.post("/api/parse-pdf-claude", async (req: any, res: any) => {
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 4000,
         messages: [
           {

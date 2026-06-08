@@ -1,5 +1,6 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
+import { financeService } from "./financeService";
+import { Participant } from "../types";
 
 let aiInstance: any = null;
 
@@ -122,6 +123,311 @@ function setCachedData(key: string, data: any) {
     data,
     timestamp: Date.now()
   }));
+}
+
+function parsePtBrFloat(str: string): number {
+  if (!str) return 0;
+  const clean = str.replace(/\./g, "").replace(",", ".");
+  return parseFloat(clean) || 0;
+}
+
+function parseDateToIso(dateStr: string): string {
+  if (!dateStr) return "";
+  const parts = dateStr.trim().split("/");
+  if (parts.length === 3) {
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+  return dateStr;
+}
+
+function getCategoryFromTicker(ticker: string): string {
+  const upper = ticker.trim().toUpperCase();
+  if (upper.endsWith('11')) {
+    if (upper.startsWith('FII') || upper.includes('MALL') || upper.includes('RECT') || upper.includes('HGLG') || upper.includes('XPML') || upper.includes('BTLG') || upper.includes('KNIP') || upper.includes('KNCR')) {
+      return 'FII';
+    }
+    return 'FII';
+  }
+  if (upper.includes('DR3') || upper.includes('DRN') || upper.endsWith('33') || upper.endsWith('34') || upper.endsWith('35')) {
+    return 'BDR';
+  }
+  return 'Ação';
+}
+
+function inferAssetType(category?: string): 'stock' | 'fii' | 'bdr' {
+  if (!category) return 'stock';
+  const upper = category.toUpperCase();
+  if (upper === 'FII' || upper === 'FUNDO IMOBILIÁRIO' || upper === 'FUNDO IMOBILIARIO') return 'fii';
+  if (upper === 'BDR') return 'bdr';
+  return 'stock';
+}
+
+function findParticipant(
+  spec: string,
+  sinacorMap: Map<string, Participant>,
+  tickerMap: Map<string, Participant>
+): Participant | null {
+  const key = spec.trim().toUpperCase();
+  
+  if (tickerMap.has(key)) return tickerMap.get(key)!;
+  if (sinacorMap.has(key)) return sinacorMap.get(key)!;
+  
+  for (const [sinacor, p] of sinacorMap) {
+    if (key.startsWith(sinacor) || sinacor.startsWith(key)) return p;
+  }
+  
+  return null;
+}
+
+async function parseItauNoteWithRegex(text: string): Promise<any> {
+  const participants = await financeService.getRegistry<Participant>('participants').catch(() => []);
+  const sinacorMap = new Map<string, Participant>();
+  const tickerMap = new Map<string, Participant>();
+
+  for (const p of participants) {
+    if (p.ticker && p.active !== false) {
+      const tKey = p.ticker.trim().toUpperCase();
+      tickerMap.set(tKey, p);
+      if (p.sinacorName) {
+        sinacorMap.set(p.sinacorName.trim().toUpperCase(), p);
+      }
+    }
+  }
+
+  let noteNumber = "";
+  let tradeDate = "";
+  let settlementDate = "";
+  let liquidValue = 0;
+  let isCredit = false;
+
+  const normText = text.replace(/[ \t]+/g, " ");
+
+  const noteRegex = /Nr\.?\s*Nota\s+Folha\s+Data\s+Preg[ãa]o\s*\n\s*(\d+)\s+(\d+)\s+(\d{2}\/\d{2}\/\d{4})/i;
+  const noteMatch = normText.match(noteRegex);
+  if (noteMatch) {
+    noteNumber = noteMatch[1];
+    tradeDate = parseDateToIso(noteMatch[3]);
+  } else {
+    const fallbackNote = normText.match(/Nr\.?\s*Nota\s*:?\s*(\d+)/i) || 
+                         normText.match(/Nota\s+de\s+Corretagem\s+n?[ºo]?\s*:?\s*(\d+)/i) || 
+                         normText.match(/Nota\s*:?\s*(\d+)/i);
+    if (fallbackNote) noteNumber = fallbackNote[1];
+
+    const fallbackDate = normText.match(/Data\s+Preg[ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) || 
+                         normText.match(/Data\s+do\s+Preg[ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) || 
+                         normText.match(/Preg[ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if (fallbackDate) tradeDate = parseDateToIso(fallbackDate[1]);
+  }
+
+  const todayIso = new Date().toISOString().split('T')[0];
+  if (!tradeDate) tradeDate = todayIso;
+
+  const liquidRegex = /L[íi]quido\s+para\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}:\d{2}:\d{2})?\s+([\d.]+,\d{2})\s+([DC])/i;
+  const liquidMatch = normText.match(liquidRegex);
+  if (liquidMatch) {
+    settlementDate = parseDateToIso(liquidMatch[1]);
+    liquidValue = parsePtBrFloat(liquidMatch[2]);
+    isCredit = liquidMatch[3].toUpperCase() === "C";
+  } else {
+    const valueMatch = normText.match(/Total\s+L[íi]quido\s+da\s+Nota\s*:?\s*([\d.]+,\d{2})\s+([DC])/i) || 
+                       normText.match(/L[íi]quido\s+da\s+Nota\s*:?\s*([\d.]+,\d{2})\s+([DC])/i);
+    if (valueMatch) {
+      liquidValue = parsePtBrFloat(valueMatch[1]);
+      isCredit = valueMatch[2].toUpperCase() === "C";
+    }
+    const dateMatch = normText.match(/Liquida[çc][ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) || 
+                      normText.match(/Data\s+Liquida[çc][ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if (dateMatch) settlementDate = parseDateToIso(dateMatch[1]);
+  }
+
+  if (!settlementDate) settlementDate = todayIso;
+
+  const lines = text.split(/\r?\n/);
+  let startIndex = -1;
+  let endIndex = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/\s+/g, " ");
+    if (line.includes("Negócios Realizados") || line.includes("Negocios Realizados") || (line.includes("Q Negociação") && line.includes("Especificação"))) {
+      startIndex = i;
+    }
+    if (startIndex !== -1 && (line.includes("Resumo de negócios") || line.includes("Resumo dos negócios") || line.includes("Resumo financeiro"))) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  const targetLines = (startIndex !== -1)
+    ? lines.slice(startIndex, endIndex !== -1 ? endIndex : undefined)
+    : lines;
+
+  const individualTrades = [];
+  for (const line of targetLines) {
+    const lineClean = line.trim();
+    if (!lineClean) continue;
+
+    const match = lineClean.match(/B3\s+RV\s+LISTADO([CV])\s+(FRACIONARIO|VISTA)\s+(.+?)\s+(?:[@#D*][@ #D*]*)?\s*(\d+)\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([DC])/i);
+    if (match) {
+      const cvFlag = match[1].toUpperCase(); // 'C' = LISTADOC, 'V' = LISTADOV
+      const dcFlag = match[7].toUpperCase(); // 'D' = débito/compra, 'C' = crédito/venda
+
+      // LISTADOC + D = compra, LISTADOV + C = venda
+      // Em caso de discordância, dcFlag é o desempate
+      const action = (cvFlag === "C" && dcFlag === "D") ? "buy" :
+                     (cvFlag === "V" && dcFlag === "C") ? "sell" :
+                     dcFlag === "D" ? "buy" : "sell";
+
+      const marketType = match[2].toUpperCase();
+      let specRaw = match[3].trim();
+      const qty = parseInt(match[4], 10);
+      const price = parsePtBrFloat(match[5]);
+      const total = parsePtBrFloat(match[6]);
+
+      specRaw = specRaw.replace(/\s*[@#*D]+\s*$/, "").trim();
+
+      individualTrades.push({
+        type: action,
+        market: marketType,
+        spec: specRaw,
+        quantity: qty,
+        price: price,
+        totalValue: total,
+        dc: dcFlag
+      });
+    } else {
+      if (lineClean.includes("B3") && lineClean.includes("LISTADO")) {
+        console.log("[Parser] Linha não capturada pela regex:", lineClean);
+      }
+    }
+  }
+  console.log("[Parser] Total linhas capturadas:", individualTrades.length);
+
+  if (individualTrades.length === 0) return null;
+
+  const mappedTrades = individualTrades.map(trade => {
+    const p = findParticipant(trade.spec, sinacorMap, tickerMap);
+    if (p) {
+      return {
+        ...trade,
+        ticker: p.ticker!,
+        assetName: p.name,
+        unmapped: false
+      };
+    } else {
+      return {
+        ...trade,
+        ticker: trade.spec,
+        assetName: trade.spec,
+        unmapped: true,
+        sinacorNameRaw: trade.spec
+      };
+    }
+  });
+
+  const groupMap = new Map<string, {
+    ticker: string;
+    type: 'buy' | 'sell';
+    quantity: number;
+    totalValue: number;
+    assetName: string;
+    unmapped?: boolean;
+    sinacorNameRaw?: string;
+  }>();
+
+  for (const trade of mappedTrades) {
+    const key = trade.unmapped
+      ? `UNMAPPED:${trade.sinacorNameRaw?.toUpperCase()}|${trade.type}`
+      : `${trade.ticker.toUpperCase()}|${trade.type}`;
+
+    if (groupMap.has(key)) {
+      const existing = groupMap.get(key)!;
+      existing.quantity += trade.quantity;
+      existing.totalValue += trade.totalValue;
+    } else {
+      groupMap.set(key, {
+        ticker: trade.ticker,
+        type: trade.type,
+        quantity: trade.quantity,
+        totalValue: trade.totalValue,
+        assetName: trade.assetName,
+        unmapped: trade.unmapped,
+        sinacorNameRaw: trade.sinacorNameRaw
+      });
+    }
+  }
+
+  let totalSales = 0;
+  let totalPurchases = 0;
+
+  const consolidatedTrades = Array.from(groupMap.values()).map(g => {
+    const avgPrice = g.quantity > 0 ? Number((g.totalValue / g.quantity).toFixed(4)) : 0;
+    let category = 'stock';
+    if (!g.unmapped) {
+      const part = findParticipant(g.ticker, sinacorMap, tickerMap);
+      category = part?.category || getCategoryFromTicker(g.ticker);
+    } else if (g.sinacorNameRaw) {
+      category = getCategoryFromTicker(g.sinacorNameRaw);
+    }
+
+    const tValueFormatted = Number(g.totalValue.toFixed(2));
+    if (g.type === 'buy') {
+      totalPurchases += tValueFormatted;
+    } else {
+      totalSales += tValueFormatted;
+    }
+
+    const res: any = {
+      ticker: g.ticker,
+      type: g.type.toUpperCase() as "BUY" | "SELL",
+      quantity: g.quantity,
+      price: avgPrice,
+      total: tValueFormatted,
+      assetName: g.assetName,
+      assetType: inferAssetType(category)
+    };
+
+    if (g.unmapped) {
+      res.unmapped = true;
+      res.sinacorNameRaw = g.sinacorNameRaw;
+    }
+
+    return res;
+  });
+
+  let calculatedCosts = 0;
+  if (isCredit) {
+    calculatedCosts = (totalSales - totalPurchases) - liquidValue;
+  } else {
+    calculatedCosts = liquidValue - (totalPurchases - totalSales);
+  }
+
+  if (calculatedCosts < 0) calculatedCosts = 0;
+  calculatedCosts = Number(calculatedCosts.toFixed(2));
+
+  return {
+    metadata: {
+      date: tradeDate,
+      noteNumber: noteNumber,
+      liquidValue: liquidValue,
+      settlementDate: settlementDate,
+      isCredit: isCredit,
+      expectedTradesCount: consolidatedTrades.length
+    },
+    summary: {
+      totalSales: Number(totalSales.toFixed(2)),
+      totalPurchases: Number(totalPurchases.toFixed(2)),
+      clearingFees: 0,
+      exchangeFees: 0,
+      brokerage: 0,
+      taxes: 0,
+      otherCosts: calculatedCosts
+    },
+    trades: consolidatedTrades,
+    costs: {
+      total: calculatedCosts,
+      details: "Emolumentos e taxas de liquidação calculados por balanceamento de saldo"
+    }
+  };
 }
 
 export const geminiService = {
@@ -379,6 +685,39 @@ export const geminiService = {
   },
 
   async parseBrokerageNote(fileBase64: string, mimeType: string, onProgress?: (api: 'gemini' | 'claude') => void): Promise<any> {
+    // 1. Tentar extrair o texto limpo do PDF via backend
+    let extractedText = "";
+    try {
+      console.log("[Parser Regex] Extraindo texto do PDF...");
+      const response = await fetch("/api/extract-pdf-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base64: fileBase64 })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        extractedText = data.text || "";
+      } else {
+        console.warn("[Parser Regex] Falha na extração de texto do PDF via API:", response.statusText);
+      }
+    } catch (e) {
+      console.warn("[Parser Regex] Erro ao chamar endpoint de extração de texto:", e);
+    }
+
+    // 2. Se conseguimos o texto, rodar parser regex específico do Itaú
+    if (extractedText) {
+      try {
+        const regexResult = await parseItauNoteWithRegex(extractedText);
+        if (regexResult && regexResult.trades && regexResult.trades.length > 0) {
+          console.log(`[Parser Regex] Sucesso! ${regexResult.trades.length} trades consolidados extraídos.`);
+          return regexResult;
+        }
+        console.warn("[Parser Regex] Nenhum trade encontrado na nota via regex. Caindo para processamento inteligente...");
+      } catch (regexErr) {
+        console.error("[Parser Regex] Erro durante o parsing por regex:", regexErr);
+      }
+    }
+
     const ai = getAi();
     
     const prompt = `Analise esta Nota de Corretagem (Padrão SINACOR) e extraia os dados de forma estruturada em JSON.
@@ -424,14 +763,15 @@ export const geminiService = {
       * Se encontrar termos descritivos de corretora/nota contendo o ativo, extraia apenas o ticker de negociação de 5 ou 6 caracteres da B3 correspondentes!
 
     INSTRUÇÕES CRÍTICAS PARA NOTAS LONGAS E COMPLETUDE:
-    - O campo "expectedTradesCount" em "metadata" DEVE ser a quantidade total absoluta e exata de transações/linhas listadas fisicamente na seção "Negócios Realizados" ou "Transações" da nota. Conte cada negócio com extremo rigor. Se existirem 13 negócios listados fisicamente, este valor DEVE ser 13.
-    - Esta nota pode ter MUITAS páginas ou linhas. NÃO OMITA NENHUMA LINHA de "Negócios Realizados". Adicione todos os ativos vendidos ou comprados no array "trades".
-    - Se a tabela de negócios continuar em outra página, continue extraindo todos os itens sem truncar ou resumir.
+    - CONSOLIDAÇÃO OBRIGATÓRIA: Agrupe TODAS as execuções do mesmo ativo com o mesmo tipo (BUY ou SELL) em um ÚNICO trade. Some as quantidades e some os valores totais. O preço deve ser o preço médio ponderado (total / quantidade). NÃO liste cada linha de execução separadamente.
+    - Exemplo: se PETR4 aparece comprado em 50 linhas com quantidades e preços diferentes, retorne UM ÚNICO objeto { ticker: "PETR4", type: "BUY", quantity: soma_total, price: preco_medio, total: valor_total }.
+    - O campo "expectedTradesCount" em "metadata" DEVE ser o número de trades CONSOLIDADOS (ativos distintos por tipo), NÃO o número de linhas físicas da nota.
+    - Se um mesmo ativo aparecer como BUY e SELL na mesma nota, crie dois trades separados (um BUY e um SELL).
     - O "liquidValue" deve ser o valor exato encontrado no campo "Líquido para [Data]" ou "Total Líquido da Nota".
-    - "totalSales" é a soma de todos os itens com 'V' (Venda).
-    - "totalPurchases" é a soma de todos os itens com 'C' (Compra).
+    - "totalSales" é a soma de todos os itens com 'V' (Venda) ou 'C' (Crédito).
+    - "totalPurchases" é a soma de todos os itens com 'C' (Compra) ou 'D' (Débito) referentes a compras de ativos.
     - "costs.total" deve ser a soma de TODAS as taxas (Liquidação, Registro, Emolumentos, Corretagem, ISS, IRRF).
-    - No campo "assetName", pode reter o nome descritivo completo lido na nota (ex: "FII RBRP PAX CI").
+    - No campo "assetName", use o nome descritivo completo lido na nota (ex: "FII RBRP PAX CI").
     
     REGRAS DE VALINAÇÂO:
     - O valor de cada linha deve ser (quantidade * preço).
@@ -456,6 +796,60 @@ export const geminiService = {
             }],
             config: { 
               responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  metadata: {
+                    type: Type.OBJECT,
+                    properties: {
+                      date: { type: Type.STRING },
+                      noteNumber: { type: Type.STRING },
+                      liquidValue: { type: Type.NUMBER },
+                      settlementDate: { type: Type.STRING },
+                      isCredit: { type: Type.BOOLEAN },
+                      expectedTradesCount: { type: Type.INTEGER }
+                    },
+                    required: ["date", "noteNumber", "liquidValue", "settlementDate", "isCredit", "expectedTradesCount"]
+                  },
+                  summary: {
+                    type: Type.OBJECT,
+                    properties: {
+                      totalSales: { type: Type.NUMBER },
+                      totalPurchases: { type: Type.NUMBER },
+                      clearingFees: { type: Type.NUMBER },
+                      exchangeFees: { type: Type.NUMBER },
+                      brokerage: { type: Type.NUMBER },
+                      taxes: { type: Type.NUMBER },
+                      otherCosts: { type: Type.NUMBER }
+                    },
+                    required: ["totalSales", "totalPurchases", "clearingFees", "exchangeFees", "brokerage", "taxes", "otherCosts"]
+                  },
+                  trades: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        ticker: { type: Type.STRING },
+                        type: { type: Type.STRING },
+                        quantity: { type: Type.NUMBER },
+                        price: { type: Type.NUMBER },
+                        total: { type: Type.NUMBER },
+                        assetName: { type: Type.STRING }
+                      },
+                      required: ["ticker", "type", "quantity", "price", "total", "assetName"]
+                    }
+                  },
+                  costs: {
+                    type: Type.OBJECT,
+                    properties: {
+                      total: { type: Type.NUMBER },
+                      details: { type: Type.STRING }
+                    },
+                    required: ["total", "details"]
+                  }
+                },
+                required: ["metadata", "summary", "trades", "costs"]
+              },
               temperature: 0.1,
               maxOutputTokens: 8192
             }
@@ -476,11 +870,77 @@ export const geminiService = {
           try {
             return JSON.parse(cleanedText);
           } catch (parseError) {
-            console.error("Erro de parse inicial com Gemini, tentando limpeza agressiva:", parseError);
-            const aggressiveClean = cleanedText
-              .replace(/,\s*([\]}])/g, "$1") 
-              .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, ""); 
-            return JSON.parse(aggressiveClean);
+            console.warn("Erro de parse inicial com Gemini, tentando limpeza agressiva:", parseError);
+            
+            // 0. Remover comentários primeiro para evitar interferência nas regras de vírgula
+            let cleaned = cleanedText
+              .replace(/\/\*[\s\S]*?\*\//g, "")
+              .replace(/([^\\:]|^)\/\/.*$/gm, "$1");
+
+            // 1. Corrigir aspas internas não escapadas em cada linha de propriedade tipo string
+            const lines = cleaned.split("\n");
+            const repairedLines = lines.map(line => {
+              const match = line.match(/^(\s*"[a-zA-Z0-9_]+"\s*:\s*")(.*)("\s*,?\s*)$/);
+              if (match) {
+                const prefix = match[1];
+                const content = match[2];
+                const suffix = match[3];
+                const escapedContent = content.replace(/(?<!\\)"/g, '\\"');
+                return prefix + escapedContent + suffix;
+              }
+              return line;
+            });
+
+            // 2. Adicionar vírgulas ausentes de forma inteligente line-by-line
+            for (let i = 0; i < repairedLines.length - 1; i++) {
+              const currentLine = repairedLines[i].trim();
+              const nextLine = repairedLines[i + 1].trim();
+              
+              if (!currentLine || !nextLine) continue;
+              
+              const lacksComma = !currentLine.endsWith(",") && 
+                                 !currentLine.endsWith("{") && 
+                                 !currentLine.endsWith("[") && 
+                                 !currentLine.endsWith(":");
+                                 
+              if (lacksComma) {
+                // Caso A: Propriedade para propriedade
+                const isProp = /"[a-zA-Z0-9_]+"\s*:\s*/.test(currentLine);
+                const nextIsProp = /^"[a-zA-Z0-9_]+"\s*:/.test(nextLine);
+                if (isProp && nextIsProp) {
+                  repairedLines[i] = repairedLines[i] + ",";
+                  continue;
+                }
+                
+                // Caso B: Fechamento de objeto para abertura de objeto (ex: no array trades)
+                if (currentLine.endsWith("}") && nextLine.startsWith("{")) {
+                  repairedLines[i] = repairedLines[i] + ",";
+                  continue;
+                }
+                
+                // Caso C: Fechamento de objeto para propriedade (ex: fim de metadata ou fim de trade)
+                if (currentLine.endsWith("}") && /^"[a-zA-Z0-9_]+"\s*:/.test(nextLine)) {
+                  repairedLines[i] = repairedLines[i] + ",";
+                  continue;
+                }
+                
+                // Caso D: Fechamento de array para propriedade
+                if (currentLine.endsWith("]") && /^"[a-zA-Z0-9_]+"\s*:/.test(nextLine)) {
+                  repairedLines[i] = repairedLines[i] + ",";
+                  continue;
+                }
+              }
+            }
+            
+            let repairedText = repairedLines.join("\n");
+
+            // 3. Adicionar vírgulas ausentes entre objetos consecutivos (ex: } { ou }\n  {)
+            repairedText = repairedText.replace(/}(\s*){/g, "},$1{");
+
+            // 4. Limpar vírgulas extras no final de arrays/objetos
+            repairedText = repairedText.replace(/,\s*([\]}])/g, "$1"); 
+
+            return JSON.parse(repairedText);
           }
         }
       });
@@ -511,8 +971,7 @@ export const geminiService = {
       }
     });
 
-    let lastValidationError = "";
-    let lastGenericError = "";
+    const attemptErrors: string[] = [];
 
     for (let i = 0; i < attempts.length; i++) {
       const attempt = attempts[i];
@@ -525,29 +984,28 @@ export const geminiService = {
         const actualCount = Array.isArray(result?.trades) ? result.trades.length : 0;
 
         console.log(`[Diagnostic - ${attempt.name.toUpperCase()}] Ativos extraídos (${actualCount}):`, result?.trades?.map((t: any) => t.ticker || t.assetName));
-        console.log(`[Diagnostic - ${attempt.name.toUpperCase()}] Quantidade esperada de negócios: ${expectedCount}`);
+        console.log(`[Diagnostic - ${attempt.name.toUpperCase()}] Quantidade esperada de negócios consolidada: ${expectedCount}`);
 
-        if (expectedCount > 0 && actualCount !== expectedCount) {
-          const errorMsg = `Atenção: a nota possui ${expectedCount} negócios mas apenas ${actualCount} foram identificados. A importação foi cancelada para evitar dados incorretos. Tente importar novamente ou entre em contato com o suporte.`;
-          lastValidationError = errorMsg;
+        if (expectedCount > 0 && actualCount === 0) {
+          const errorMsg = `A nota possui ${expectedCount} negócios consolidados indicados, mas nenhuma transação foi identificada pelo modelo.`;
           throw new Error(errorMsg);
+        }
+
+        // Se houver uma discrepância significativa na consolidação, registramos mas permitimos continuar conforme desejo do usuário
+        if (expectedCount > 0 && Math.abs(actualCount - expectedCount) > 0) {
+          console.warn(`[Diagnostic - ${attempt.name.toUpperCase()}] Discrepância na contagem de negócios consolidados por ativo/operação: o documento sinaliza ${expectedCount}, mas foram identificados ${actualCount}. Continuando o fluxo para permitir auditoria e edição pelo usuário.`);
         }
 
         return result;
       } catch (err: any) {
-        console.warn(`[${attempt.name.toUpperCase()}] Falha ou incompletude detectada:`, err.message || err);
-        if (err.message && err.message.includes("Atenção: a nota possui")) {
-          lastValidationError = err.message;
-        } else {
-          lastGenericError = err.message || String(err);
-        }
+        const errorDetail = err.message || String(err);
+        console.warn(`[${attempt.name.toUpperCase()}] Falha ou incompletude detectada:`, errorDetail);
+        attemptErrors.push(`${attempt.name.toUpperCase()}: ${errorDetail}`);
       }
     }
 
     // Se saiu do loop, significa que todas as tentativas falharam
-    if (lastValidationError) {
-      throw new Error(lastValidationError);
-    }
-    throw new Error(`Ambos os processamentos inteligentes falharam. Gemini e Claude estão indisponíveis: ${lastGenericError}`);
+    const formattedErrors = attemptErrors.map(err => `- ${err}`).join("\n");
+    throw new Error(`Falha no processamento inteligente. Relatório de erros por IA:\n${formattedErrors}\n\nTente enviar o arquivo novamente ou use a digitação manual de notas.`);
   }
 };

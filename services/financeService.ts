@@ -407,6 +407,7 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   walletId: db.wallet_id ? String(db.wallet_id) : '',
   linkedId: db.linked_id ? String(db.linked_id) : undefined,
   createdAt: db.created_at || undefined,
+  managedPortfolioId: db.managed_portfolio_id ? String(db.managed_portfolio_id) : undefined,
   exchangeRate: db.exchange_rate ? Number(db.exchange_rate) : undefined,
   spread: db.spread ? Number(db.spread) : undefined,
   iof: db.iof ? Number(db.iof) : undefined,
@@ -431,6 +432,7 @@ const mapTransactionToDb = (t: Transaction, userId?: string | null, orgId?: stri
     cost_center_id: t.costCenterId || null,
     wallet_id: t.walletId || null,
     linked_id: t.linkedId || null,
+    managed_portfolio_id: t.managedPortfolioId || null,
   };
 
   // Only include exchange fields if they have actual values to prevent PGRST204 errors on older schemas
@@ -1969,7 +1971,7 @@ export const financeService = {
             if (walletId === 'GLOBAL') {
               query = query.is('wallet_id', null);
             } else {
-              query = query.eq('wallet_id', walletId);
+              query = query.or(`wallet_id.eq.${walletId},wallet_id.is.null`);
             }
           }
 
@@ -2155,7 +2157,7 @@ export const financeService = {
           if (walletId === 'GLOBAL') {
             result = result.filter(item => !(item as any).walletId);
           } else {
-            result = result.filter(item => (item as any).walletId === walletId);
+            result = result.filter(item => (item as any).walletId === walletId || !(item as any).walletId);
           }
         }
 
@@ -2203,7 +2205,7 @@ export const financeService = {
     let localData = getEntityLocal(keyMap[type], (INITIAL_DATA as any)[type]) as T[];
     
     if (walletId && walletId !== 'ALL' && type !== 'wallets') {
-      localData = localData.filter(i => (i as any).walletId === walletId);
+      localData = localData.filter(i => (i as any).walletId === walletId || !(i as any).walletId);
     }
     
     return localData;
