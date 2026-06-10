@@ -84,7 +84,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
-      if (selectedFile.type === 'application/pdf') {
+      if (selectedFile.type === 'application/pdf' || selectedFile.name.endsWith('.csv')) {
         setFile(selectedFile);
         setError(null);
       } else {
@@ -101,7 +101,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const selectedFile = e.dataTransfer.files[0];
-      if (selectedFile.type === 'application/pdf') {
+      if (selectedFile.type === 'application/pdf' || selectedFile.name.endsWith('.csv')) {
         setFile(selectedFile);
         setError(null);
       } else {
@@ -119,6 +119,107 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       // 1. Extraindo texto do PDF
       setProgressMsg('Extraindo texto...');
       const base64 = await fileToBase64(file);
+
+      // Se for CSV, usar endpoint específico
+      if (file.name.endsWith('.csv')) {
+        const csvText = await file.text();
+        const regexRes = await fetch('/api/parse-fatura-csv', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csvContent: csvText }),
+        });
+
+        if (regexRes.ok) {
+          const regexData = await regexRes.json();
+          const cardMap = new Map<string, CardStatementItem[]>();
+          for (const l of regexData.lancamentos) {
+            if (!cardMap.has(l.cartao_final)) cardMap.set(l.cartao_final, []);
+            cardMap.get(l.cartao_final)!.push({
+              rawDescription: l.estabelecimento,
+              purchaseDate: l.data_iso || '',
+              value: Math.abs(l.valor),
+              isRefund: l.e_estorno,
+              installmentNumber: l.parcela_atual,
+              installmentTotal: l.total_parcelas,
+            });
+          }
+          const cards = Array.from(cardMap.entries()).map(([final, items]) => {
+            const parsedTotal = items.reduce((acc, i) => i.isRefund ? acc - i.value : acc + i.value, 0);
+            const roundedTotal = Math.round(parsedTotal * 100) / 100;
+            return {
+              cardLast4: final,
+              holderName: regexData.titular || '',
+              printedTotal: roundedTotal,
+              anchorTotal: undefined,
+              parsedTotal: roundedTotal,
+              totalsMatch: true,
+              items,
+            };
+          });
+          const grandParsedTotal = Math.round(cards.reduce((acc, c) => acc + c.parsedTotal, 0) * 100) / 100;
+          extractStatementAnchors('');
+          parsedStatement = {
+            issuer: 'Itau',
+            metadata: { dueDate: '', closingDate: '', statementTotal: grandParsedTotal },
+            cards,
+            grandParsedTotal,
+            grandAnchorTotal: grandParsedTotal,
+            grandTotalsMatch: true,
+          };
+
+          // Pular direto para conciliação
+          setProgressMsg('Conciliando com Contas a Pagar...');
+          const aliases: MerchantAlias[] = await financeService.getMerchantAliases();
+          const reconResult = await reconcileStatementWithPayables(
+            parsedStatement,
+            selectedBankId,
+            aliases,
+            (bankId) => financeService.getTransactions({ bankId, status: 'PENDING' })
+          );
+          setStatement(parsedStatement);
+          setReconciliation(reconResult);
+          const initialMatchedCandidates: Record<number, string> = {};
+          const initialCandidates: Record<number, string> = {};
+          const initialNews: Record<number, boolean> = {};
+          const initialCats: Record<number, string> = {};
+          const initialCCs: Record<number, string> = {};
+          const initialGenerateFuture: Record<number, boolean> = {};
+          reconResult.items.forEach((item, index) => {
+            if (item.status === 'MATCHED') {
+              initialMatchedCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
+            } else if (item.status === 'UNCERTAIN') {
+              initialCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
+            } else if (item.status === 'NEW') {
+              initialNews[index] = true;
+              if (item.statementItem.installmentTotal !== undefined && item.statementItem.installmentNumber !== undefined && item.statementItem.installmentTotal > item.statementItem.installmentNumber) {
+                initialGenerateFuture[index] = true;
+              }
+            }
+            const lowerDesc = item.statementItem.rawDescription.toLowerCase();
+            const matchedAlias = aliases.find(alias => {
+              if (!alias.rawPattern) return false;
+              try { return new RegExp(alias.rawPattern, 'i').test(lowerDesc); }
+              catch { return lowerDesc.includes(alias.rawPattern.toLowerCase()); }
+            });
+            if (matchedAlias) {
+              if (matchedAlias.defaultCategoryId) initialCats[index] = matchedAlias.defaultCategoryId;
+              if (matchedAlias.defaultCostCenterId) initialCCs[index] = matchedAlias.defaultCostCenterId;
+            }
+          });
+          setSelectedMatchedCandidates(initialMatchedCandidates);
+          setSelectedCandidates(initialCandidates);
+          setCreatedNews(initialNews);
+          setItemCategories(initialCats);
+          setItemCostCenters(initialCCs);
+          setGenerateFutureInstallments(initialGenerateFuture);
+          setStep('review');
+          return;
+        } else {
+          const errData = await regexRes.json().catch(() => ({}));
+          throw new Error(errData.error || 'Erro ao processar CSV');
+        }
+      }
+
       const textRes = await fetch('/api/extract-pdf-text', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -447,7 +548,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
               >
                 <input 
                   type="file" 
-                  accept="application/pdf" 
+                  accept="application/pdf,.csv" 
                   onChange={handleFileChange}
                   className="absolute inset-0 opacity-0 cursor-pointer"
                 />
@@ -457,7 +558,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   </div>
                   <div>
                     <p className="text-lg font-bold text-slate-700">Arraste a fatura PDF aqui ou clique para selecionar</p>
-                    <p className="text-sm text-slate-400">Apenas arquivos no formato PDF original</p>
+                    <p className="text-sm text-slate-400">PDF original ou CSV exportado do app Itaú</p>
                   </div>
                 </div>
               </div>

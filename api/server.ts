@@ -1677,6 +1677,79 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
   }
 });
 
+// API Itaú CSV Statement Parser
+app.post("/api/parse-fatura-csv", async (req: any, res: any) => {
+  try {
+    const { csvContent } = req.body;
+    if (!csvContent) {
+      return res.status(400).json({ error: "O parâmetro 'csvContent' é obrigatório." });
+    }
+
+    const lines = csvContent.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+
+    // Pular cabeçalho
+    const dataLines = lines[0].toLowerCase().includes('data') ? lines.slice(1) : lines;
+
+    const lancamentos: any[] = [];
+    let totalFatura = 0;
+
+    for (const line of dataLines) {
+      const parts = line.split(',');
+      if (parts.length < 3) continue;
+
+      const data = parts[0].trim();
+      const descRaw = parts[1].trim();
+      const valorStr = parts[2].trim();
+      const valor = parseFloat(valorStr);
+
+      if (isNaN(valor) || !data) continue;
+
+      // Detectar parcela no final do nome (ex: "YDUQS 03/06" ou "YDUQS03/06")
+      const parcelMatch = descRaw.match(/\s*(\d{2})\/(\d{2})\s*$/);
+      let estabelecimento = descRaw.replace(/\s*\d{2}\/\d{2}\s*$/, '').trim();
+      const parcela_atual = parcelMatch ? parseInt(parcelMatch[1]) : undefined;
+      const total_parcelas = parcelMatch ? parseInt(parcelMatch[2]) : undefined;
+
+      // Limpar espaços múltiplos do estabelecimento
+      estabelecimento = estabelecimento.replace(/\s+/g, ' ').trim();
+
+      const e_estorno = valor < 0;
+      const e_parcelado = parcela_atual !== undefined && total_parcelas !== undefined;
+
+      totalFatura += valor;
+
+      lancamentos.push({
+        data: data.substring(5), // "MM-DD" da data ISO
+        data_iso: data,
+        estabelecimento,
+        valor: Math.abs(valor),
+        e_estorno,
+        e_parcelado,
+        ...(parcela_atual !== undefined ? { parcela_atual } : {}),
+        ...(total_parcelas !== undefined ? { total_parcelas } : {}),
+        cartao_final: '0000'
+      });
+    }
+
+    if (lancamentos.length === 0) {
+      return res.status(422).json({ error: "Nenhum lançamento encontrado no CSV." });
+    }
+
+    return res.json({
+      titular: 'TITULAR',
+      cartao_final: '0000',
+      cartoes: [{ titular: 'TITULAR', final: '0000', total: Math.round(totalFatura * 100) / 100 }],
+      vencimento: '',
+      total_fatura: Math.round(totalFatura * 100) / 100,
+      lancamentos,
+      erros_parse: []
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Erro ao processar CSV" });
+  }
+});
+
 // API Claude PDF Parser
 app.post("/api/parse-pdf-claude", async (req: any, res: any) => {
   try {
