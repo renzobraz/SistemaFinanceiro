@@ -202,11 +202,9 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           grandTotalsMatch: Math.abs(grandParsedTotal - grandAnchorTotal) <= 0.02,
         };
       } else {
-        // Fallback: parser regex falhou — usar IA
-        setProgressMsg('Analisando com IA (fallback)...');
-        const aiData = await extractStatementWithAI(base64, 'application/pdf');
-        setProgressMsg('Finalizando conferência...');
-        parsedStatement = reconcileStatement(aiData, anchors);
+        // Parser regex falhou — mostrar erro diagnóstico
+        const errData = await regexRes.json().catch(() => ({}));
+        throw new Error('Parser regex falhou (422): ' + (errData.error || JSON.stringify(errData).substring(0, 200)));
       }
 
       // 5. Conciliando com Contas a Pagar
