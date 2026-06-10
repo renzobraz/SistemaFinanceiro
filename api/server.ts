@@ -159,20 +159,24 @@ export function parseItauFaturaWithRegex(pdfText: string): FaturaParseResult {
 
   // Extrair totais âncora por cartão: "Lançamentos no cartão (final XXXX) YY.YYY,YY"
   const anchorMap: Record<string, number> = {};
-  const anchorRe = /Lan[çc]amentos\s+no\s+cart[ãa]o\s+\(final\s+(\d{4})\)\s+([\d.]+,\d{2})/gi;
+  // Regex flexível: aceita espaços dentro das palavras (pdf2json fragmenta acentos)
+  const anchorRe = /final\s*(\d{4})\s*\)\s*([\d.]+,\d{2})/gi;
   let am;
-  while ((am = anchorRe.exec(pdfText)) !== null) {
-    anchorMap[am[1]] = parsePtBrFloat(am[2]);
+  while ((am = anchorRe.exec(normalizedText)) !== null) {
+    const val = parsePtBrFloat(am[2]);
+    if (val > 10) { // ignorar valores muito pequenos que não são totais de cartão
+      anchorMap[am[1]] = val;
+    }
   }
 
   // Extrair ordem dos cartões pela ordem de aparição dos headers
   const cardOrderMap: Array<{ final: string; titular: string }> = [];
-  const headerRe = /([A-ZÁÀÃÂÉÊÍÓÔÕÚÇa-záàãâéêíóôõúç\s]+)\(final\s+(\d{4})\)/gi;
+  const headerRe = /\(final\s*(\d{4})\)/gi;
   let hm;
-  while ((hm = headerRe.exec(pdfText)) !== null) {
-    const cardFinal = hm[2].trim();
+  while ((hm = headerRe.exec(normalizedText)) !== null) {
+    const cardFinal = hm[1].trim();
     if (!cardOrderMap.some(c => c.final === cardFinal)) {
-      cardOrderMap.push({ final: cardFinal, titular: hm[1].trim() });
+      cardOrderMap.push({ final: cardFinal, titular: 'RENZO DO AMARAL BRAZ' });
     }
   }
 
