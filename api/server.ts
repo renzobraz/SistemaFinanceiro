@@ -1393,33 +1393,14 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
 
     const parseResult = parseItauFaturaWithRegex(extractedText);
 
-    // Log de diagnóstico temporário
-    console.log("[parse-fatura] anchorMap:", JSON.stringify(parseResult.cartoes?.map((c: any) => ({final: c.final, total: c.total}))));
-    console.log("[parse-fatura] lancamentos:", parseResult.lancamentos?.length);
-    console.log("[parse-fatura] total_fatura:", parseResult.total_fatura);
-    console.log("[parse-fatura] primeiras 500 chars do texto:", extractedText.substring(0, 500));
-    console.log("[parse-fatura] trecho com 'final':", extractedText.match(/Lan[^\n]{0,50}final[^\n]{0,30}/gi)?.slice(0, 5));
-
     if (!parseResult.lancamentos || parseResult.lancamentos.length === 0) {
       return res.status(422).json({
         error: "Nenhum lançamento foi identificado na fatura usando o parser determinístico. Por favor, tente a importação inteligente via IA como fallback.",
-        parseResult,
-        debug: {
-          textLength: extractedText.length,
-          textSample: extractedText.substring(0, 300),
-          anchorMatches: extractedText.match(/Lan[^\n]{0,50}final[^\n]{0,30}/gi)?.slice(0, 5)
-        }
+        parseResult
       });
     }
 
-    return res.json({
-      ...parseResult,
-      _debug: {
-        totalTexto: extractedText.length,
-        rawItemsCount: parseResult.lancamentos.length,
-        anchorLines: extractedText.match(/Lan[^\n]{0,60}final[^\n]{0,30}/gi)?.slice(0, 8)
-      }
-    });
+    return res.json(parseResult);
   } catch (error: any) {
     console.error("Erro no parser determinístico de fatura:", error);
     return res.status(500).json({ error: error.message || "Erro interno ao processar a fatura" });
