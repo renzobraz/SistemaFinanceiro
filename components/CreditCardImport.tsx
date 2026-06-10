@@ -278,7 +278,11 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       setStep('review');
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Houve um erro desconhecido durante o processamento.');
+      const msg = typeof err === 'string' ? err
+        : err?.message ? err.message
+        : typeof err === 'object' ? JSON.stringify(err)
+        : 'Houve um erro desconhecido durante o processamento.';
+      setError(msg);
       setStep('upload');
     }
   };

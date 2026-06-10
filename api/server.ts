@@ -1595,9 +1595,12 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
 
     const parseResult = parseItauFaturaWithRegex(extractedText);
 
+    console.log("[parse-fatura] cartoes:", JSON.stringify(parseResult.cartoes));
+    console.log("[parse-fatura] lancamentos count:", parseResult.lancamentos?.length);
+
     if (!parseResult.lancamentos || parseResult.lancamentos.length === 0) {
       return res.status(422).json({
-        error: "Nenhum lançamento foi identificado na fatura usando o parser determinístico. Por favor, tente a importação inteligente via IA como fallback.",
+        error: "Nenhum lançamento identificado pelo parser. Verifique os logs do servidor.",
         parseResult
       });
     }
