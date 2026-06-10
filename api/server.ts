@@ -1595,11 +1595,13 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
 
     const parseResult = parseItauFaturaWithRegex(extractedText);
 
-    console.log("[fatura] anchors=" + JSON.stringify(parseResult.cartoes) + " items=" + parseResult.lancamentos.length);
-
     if (!parseResult.lancamentos || parseResult.lancamentos.length === 0) {
+      // Diagnóstico: retornar info sobre o texto extraído para entender o problema
+      const textSample = extractedText.substring(0, 200).replace(/\n/g, '|');
+      const hasLancamentos = extractedText.includes('amentos no cart');
+      const hasFinal = extractedText.includes('final');
       return res.status(422).json({
-        error: "Parser 0 lancamentos. anchors=" + JSON.stringify(parseResult.cartoes),
+        error: "Parser 0 lancamentos. hasLancamentos=" + hasLancamentos + " hasFinal=" + hasFinal + " textLen=" + extractedText.length + " sample=" + textSample,
         parseResult
       });
     }
