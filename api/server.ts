@@ -1575,22 +1575,48 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
       return res.status(413).json({ error: "Arquivo muito grande. O tamanho máximo permitido é 10MB." });
     }
 
-    const buffer = Buffer.from(pdfBase64, "base64");
-    let pdfData;
-    try {
-      pdfData = await pdfParse(buffer, { version: 'default' });
-    } catch (parseError: any) {
-      if (parseError.message?.toLowerCase().includes("password") || parseError.name === "PasswordException") {
-        return res.status(400).json({ error: "Este PDF está protegido por senha. Remova a proteção antes de importar." });
-      }
-      throw parseError;
+    // Extrair texto do PDF via Claude (mais confiável que pdf-parse para PDFs complexos)
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (!anthropicKey) {
+      return res.status(500).json({ error: "ANTHROPIC_API_KEY não configurada." });
     }
 
-    const extractedText = pdfData.text || "";
+    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 8000,
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: pdfBase64 }
+            },
+            {
+              type: "text",
+              text: "Extraia TODO o texto desta fatura de cartão de crédito Itaú exatamente como aparece, sem interpretar nem resumir. Inclua todas as páginas, especialmente as tabelas de lançamentos com datas, estabelecimentos e valores. Mantenha o texto original sem formatação adicional."
+            }
+          ]
+        }]
+      })
+    });
 
-    // PDF baseado em imagem (escaneado) não tem texto selecionável
+    if (!claudeResponse.ok) {
+      const errText = await claudeResponse.text();
+      return res.status(500).json({ error: "Erro ao extrair texto via Claude: " + errText });
+    }
+
+    const claudeData = await claudeResponse.json() as any;
+    const extractedText = claudeData.content?.[0]?.text || "";
+
     if (!extractedText || extractedText.trim().length < 50) {
-      return res.status(422).json({ error: "O arquivo parece ser uma imagem digitalizada sem texto selecionável. Por favor, envie o PDF digital disponibilizado pelo aplicativo do banco." });
+      return res.status(422).json({ error: "Não foi possível extrair texto da fatura." });
     }
 
     console.log("[debug] primeiros 500 chars:", extractedText.substring(0, 500));
