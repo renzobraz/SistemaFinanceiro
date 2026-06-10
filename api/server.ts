@@ -1,15 +1,37 @@
 import express from "express";
 import cors from "cors";
-import path from "path";
-import fs from "fs";
 import YahooFinance from "yahoo-finance2";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
-import { PDFParse } from "pdf-parse";
+import { createRequire } from "module";
 import { rateLimit } from "express-rate-limit";
 import crypto from "crypto";
 import helmet from "helmet";
+import { parseItauFaturaWithRegex } from "../services/geminiService";
+
+const require = createRequire(import.meta.url);
+const pdfParseRaw = require("pdf-parse");
+
+// Adapter Pattern: compatibilidade universal com pdf-parse v1.x, v2.x e interop ESM/CJS
+let pdfParse: (buffer: Buffer, options?: any) => Promise<{ text: string }>;
+
+if (typeof pdfParseRaw === "function") {
+  // Caso 1: pdf-parse v1.x — exporta função diretamente
+  pdfParse = pdfParseRaw;
+} else if (pdfParseRaw && typeof pdfParseRaw.default === "function") {
+  // Caso 2: interoperabilidade ESM/CJS — função em .default
+  pdfParse = pdfParseRaw.default;
+} else if (pdfParseRaw && typeof pdfParseRaw.PDFParse === "function") {
+  // Caso 3: pdf-parse v2.x — exporta classe PDFParse
+  pdfParse = async (buffer: Buffer, options?: any) => {
+    const parser = new pdfParseRaw.PDFParse({ data: buffer, ...options });
+    const result = await parser.getText();
+    return { text: result.text || "" };
+  };
+} else {
+  throw new Error("Não foi possível inicializar um parser de PDF compatível.");
+}
 
 const yahoo = new YahooFinance();
 
@@ -1308,29 +1330,28 @@ app.post("/api/extract-pdf-text", pdfLimiter, async (req: any, res: any) => {
       return res.status(400).json({ error: "O parâmetro 'base64' é obrigatório." });
     }
 
-    const buffer = Buffer.from(base64, "base64");
-    const pdfParser = new PDFParse({ data: buffer });
-    const textResult = await pdfParser.getText();
-    const extractedText = textResult.text || "";
-
-    // DEBUG TEMPORÁRIO
-    console.log("=== PRIMEIRAS 50 LINHAS DO PDF ===");
-    const lines = extractedText.split('\n');
-    const debugBlock = lines.slice(0, 50).map((line: string, i: number) => {
-      const formatted = `${i}: "${line}"`;
-      console.log(formatted);
-      return formatted;
-    }).join('\n');
-
-    // Persistir o dump em arquivo para que o agente AI consiga visualizar no sandboxed workspace
-    try {
-      const dumpContent = `=== PRIMEIRAS 50 LINHAS DO PDF ===\n${debugBlock}\n\n=== TEXTO COMPLETO DO PDF ===\n${extractedText}`;
-      fs.writeFileSync(path.join(process.cwd(), "extracted-pdf-debug.txt"), dumpContent, "utf-8");
-      console.log("[DEBUG] Dump do PDF gravado localmente com sucesso em extracted-pdf-debug.txt");
-    } catch (dumpErr: any) {
-      console.error("[DEBUG] Falha ao gravar dump local:", dumpErr.message);
+    // Limite de tamanho: 10MB em base64
+    if (base64.length > 10 * 1024 * 1024) {
+      return res.status(413).json({ error: "Arquivo muito grande. O tamanho máximo permitido é 10MB." });
     }
-    // FIM DEBUG
+
+    const buffer = Buffer.from(base64, "base64");
+    let pdfData;
+    try {
+      pdfData = await pdfParse(buffer, { version: 'default' });
+    } catch (parseError: any) {
+      if (parseError.message?.toLowerCase().includes("password") || parseError.name === "PasswordException") {
+        return res.status(400).json({ error: "Este PDF está protegido por senha. Remova a proteção antes de importar." });
+      }
+      throw parseError;
+    }
+
+    const extractedText = pdfData.text || "";
+
+    // PDF baseado em imagem (escaneado) não tem texto selecionável
+    if (extractedText.trim().length < 50) {
+      return res.status(422).json({ error: "O arquivo parece ser uma imagem digitalizada sem texto selecionável. Por favor, envie o PDF digital disponibilizado pelo aplicativo do banco." });
+    }
 
     return res.json({ text: extractedText });
   } catch (error: any) {
@@ -1339,10 +1360,76 @@ app.post("/api/extract-pdf-text", pdfLimiter, async (req: any, res: any) => {
   }
 });
 
+// API Itaú Credit Card Statement Parser via Regex
+app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
+  try {
+    const { pdfBase64, accountId } = req.body;
+    if (!pdfBase64) {
+      return res.status(400).json({ error: "O parâmetro 'pdfBase64' é obrigatório." });
+    }
+
+    // Limite de tamanho: 10MB em base64
+    if (pdfBase64.length > 10 * 1024 * 1024) {
+      return res.status(413).json({ error: "Arquivo muito grande. O tamanho máximo permitido é 10MB." });
+    }
+
+    const buffer = Buffer.from(pdfBase64, "base64");
+    let pdfData;
+    try {
+      pdfData = await pdfParse(buffer, { version: 'default' });
+    } catch (parseError: any) {
+      if (parseError.message?.toLowerCase().includes("password") || parseError.name === "PasswordException") {
+        return res.status(400).json({ error: "Este PDF está protegido por senha. Remova a proteção antes de importar." });
+      }
+      throw parseError;
+    }
+
+    const extractedText = pdfData.text || "";
+
+    // PDF baseado em imagem (escaneado) não tem texto selecionável
+    if (!extractedText || extractedText.trim().length < 50) {
+      return res.status(422).json({ error: "O arquivo parece ser uma imagem digitalizada sem texto selecionável. Por favor, envie o PDF digital disponibilizado pelo aplicativo do banco." });
+    }
+
+    const parseResult = parseItauFaturaWithRegex(extractedText);
+
+    // Log de diagnóstico temporário
+    console.log("[parse-fatura] anchorMap:", JSON.stringify(parseResult.cartoes?.map((c: any) => ({final: c.final, total: c.total}))));
+    console.log("[parse-fatura] lancamentos:", parseResult.lancamentos?.length);
+    console.log("[parse-fatura] total_fatura:", parseResult.total_fatura);
+    console.log("[parse-fatura] primeiras 500 chars do texto:", extractedText.substring(0, 500));
+    console.log("[parse-fatura] trecho com 'final':", extractedText.match(/Lan[^\n]{0,50}final[^\n]{0,30}/gi)?.slice(0, 5));
+
+    if (!parseResult.lancamentos || parseResult.lancamentos.length === 0) {
+      return res.status(422).json({
+        error: "Nenhum lançamento foi identificado na fatura usando o parser determinístico. Por favor, tente a importação inteligente via IA como fallback.",
+        parseResult,
+        debug: {
+          textLength: extractedText.length,
+          textSample: extractedText.substring(0, 300),
+          anchorMatches: extractedText.match(/Lan[^\n]{0,50}final[^\n]{0,30}/gi)?.slice(0, 5)
+        }
+      });
+    }
+
+    return res.json({
+      ...parseResult,
+      _debug: {
+        totalTexto: extractedText.length,
+        rawItemsCount: parseResult.lancamentos.length,
+        anchorLines: extractedText.match(/Lan[^\n]{0,60}final[^\n]{0,30}/gi)?.slice(0, 8)
+      }
+    });
+  } catch (error: any) {
+    console.error("Erro no parser determinístico de fatura:", error);
+    return res.status(500).json({ error: error.message || "Erro interno ao processar a fatura" });
+  }
+});
+
 // API Claude PDF Parser
 app.post("/api/parse-pdf-claude", async (req: any, res: any) => {
   try {
-    const { base64, mimeType, prompt } = req.body;
+    const { base64, mimeType, prompt, maxTokens } = req.body;
     if (!base64 || !mimeType || !prompt) {
       return res.status(400).json({ error: "Parâmetros 'base64', 'mimeType' e 'prompt' são obrigatórios." });
     }
@@ -1361,7 +1448,7 @@ app.post("/api/parse-pdf-claude", async (req: any, res: any) => {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 4000,
+        max_tokens: Math.min(Math.max(Number(maxTokens) || 4096, 1024), 32768),
         messages: [
           {
             role: "user",

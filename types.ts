@@ -189,3 +189,74 @@ export interface BrokerageNote {
     details: string;
   };
 }
+
+// ---- Importação de fatura de cartão (genérico, multi-emissor) ----
+export interface CardStatementItem {
+  rawDescription: string;     // estabelecimento como aparece na fatura
+  purchaseDate: string;       // ISO YYYY-MM-DD (ano inferido pela data de fechamento)
+  value: number;              // sempre positivo
+  isRefund: boolean;          // true para estornos/créditos
+  installmentNumber?: number; // ex.: 9 (de "09/10")
+  installmentTotal?: number;  // ex.: 10
+}
+
+export interface CardSection {
+  cardLast4: string;
+  holderName: string;
+  printedTotal: number;       // total impresso do cartão (vindo da IA)
+  anchorTotal?: number;       // total do mesmo cartão extraído por regex (fonte confiável)
+  parsedTotal: number;        // soma dos itens (positivos - refunds)
+  totalsMatch: boolean;       // parsedTotal bate com anchorTotal||printedTotal (tol. R$0,02)
+  items: CardStatementItem[];
+}
+
+export interface CardStatement {
+  issuer: string;             // ex.: "Itau" (a IA identifica)
+  metadata: {
+    dueDate: string;          // vencimento (ISO)
+    closingDate: string;      // fechamento/emissão (ISO)
+    statementTotal: number;   // "Total dos lançamentos atuais" (impresso)
+  };
+  cards: CardSection[];
+  grandParsedTotal: number;
+  grandAnchorTotal: number;   // total geral via regex (confiável)
+  grandTotalsMatch: boolean;
+}
+
+export interface MerchantAlias {
+  id: string;
+  organizationId: string;
+  rawPattern: string;
+  canonicalName: string;
+  defaultCategoryId?: string| null;
+  defaultCostCenterId?: string | null;
+  active?: boolean;
+}
+
+// ---- Conciliação fatura × Contas a Pagar ----
+export type MatchConfidence = 'HIGH' | 'LOW' | 'NONE';
+
+export interface CandidateMatch {
+  transaction: Transaction;   // transação PENDING do Contas a Pagar
+  confidence: MatchConfidence;
+  reason: string;             // ex.: "Valor exato + nome similar (Mercado Livre)"
+  similarityScore: number;    // 0.0 a 1.0 (para ordenação)
+}
+
+export interface ReconciliationItem {
+  statementItem: CardStatementItem;
+  cardLast4: string;
+  candidates: CandidateMatch[];     // vazio = nenhum candidato (NEW)
+  status: 'MATCHED' | 'UNCERTAIN' | 'NEW';
+  // 'MATCHED'   → ≥1 candidato com confiança HIGH
+  // 'UNCERTAIN' → ≥1 candidato com confiança LOW, nenhum HIGH
+  // 'NEW'       → sem candidatos
+}
+
+export interface ReconciliationResult {
+  items: ReconciliationItem[];
+  matchedCount: number;
+  uncertainCount: number;
+  newCount: number;
+}
+

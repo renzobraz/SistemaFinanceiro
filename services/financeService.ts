@@ -15,7 +15,8 @@ import {
   UserPreferences,
   AssetAccrual,
   Organization,
-  OrganizationMember
+  OrganizationMember,
+  MerchantAlias
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -23,10 +24,12 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 export const safeStorage = (() => {
   let hasLocalStorage = false;
   try {
-    const testKey = '__test_ls__';
-    window.localStorage.setItem(testKey, testKey);
-    window.localStorage.removeItem(testKey);
-    hasLocalStorage = true;
+    if (typeof window !== "undefined" && window.localStorage) {
+      const testKey = '__test_ls__';
+      window.localStorage.setItem(testKey, testKey);
+      window.localStorage.removeItem(testKey);
+      hasLocalStorage = true;
+    }
   } catch (e) {
     hasLocalStorage = false;
     console.warn('[Storage] Modo IFrame/Sandbox detectado. Usando armazenamento em memória ao invés do localStorage nativo.');
@@ -36,7 +39,7 @@ export const safeStorage = (() => {
 
   return {
     getItem(key: string): string | null {
-      if (hasLocalStorage) {
+      if (hasLocalStorage && typeof window !== "undefined") {
         try {
           return window.localStorage.getItem(key);
         } catch {
@@ -46,7 +49,7 @@ export const safeStorage = (() => {
       return memoryStore[key] || null;
     },
     setItem(key: string, value: string): void {
-      if (hasLocalStorage) {
+      if (hasLocalStorage && typeof window !== "undefined") {
         try {
           window.localStorage.setItem(key, value);
           return;
@@ -55,7 +58,7 @@ export const safeStorage = (() => {
       memoryStore[key] = value;
     },
     removeItem(key: string): void {
-      if (hasLocalStorage) {
+      if (hasLocalStorage && typeof window !== "undefined") {
         try {
           window.localStorage.removeItem(key);
           return;
@@ -64,7 +67,7 @@ export const safeStorage = (() => {
       delete memoryStore[key];
     },
     clear(): void {
-      if (hasLocalStorage) {
+      if (hasLocalStorage && typeof window !== "undefined") {
         try {
           window.localStorage.clear();
           return;
@@ -82,8 +85,8 @@ const localStorage = safeStorage;
 
 export const DEFAULT_SUPABASE_CONFIG = {
   // Substitui chaves fixadas pelas variáveis de ambiente do Vite
-  url: import.meta.env.VITE_SUPABASE_URL || "",
-  key: import.meta.env.VITE_SUPABASE_KEY || ""
+  url: (typeof import.meta.env !== "undefined" ? import.meta.env.VITE_SUPABASE_URL : undefined) || (typeof process !== "undefined" ? process.env.VITE_SUPABASE_URL : undefined) || "",
+  key: (typeof import.meta.env !== "undefined" ? import.meta.env.VITE_SUPABASE_KEY : undefined) || (typeof process !== "undefined" ? process.env.VITE_SUPABASE_KEY : undefined) || ""
 };
 
 const uuidv4 = () => {
@@ -289,8 +292,8 @@ let lastKey = '';
 // Obtém e gerencia a instância do Supabase de forma dinâmica e segura contra variáveis de ambiente nulas no carregamento inicial
 const getSupabase = (): SupabaseClient | null => {
   // Buscamos dinamicamente as variáveis de ambiente do Vite ou o fallback
-  const url = (import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_CONFIG.url)?.trim();
-  const key = (import.meta.env.VITE_SUPABASE_KEY || DEFAULT_SUPABASE_CONFIG.key)?.trim();
+  const url = ((typeof import.meta.env !== "undefined" ? import.meta.env.VITE_SUPABASE_URL : undefined) || DEFAULT_SUPABASE_CONFIG.url)?.trim();
+  const key = ((typeof import.meta.env !== "undefined" ? import.meta.env.VITE_SUPABASE_KEY : undefined) || DEFAULT_SUPABASE_CONFIG.key)?.trim();
 
   // Log de diagnóstico detalhado para verificar a disponibilidade das credenciais no frontend
   console.log('[getSupabase] Verificação de credenciais:', {
@@ -1043,7 +1046,7 @@ export const financeService = {
     if (!session?.user) throw new Error("Usuário não autenticado");
 
     // Chama o endpoint servidor que usa service_role (bypassa RLS)
-    const apiUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+    const apiUrl = (typeof import.meta.env !== "undefined" ? import.meta.env.VITE_APP_URL : undefined) || (typeof window !== "undefined" ? window.location.origin : "");
     const response = await fetch(`${apiUrl}/api/accept-invitation`, {
       method: 'POST',
       headers: {
@@ -1068,7 +1071,7 @@ export const financeService = {
     if (!session?.user) throw new Error("Usuário não autenticado");
 
     // Passa o email direto ao servidor — ele faz o SELECT com service_role
-    const apiUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+    const apiUrl = (typeof import.meta.env !== "undefined" ? import.meta.env.VITE_APP_URL : undefined) || (typeof window !== "undefined" ? window.location.origin : "");
     const response = await fetch(`${apiUrl}/api/accept-invitation`, {
       method: 'POST',
       headers: {
@@ -1922,7 +1925,8 @@ export const financeService = {
       wallets: 'wallets',
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
-      assetTickers: 'asset_tickers'
+      assetTickers: 'asset_tickers',
+      merchantAliases: 'merchant_aliases'
     };
     
     if (supabase) {
@@ -2221,7 +2225,8 @@ export const financeService = {
       wallets: 'wallets',
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
-      assetTickers: 'asset_tickers'
+      assetTickers: 'asset_tickers',
+      merchantAliases: 'merchant_aliases'
     };
     
     // Obter antigo nome para sincronização em cascata se for edição de tipo ou setor
@@ -2454,7 +2459,8 @@ export const financeService = {
       wallets: 'wallets',
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
-      assetTickers: 'asset_tickers'
+      assetTickers: 'asset_tickers',
+      merchantAliases: 'merchant_aliases'
     };
     
     const fkMap: any = { 
@@ -2612,7 +2618,8 @@ export const financeService = {
       wallets: 'wallets',
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
-      assetTickers: 'asset_tickers'
+      assetTickers: 'asset_tickers',
+      merchantAliases: 'merchant_aliases'
     };
     
     // Mapeamento de quais tabelas e colunas precisam ser atualizadas quando um registro deste tipo é unificado
@@ -2910,7 +2917,8 @@ export const financeService = {
       wallets: 'wallets',
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
-      assetTickers: 'asset_tickers'
+      assetTickers: 'asset_tickers',
+      merchantAliases: 'merchant_aliases'
     };
     
     const updateTargets: Record<string, Array<{ table: string, column: string, localKey: string }>> = {
@@ -3142,7 +3150,8 @@ export const financeService = {
       wallets: 'wallets',
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
-      assetTickers: 'asset_tickers'
+      assetTickers: 'asset_tickers',
+      merchantAliases: 'merchant_aliases'
     };
 
     // Invalida cache
@@ -3281,5 +3290,26 @@ export const financeService = {
       console.error("[getUserModulePermissions] Falhou ao resolver permissões do usuário:", err);
       return defaultPermissions;
     }
+  },
+
+  async getMerchantAliases(): Promise<MerchantAlias[]> {
+    if (!this.activeOrganizationId) return [];
+    const supabase = getSupabase();
+    if (!supabase) return [];
+    const { data, error } = await supabase
+      .from('merchant_aliases')
+      .select('*')
+      .is('deleted_at', null)
+      .eq('active', true);
+    if (error) throw error;
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      organizationId: row.organization_id,
+      rawPattern: row.raw_pattern,
+      canonicalName: row.canonical_name,
+      defaultCategoryId: row.default_category_id ?? null,
+      defaultCostCenterId: row.default_cost_center_id ?? null,
+      active: row.active,
+    }));
   }
 };
