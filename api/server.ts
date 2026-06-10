@@ -60,32 +60,33 @@ if (typeof pdfParseRaw === "function") {
 }
 
 async function extractPdfText(base64: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const pdfParser = new Pdf2Json(null, 1);
-    pdfParser.on("pdfParser_dataError", (err: any) => reject(err.parserError));
-    pdfParser.on("pdfParser_dataReady", (pdfData: any) => {
-      try {
-        let text = "";
-        for (const page of (pdfData.Pages || [])) {
-          for (const textItem of (page.Texts || [])) {
-            for (const run of (textItem.R || [])) {
-              try {
-                text += decodeURIComponent(run.T) + " ";
-              } catch {
-                text += run.T + " ";
-              }
-            }
+  const buffer = Buffer.from(base64, "base64");
+  const pageTexts: string[] = [];
+
+  const options = {
+    pagerender: function(pageData: any): Promise<string> {
+      return pageData.getTextContent({
+        normalizeWhitespace: true,
+        disableCombineTextItems: false
+      }).then(function(textContent: any) {
+        let lastY = -1;
+        let pageText = "";
+        for (const item of textContent.items) {
+          const y = item.transform ? item.transform[5] : 0;
+          if (lastY !== -1 && Math.abs(y - lastY) > 5) {
+            pageText += "\n";
           }
-          text += "\n";
+          pageText += item.str;
+          lastY = y;
         }
-        resolve(text);
-      } catch (e) {
-        reject(e);
-      }
-    });
-    const buffer = Buffer.from(base64, "base64");
-    pdfParser.parseBuffer(buffer);
-  });
+        pageTexts.push(pageText);
+        return pageText;
+      });
+    }
+  };
+
+  await pdfParse(buffer, options);
+  return pageTexts.join("\n");
 }
 
 // =========================================================================
