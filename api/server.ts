@@ -1596,7 +1596,6 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
     const parseResult = parseItauFaturaWithRegex(extractedText);
 
     if (!parseResult.lancamentos || parseResult.lancamentos.length === 0) {
-      // Diagnóstico: retornar info sobre o texto extraído para entender o problema
       const textSample = extractedText.substring(0, 200).replace(/\n/g, '|');
       const hasLancamentos = extractedText.includes('amentos no cart');
       const hasFinal = extractedText.includes('final');

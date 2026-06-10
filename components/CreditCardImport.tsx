@@ -204,7 +204,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       } else {
         // Parser regex falhou — mostrar erro diagnóstico
         const errData = await regexRes.json().catch(() => ({}));
-        throw new Error('Parser regex falhou (422): ' + (errData.error || JSON.stringify(errData).substring(0, 200)));
+        throw new Error('Parser regex falhou (422): ' + (errData.error || JSON.stringify(errData).substring(0, 300)));
       }
 
       // 5. Conciliando com Contas a Pagar
