@@ -103,7 +103,7 @@ export function parseItauFaturaWithRegex(pdfText: string): FaturaParseResult {
 
   // Extrair totais âncora por cartão: "Lançamentos no cartão (final XXXX) YY.YYY,YY"
   const anchorMap: Record<string, number> = {};
-  const anchorRe = /Lançamentos\s+no\s+cartão\s+\(final\s+(\d{4})\)\s+([\d.]+,\d{2})/gi;
+  const anchorRe = /Lan[çc]amentos\s+no\s+cart[ãa]o\s+\(final\s+(\d{4})\)\s+([\d.]+,\d{2})/gi;
   let am;
   while ((am = anchorRe.exec(pdfText)) !== null) {
     anchorMap[am[1]] = parsePtBrFloat(am[2]);
@@ -111,7 +111,7 @@ export function parseItauFaturaWithRegex(pdfText: string): FaturaParseResult {
 
   // Extrair ordem dos cartões pela ordem de aparição dos headers
   const cardOrderMap: Array<{ final: string; titular: string }> = [];
-  const headerRe = /([A-ZÁÀÃÂÉÊÍÓÔÕÚÇ\s]+)\(final\s+(\d{4})\)/gi;
+  const headerRe = /([A-ZÁÀÃÂÉÊÍÓÔÕÚÇa-záàãâéêíóôõúç\s]+)\(final\s+(\d{4})\)/gi;
   let hm;
   while ((hm = headerRe.exec(pdfText)) !== null) {
     const cardFinal = hm[2].trim();
@@ -1595,12 +1595,11 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
 
     const parseResult = parseItauFaturaWithRegex(extractedText);
 
-    console.log("[parse-fatura] cartoes:", JSON.stringify(parseResult.cartoes));
-    console.log("[parse-fatura] lancamentos count:", parseResult.lancamentos?.length);
+    console.log("[fatura] anchors=" + JSON.stringify(parseResult.cartoes) + " items=" + parseResult.lancamentos.length);
 
     if (!parseResult.lancamentos || parseResult.lancamentos.length === 0) {
       return res.status(422).json({
-        error: "Nenhum lançamento identificado pelo parser. Verifique os logs do servidor.",
+        error: "Parser 0 lancamentos. anchors=" + JSON.stringify(parseResult.cartoes),
         parseResult
       });
     }
