@@ -10,6 +10,24 @@ import crypto from "crypto";
 import helmet from "helmet";
 // parseItauFaturaWithRegex definida inline abaixo (compatibilidade Vercel serverless)
 
+// Polyfill necessário para pdf-parse 2.x no ambiente serverless do Vercel
+if (typeof globalThis.DOMMatrix === 'undefined') {
+  (globalThis as any).DOMMatrix = class DOMMatrix {
+    constructor() {}
+    static fromMatrix() { return new (globalThis as any).DOMMatrix(); }
+  };
+}
+if (typeof globalThis.ImageData === 'undefined') {
+  (globalThis as any).ImageData = class ImageData {
+    constructor() {}
+  };
+}
+if (typeof globalThis.Path2D === 'undefined') {
+  (globalThis as any).Path2D = class Path2D {
+    constructor() {}
+  };
+}
+
 const require = createRequire(import.meta.url);
 const pdfParseRaw = require("pdf-parse");
 
