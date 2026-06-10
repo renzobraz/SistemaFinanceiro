@@ -134,7 +134,15 @@ export interface FaturaParseResult {
 }
 
 export function parseItauFaturaWithRegex(pdfText: string): FaturaParseResult {
-  const lines = pdfText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  // Para pdf2json: juntar linhas removendo espaços extras entre caracteres
+  // O pdf2json fragmenta palavras com acentos
+  const normalizedText = pdfText
+    .replace(/L\s*a\s*n\s*[cç]\s*a\s*m\s*e\s*n\s*t\s*o\s*s/gi, 'Lançamentos')
+    .replace(/c\s*a\s*r\s*t\s*[aã]\s*o/gi, 'cartão')
+    .replace(/([a-z])\s+([ãáàâéêíóôõúç])/gi, '$1$2')
+    .replace(/([ãáàâéêíóôõúç])\s+([a-z])/gi, '$1$2');
+
+  const lines = normalizedText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
   let vencimento = "";
   let total_fatura = 0;
