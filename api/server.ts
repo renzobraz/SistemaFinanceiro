@@ -82,11 +82,18 @@ async function extractPdfText(base64: string): Promise<string> {
         pageTexts.push(pageText);
         return pageText;
       });
-    }
+    },
+    max: 0  // 0 = sem limite de páginas
   };
 
-  await pdfParse(buffer, options);
-  return pageTexts.join("\n");
+  const result = await pdfParse(buffer, options);
+
+  // Se pageTexts tem conteúdo, usar ele; senão usar o result.text padrão
+  const combined = pageTexts.length > 0
+    ? pageTexts.join("\n---PAGINA---\n")
+    : (result.text || "");
+
+  return combined;
 }
 
 // =========================================================================
@@ -1654,10 +1661,11 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
 
     if (!parseResult.lancamentos || parseResult.lancamentos.length === 0) {
       const textSample = extractedText.substring(0, 200).replace(/\n/g, '|');
-      const hasLancamentos = extractedText.includes('amentos no cart');
+      const hasLancamentos = extractedText.includes('amentos no cart') || extractedText.includes('Lança') || extractedText.includes('cart');
       const hasFinal = extractedText.includes('final');
+      const pageCount = (extractedText.match(/---PAGINA---/g) || []).length + 1;
       return res.status(422).json({
-        error: "Parser 0 lancamentos. hasLancamentos=" + hasLancamentos + " hasFinal=" + hasFinal + " textLen=" + extractedText.length + " sample=" + textSample,
+        error: "Parser 0 lancamentos. pages=" + pageCount + " hasLancamentos=" + hasLancamentos + " hasFinal=" + hasFinal + " textLen=" + extractedText.length + " sample=" + textSample,
         parseResult
       });
     }
