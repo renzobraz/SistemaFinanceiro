@@ -8,7 +8,7 @@ import { createRequire } from "module";
 import { rateLimit } from "express-rate-limit";
 import crypto from "crypto";
 import helmet from "helmet";
-import { parseItauFaturaWithRegex } from "../services/geminiService";
+// parseItauFaturaWithRegex definida inline abaixo (compatibilidade Vercel serverless)
 
 const require = createRequire(import.meta.url);
 const pdfParseRaw = require("pdf-parse");
@@ -39,6 +39,200 @@ if (typeof pdfParseRaw === "function") {
     return fn(buffer, options);
   };
 }
+
+// =========================================================================
+// PARSER DE FATURA ITAÚ — INLINE (resolve ERR_MODULE_NOT_FOUND no Vercel)
+// =========================================================================
+export function parsePtBrFloat(str: string): number {
+  if (!str) return 0;
+  const clean = str.replace(/\./g, "").replace(",", ".");
+  return parseFloat(clean) || 0;
+}
+
+export function parseDateToIso(dateStr: string): string {
+  if (!dateStr) return "";
+  const parts = dateStr.trim().split("/");
+  if (parts.length === 3) {
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+  return dateStr;
+}
+
+export interface FaturaLancamento {
+  data: string;           // "dd/mm" conforme consta na fatura
+  estabelecimento: string; // nome limpo do estabelecimento
+  valor: number;          // em reais, negativo para estornos
+  parcela_atual?: number; // ex: 10 (de "10/18")
+  total_parcelas?: number; // ex: 18 (de "10/18")
+  e_parcelado: boolean;
+  e_estorno: boolean;     // true se valor negativo
+  cartao_final: string;   // qual cartão gerou este lançamento
+}
+
+export interface CartaoInfo {
+  titular: string;
+  final: string;
+  total: number;  // valor total dos lançamentos deste cartão
+}
+
+export interface FaturaParseResult {
+  titular: string;
+  cartao_final: string;   // ex: "2933"
+  cartoes: CartaoInfo[];  // todos os cartões encontrados
+  vencimento: string;     // "dd/mm/yyyy"
+  total_fatura: number;
+  lancamentos: FaturaLancamento[];
+  erros_parse: string[];  // linhas que não foram reconhecidas
+}
+
+export function parseItauFaturaWithRegex(pdfText: string): FaturaParseResult {
+  const lines = pdfText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  let vencimento = "";
+  let total_fatura = 0;
+  let titular = "Não identificado";
+  let cartao_final = "";
+
+  // Extrair metadados: vencimento e total
+  for (const line of lines) {
+    const vencMatch = line.match(/Vencimento:?\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if (vencMatch) vencimento = vencMatch[1];
+    const totalMatch = line.match(/Total desta fatura\s*([\d.]+,\d{2})/i);
+    if (totalMatch) total_fatura = parsePtBrFloat(totalMatch[1]);
+  }
+
+  // Extrair totais âncora por cartão: "Lançamentos no cartão (final XXXX) YY.YYY,YY"
+  const anchorMap: Record<string, number> = {};
+  const anchorRe = /Lan[^\r\n]{0,30}cart[^\r\n]{0,20}final\s+(\d{4})[^\r\n]{0,10}([\d.]+,\d{2})/gi;
+  let am;
+  while ((am = anchorRe.exec(pdfText)) !== null) {
+    anchorMap[am[1]] = parsePtBrFloat(am[2]);
+  }
+
+  // Extrair ordem dos cartões pela ordem de aparição dos headers
+  const cardOrderMap: Array<{ final: string; titular: string }> = [];
+  const headerRe = /([A-ZÁÀÃÂÉÊÍÓÔÕÚÇ\s]+)\(final\s+(\d{4})\)/gi;
+  let hm;
+  while ((hm = headerRe.exec(pdfText)) !== null) {
+    const cardFinal = hm[2].trim();
+    if (!cardOrderMap.some(c => c.final === cardFinal)) {
+      cardOrderMap.push({ final: cardFinal, titular: hm[1].trim() });
+    }
+  }
+
+  if (cardOrderMap.length > 0) {
+    titular = cardOrderMap[0].titular;
+    cartao_final = cardOrderMap[0].final;
+  }
+
+  // Capturar TODOS os lançamentos antes da âncora de parada
+  const LAUNCH_RE = /^[@⊕⊞\W]*(\d{2}\/\d{2})\s+(.+?)\s+(?:(\d{2})\/(\d{2})\s+)?(-?\s*[\d.]+,\d{2})$/;
+  const CAT_RE = /^[A-ZÁÀÃÂÉÊÍÓÔÕÚÇ\s]+\s+\.[A-Z\s]+$/i;
+
+  const rawItems: Array<{
+    data: string; estabelecimento: string; valor: number;
+    parcela_atual?: number; total_parcelas?: number;
+    e_parcelado: boolean; e_estorno: boolean;
+  }> = [];
+
+  const erros_parse: string[] = [];
+
+  for (const line of lines) {
+    const lu = line.toUpperCase();
+    // Parar ao encontrar fim dos lançamentos atuais
+    if (lu.includes("TOTAL DOS LAN") || lu.includes("COMPRAS PARCELADAS - PR") ||
+        (lu.includes("COMPRAS PARCELADAS") && lu.includes("XIMAS"))) {
+      break;
+    }
+    // Ignorar categorias e cabeçalhos
+    if (CAT_RE.test(line)) continue;
+    if (lu.includes("DATA") && lu.includes("ESTABELECIMENTO")) continue;
+    if (lu.includes("VALOR EM R$")) continue;
+
+    if (/^[@⊕⊞\W]*\d{2}\/\d{2}/.test(line)) {
+      const m = line.match(LAUNCH_RE);
+      if (m) {
+        let valStr = m[5].replace(/\s+/g, "");
+        let isNeg = false;
+        if (valStr.startsWith("-")) { isNeg = true; valStr = valStr.substring(1); }
+        const valor = isNeg ? -parsePtBrFloat(valStr) : parsePtBrFloat(valStr);
+        const partCurrent = m[3] ? parseInt(m[3], 10) : undefined;
+        const partTotal = m[4] ? parseInt(m[4], 10) : undefined;
+        rawItems.push({
+          data: m[1],
+          estabelecimento: m[2].trim().replace(/\s+/g, " "),
+          valor,
+          ...(partCurrent !== undefined ? { parcela_atual: partCurrent } : {}),
+          ...(partTotal !== undefined ? { total_parcelas: partTotal } : {}),
+          e_parcelado: partCurrent !== undefined && partTotal !== undefined,
+          e_estorno: valor < 0,
+        });
+      } else {
+        erros_parse.push(line);
+      }
+    }
+  }
+
+  // Distribuir lançamentos pelos cartões usando âncoras como limite
+  // Algoritmo: para cada item, tentar colocar no primeiro cartão que ainda tem espaço
+  // Itens que não cabem em nenhum cartão são parcelas futuras — ignorados
+  const TOLERANCE = 5.0; // tolerância de R$5,00 para arredondamentos acumulados
+  const cardAcc: Record<string, number> = {};
+  const cardExhausted = new Set<string>();
+  const lancamentos: FaturaLancamento[] = [];
+
+  for (const item of rawItems) {
+    let placed = false;
+    for (const card of cardOrderMap) {
+      if (cardExhausted.has(card.final)) continue;
+      const anchor = anchorMap[card.final];
+      if (anchor === undefined) {
+        // Cartão sem âncora: aceitar tudo
+        if (!cardAcc[card.final]) cardAcc[card.final] = 0;
+        cardAcc[card.final] += Math.abs(item.valor);
+        lancamentos.push({ ...item, cartao_final: card.final });
+        placed = true;
+        break;
+      }
+      const newAcc = (cardAcc[card.final] || 0) + Math.abs(item.valor);
+      if (newAcc <= anchor + TOLERANCE) {
+        cardAcc[card.final] = newAcc;
+        if (newAcc >= anchor - TOLERANCE) cardExhausted.add(card.final);
+        lancamentos.push({ ...item, cartao_final: card.final });
+        placed = true;
+        break;
+      }
+    }
+    // Se não coube em nenhum cartão: é parcela futura, ignorar
+    if (!placed) {
+      // não adicionar em erros_parse — são parcelas futuras esperadas
+    }
+  }
+
+  // Construir CartaoInfo
+  const cartaoMap = new Map<string, CartaoInfo>();
+  for (const card of cardOrderMap) {
+    cartaoMap.set(card.final, { titular: card.titular, final: card.final, total: 0 });
+  }
+  for (const l of lancamentos) {
+    if (cartaoMap.has(l.cartao_final)) {
+      cartaoMap.get(l.cartao_final)!.total += l.valor;
+    }
+  }
+  const cartoes = Array.from(cartaoMap.values());
+
+  return {
+    titular,
+    cartao_final,
+    cartoes,
+    vencimento,
+    total_fatura,
+    lancamentos,
+    erros_parse
+  };
+}
+// =========================================================================
+
 
 const yahoo = new YahooFinance();
 
@@ -1350,10 +1544,11 @@ app.post("/api/extract-pdf-text", pdfLimiter, async (req: any, res: any) => {
       if (parseError.message?.toLowerCase().includes("password") || parseError.name === "PasswordException") {
         return res.status(400).json({ error: "Este PDF está protegido por senha. Remova a proteção antes de importar." });
       }
-      throw parseError;
+      console.error("[extract-pdf-text] Erro no pdfParse:", parseError?.message, parseError?.name);
+      return res.status(500).json({ error: `Erro ao processar PDF: ${parseError?.message || "erro desconhecido"}` });
     }
 
-    const extractedText = pdfData.text || "";
+    const extractedText = pdfData?.text || "";
 
     // PDF baseado em imagem (escaneado) não tem texto selecionável
     if (extractedText.trim().length < 50) {
@@ -1362,7 +1557,7 @@ app.post("/api/extract-pdf-text", pdfLimiter, async (req: any, res: any) => {
 
     return res.json({ text: extractedText });
   } catch (error: any) {
-    console.error("Erro ao extrair texto do PDF:", error);
+    console.error("[extract-pdf-text] Erro geral:", error?.message, typeof pdfParse);
     return res.status(500).json({ error: error.message || "Erro ao extrair texto do PDF" });
   }
 });
