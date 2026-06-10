@@ -141,7 +141,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       const regexRes = await fetch('/api/parse-fatura-cartao', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pdfBase64: base64 }),
+        body: JSON.stringify({ pdfBase64: base64, extractedText: text }),
       });
 
       if (regexRes.ok) {

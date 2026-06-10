@@ -1583,48 +1583,29 @@ app.post("/api/extract-pdf-text", pdfLimiter, async (req: any, res: any) => {
 // API Itaú Credit Card Statement Parser via Regex
 app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
   try {
-    const { pdfBase64, accountId } = req.body;
-    if (!pdfBase64) {
-      return res.status(400).json({ error: "O parâmetro 'pdfBase64' é obrigatório." });
+    const { pdfBase64, accountId, extractedText: textFromRequest } = req.body;
+    if (!pdfBase64 && !textFromRequest) {
+      return res.status(400).json({ error: "O parâmetro 'pdfBase64' ou 'extractedText' é obrigatório." });
     }
 
-    // Limite de tamanho: 10MB em base64
-    if (pdfBase64.length > 10 * 1024 * 1024) {
-      return res.status(413).json({ error: "Arquivo muito grande. O tamanho máximo permitido é 10MB." });
-    }
+    let extractedText = textFromRequest || "";
 
-    // Extrair texto usando pdf-parse com callback customizado para todas as páginas
-    const buffer = Buffer.from(pdfBase64, "base64");
-    let extractedText = "";
-    try {
-      const pdfData = await pdfParse(buffer, {
-        version: 'default',
-        pagerender: function(pageData: any) {
-          const renderOptions = {
-            normalizeWhitespace: false,
-            disableCombineTextItems: false
-          };
-          return pageData.getTextContent(renderOptions).then(function(textContent: any) {
-            let lastY: any, text = '';
-            for (const item of textContent.items) {
-              if (lastY == item.transform[5] || !lastY) {
-                text += item.str;
-              } else {
-                text += '\n' + item.str;
-              }
-              lastY = item.transform[5];
-            }
-            return text;
-          });
-        }
-      });
-      extractedText = pdfData.text || "";
-    } catch (parseError: any) {
-      return res.status(500).json({ error: "Erro ao extrair texto do PDF: " + parseError.message });
+    if (!extractedText && pdfBase64) {
+      // Limite de tamanho: 10MB em base64
+      if (pdfBase64.length > 10 * 1024 * 1024) {
+        return res.status(413).json({ error: "Arquivo muito grande. O tamanho máximo permitido é 10MB." });
+      }
+      const buffer = Buffer.from(pdfBase64, "base64");
+      try {
+        const pdfData = await pdfParse(buffer, { version: 'default' });
+        extractedText = pdfData?.text || "";
+      } catch (parseError: any) {
+        return res.status(500).json({ error: "Erro ao extrair texto do PDF: " + parseError.message });
+      }
     }
 
     if (!extractedText || extractedText.trim().length < 100) {
-      return res.status(422).json({ error: "Não foi possível extrair texto suficiente da fatura. textLen=" + extractedText.length });
+      return res.status(422).json({ error: "Texto insuficiente. textLen=" + extractedText.length });
     }
 
     console.log("[debug] primeiros 500 chars:", extractedText.substring(0, 500));
