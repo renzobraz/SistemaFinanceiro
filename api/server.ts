@@ -30,6 +30,7 @@ if (typeof globalThis.Path2D === 'undefined') {
 
 const require = createRequire(import.meta.url);
 const pdfParseRaw = require("pdf-parse");
+const Pdf2Json = require('pdf2json');
 
 // Adapter Pattern: compatibilidade universal com pdf-parse v1.x, v2.x e interop ESM/CJS
 let pdfParse: (buffer: Buffer, options?: any) => Promise<{ text: string }>;
@@ -56,6 +57,31 @@ if (typeof pdfParseRaw === "function") {
     }
     return fn(buffer, options);
   };
+}
+
+async function extractPdfText(base64: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const pdfParser = new Pdf2Json(null, 1);
+    pdfParser.on("pdfParser_dataError", (err: any) => reject(err.parserError));
+    pdfParser.on("pdfParser_dataReady", (pdfData: any) => {
+      try {
+        let text = "";
+        for (const page of (pdfData.Pages || [])) {
+          for (const textItem of (page.Texts || [])) {
+            for (const run of (textItem.R || [])) {
+              text += decodeURIComponent(run.T) + " ";
+            }
+          }
+          text += "\n";
+        }
+        resolve(text);
+      } catch (e) {
+        reject(e);
+      }
+    });
+    const buffer = Buffer.from(base64, "base64");
+    pdfParser.parseBuffer(buffer);
+  });
 }
 
 // =========================================================================
@@ -1554,19 +1580,12 @@ app.post("/api/extract-pdf-text", pdfLimiter, async (req: any, res: any) => {
       return res.status(413).json({ error: "Arquivo muito grande. O tamanho máximo permitido é 10MB." });
     }
 
-    const buffer = Buffer.from(base64, "base64");
-    let pdfData;
+    let extractedText = "";
     try {
-      pdfData = await pdfParse(buffer, { version: 'default' });
+      extractedText = await extractPdfText(base64);
     } catch (parseError: any) {
-      if (parseError.message?.toLowerCase().includes("password") || parseError.name === "PasswordException") {
-        return res.status(400).json({ error: "Este PDF está protegido por senha. Remova a proteção antes de importar." });
-      }
-      console.error("[extract-pdf-text] Erro no pdfParse:", parseError?.message, parseError?.name);
-      return res.status(500).json({ error: `Erro ao processar PDF: ${parseError?.message || "erro desconhecido"}` });
+      return res.status(500).json({ error: "Erro ao extrair texto do PDF: " + parseError.message });
     }
-
-    const extractedText = pdfData?.text || "";
 
     // PDF baseado em imagem (escaneado) não tem texto selecionável
     if (extractedText.trim().length < 50) {
