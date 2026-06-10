@@ -69,7 +69,11 @@ async function extractPdfText(base64: string): Promise<string> {
         for (const page of (pdfData.Pages || [])) {
           for (const textItem of (page.Texts || [])) {
             for (const run of (textItem.R || [])) {
-              text += decodeURIComponent(run.T) + " ";
+              try {
+                text += decodeURIComponent(run.T) + " ";
+              } catch {
+                text += run.T + " ";
+              }
             }
           }
           text += "\n";
