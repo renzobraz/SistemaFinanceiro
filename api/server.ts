@@ -1593,6 +1593,12 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
       return res.status(422).json({ error: "O arquivo parece ser uma imagem digitalizada sem texto selecionável. Por favor, envie o PDF digital disponibilizado pelo aplicativo do banco." });
     }
 
+    console.log("[debug] primeiros 500 chars:", extractedText.substring(0, 500));
+    console.log("[debug] tem 'final':", extractedText.includes('final'));
+    console.log("[debug] tem 'Lancamentos':", extractedText.includes('Lancamentos'));
+    console.log("[debug] tem 'cartao':", extractedText.includes('cartao'));
+    console.log("[debug] total length:", extractedText.length);
+
     const parseResult = parseItauFaturaWithRegex(extractedText);
 
     if (!parseResult.lancamentos || parseResult.lancamentos.length === 0) {
