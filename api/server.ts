@@ -103,7 +103,7 @@ export function parseItauFaturaWithRegex(pdfText: string): FaturaParseResult {
 
   // Extrair totais âncora por cartão: "Lançamentos no cartão (final XXXX) YY.YYY,YY"
   const anchorMap: Record<string, number> = {};
-  const anchorRe = /Lan[^\r\n]{0,30}cart[^\r\n]{0,20}final\s+(\d{4})[^\r\n]{0,10}([\d.]+,\d{2})/gi;
+  const anchorRe = /Lançamentos\s+no\s+cartão\s+\(final\s+(\d{4})\)\s+([\d.]+,\d{2})/gi;
   let am;
   while ((am = anchorRe.exec(pdfText)) !== null) {
     anchorMap[am[1]] = parsePtBrFloat(am[2]);
