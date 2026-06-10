@@ -30,7 +30,14 @@ if (typeof pdfParseRaw === "function") {
     return { text: result.text || "" };
   };
 } else {
-  throw new Error("Não foi possível inicializar um parser de PDF compatível.");
+  // Fallback seguro: tentar chamar com qualquer formato disponível
+  pdfParse = async (buffer: Buffer, options?: any) => {
+    const fn = pdfParseRaw?.default?.default || pdfParseRaw?.default || pdfParseRaw;
+    if (typeof fn !== "function") {
+      throw new Error("pdf-parse: formato de exportação não reconhecido.");
+    }
+    return fn(buffer, options);
+  };
 }
 
 const yahoo = new YahooFinance();
