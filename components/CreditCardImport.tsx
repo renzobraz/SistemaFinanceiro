@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ParticipantAutocomplete } from './ParticipantAutocomplete';
 import { motion } from 'motion/react';
 import { 
   FileUp, 
@@ -72,7 +73,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [createdNews, setCreatedNews] = useState<Record<number, boolean>>({});
   const [itemCategories, setItemCategories] = useState<Record<number, string>>({});
   const [itemCostCenters, setItemCostCenters] = useState<Record<number, string>>({});
-  const [selectedParticipants, setSelectedParticipants] = useState<Record<number, string>>({});
+  const [itemParticipants, setItemParticipants] = useState<Record<number, string>>({});
   const [generateFutureInstallments, setGenerateFutureInstallments] = useState<Record<number, boolean>>({});
 
   const [sectionsOpen, setSectionsOpen] = useState({
@@ -451,7 +452,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             walletId: wallets[0]?.id ?? '',
             categoryId: itemCategories[index] || '',
             costCenterId: itemCostCenters[index] || '',
-            participantId: selectedParticipants[index] || '',
+            participantId: itemParticipants[index] || undefined,
             docNumber: '',
             organization_id: financeService.activeOrganizationId ?? undefined,
           } as Transaction);
@@ -478,7 +479,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 walletId: wallets[0]?.id ?? '',
                 categoryId: itemCategories[index] || '',
                 costCenterId: itemCostCenters[index] || '',
-                participantId: selectedParticipants[index] || '',
+                participantId: itemParticipants[index] || undefined,
                 docNumber: '',
                 organization_id: financeService.activeOrganizationId ?? undefined,
               } as Transaction);
@@ -881,6 +882,22 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                   </label>
                                 </div>
                               </div>
+
+                              {selectedValue === 'NEW' && (
+                                <div>
+                                  <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider mb-1">Participante (opcional)</p>
+                                  <ParticipantAutocomplete
+                                    participants={participants}
+                                    selectedParticipantId={itemParticipants[idx] || ''}
+                                    onSelect={(id) => setItemParticipants(prev => ({ ...prev, [idx]: id }))}
+                                    onAddParticipant={async (name) => {
+                                      const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
+                                      return newP;
+                                    }}
+                                    placeholder="Participante (opcional)..."
+                                  />
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -982,23 +999,16 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                         </select>
                                       </div>
                                       <div>
-                                        <select
-                                          value={selectedParticipants[idx] || ''}
-                                          onChange={(e) => {
-                                            setSelectedParticipants(prev => ({
-                                              ...prev,
-                                              [idx]: e.target.value
-                                            }));
+                                        <ParticipantAutocomplete
+                                          participants={participants}
+                                          selectedParticipantId={itemParticipants[idx] || ''}
+                                          onSelect={(id) => setItemParticipants(prev => ({ ...prev, [idx]: id }))}
+                                          onAddParticipant={async (name) => {
+                                            const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
+                                            return newP;
                                           }}
-                                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-                                        >
-                                          <option value="">Participante (opcional)...</option>
-                                          {participants.map((p) => (
-                                            <option key={p.id} value={p.id}>
-                                              {p.name}
-                                            </option>
-                                          ))}
-                                        </select>
+                                          placeholder="Participante (opcional)..."
+                                        />
                                       </div>
                                     </div>
                                     {item.statementItem.installmentTotal !== undefined &&
