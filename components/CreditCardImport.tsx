@@ -61,6 +61,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [file, setFile] = useState<File | null>(null);
   const [selectedBankId, setSelectedBankId] = useState<string>('');
   const [selectedWalletId, setSelectedWalletId] = useState<string>('');
+  const [dueDate, setDueDate] = useState<string>('');
   
   const [progressMsg, setProgressMsg] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -459,7 +460,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           || new Date().toISOString().split('T')[0];
 
         const buildNew = (status: 'PAID' | 'PENDING', desc: string, date: string) => ({
-          id: '', date, description: desc,
+          id: '', date: status === 'PAID' ? dueDate : date, description: desc,
           value: item.statementItem.value,
           type: item.statementItem.isRefund ? 'CREDIT' : 'DEBIT',
           status,
@@ -511,6 +512,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
       if (transactionIdsToMarkPaid.length > 0) {
         await financeService.updateTransactionsStatus(transactionIdsToMarkPaid, 'PAID');
+        await financeService.updateTransactionsDate(transactionIdsToMarkPaid, dueDate);
       }
 
       if (newTransactions.length > 0) {
@@ -695,6 +697,18 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </select>
               </div>
 
+              <div className="space-y-2">
+                <label className="text-xs font-black text-slate-400 uppercase tracking-widest block">
+                  Data de vencimento da fatura <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-700 font-medium focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 text-sm transition-all"
+                />
+              </div>
+
               <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
                 <button
                   type="button"
@@ -705,7 +719,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </button>
                 <button
                   onClick={handleProcess}
-                  disabled={!file || !selectedBankId || !selectedWalletId}
+                  disabled={!file || !selectedBankId || !selectedWalletId || !dueDate}
                   className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-md shadow-blue-200"
                 >
                   Processar fatura
