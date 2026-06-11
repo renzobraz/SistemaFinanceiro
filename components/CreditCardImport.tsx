@@ -580,6 +580,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
   const conferredTotal = localizedTotal + newTotal + matchedTotal;
   const statementTotal = statement?.grandAnchorTotal || statement?.grandParsedTotal || 0;
+  console.log('[resumo] statementTotal:', statementTotal, 'statement:', JSON.stringify({ grandAnchorTotal: statement?.grandAnchorTotal, grandParsedTotal: statement?.grandParsedTotal, metadata: statement?.metadata }));
   const totalsMatch = Math.abs(conferredTotal - statementTotal) < 0.05;
 
   return (
