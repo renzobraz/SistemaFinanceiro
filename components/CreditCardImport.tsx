@@ -528,7 +528,10 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       });
 
       if (newTransactions.length > 0) {
+        console.log('[import] tentando criar', newTransactions.length, 'lançamentos');
+        console.log('[import] primeiro lançamento:', JSON.stringify(newTransactions[0]));
         await financeService.createManyTransactions(newTransactions);
+        console.log('[import] criados com sucesso');
         const batchInfo = {
           id: importBatchId,
           date: new Date().toISOString(),
