@@ -74,6 +74,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [itemCategories, setItemCategories] = useState<Record<number, string>>({});
   const [itemCostCenters, setItemCostCenters] = useState<Record<number, string>>({});
   const [itemParticipants, setItemParticipants] = useState<Record<number, string>>({});
+  const [itemDescriptions, setItemDescriptions] = useState<Record<number, string>>({});
   const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
   const [lastBatch, setLastBatch] = useState<{ id: string; date: string; count: number; description: string } | null>(null);
   const [undoing, setUndoing] = useState(false);
@@ -468,13 +469,17 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
         if (shouldCreate) {
           const installNum = item.statementItem.installmentNumber;
           const installTotal = item.statementItem.installmentTotal;
-          const baseDesc = item.statementItem.installmentNumber
-            ? `${item.statementItem.rawDescription} (${installNum}/${installTotal ?? '?'})`
-            : item.statementItem.rawDescription;
+          const customDesc = itemDescriptions[index] || item.statementItem.rawDescription || '';
+          const baseDesc = installNum
+            ? `${customDesc} (${installNum}/${installTotal ?? '?'})`
+            : customDesc;
+          const baseDate = statement.metadata.dueDate
+            || item.statementItem.purchaseDate
+            || new Date().toISOString().split('T')[0];
 
           newTransactions.push({
             id: '',
-            date: statement.metadata.dueDate,
+            date: baseDate,
             description: baseDesc,
             value: item.statementItem.value,
             type: item.statementItem.isRefund ? 'CREDIT' : 'DEBIT',
@@ -765,7 +770,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   }}
                   className="text-blue-600 hover:text-blue-800 font-medium"
                 >
-                  ✓ Selecionar todos provisionados
+                  ✓ Selecionar todos gastos
                 </button>
                 <span className="text-slate-300">|</span>
                 <button
@@ -779,7 +784,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   }}
                   className="text-slate-500 hover:text-slate-700 font-medium"
                 >
-                  ✗ Desmarcar todos provisionados
+                  ✗ Desmarcar todos gastos
                 </button>
                 <span className="text-slate-300">|</span>
                 <button
@@ -793,7 +798,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   }}
                   className="text-orange-600 hover:text-orange-800 font-medium"
                 >
-                  ⚡ Definir todos incertos como novo
+                  ⚡ Definir todos localizados como novo
                 </button>
                 <span className="text-slate-300">|</span>
                 <button
@@ -935,7 +940,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                         <span className="bg-amber-600 text-white rounded-full text-xs w-5 h-5 flex items-center justify-center font-bold">
                           {uncertainItems.length}
                         </span>
-                        <h3 className="font-bold text-amber-900 text-sm sm:text-base">⚠️ INCERTOS (UNCERTAIN)</h3>
+                        <h3 className="font-bold text-amber-900 text-sm sm:text-base">⚠️ LANÇAMENTOS CONTAS A PAGAR LOCALIZADOS</h3>
                       </div>
                       {sectionsOpen.UNCERTAIN ? (
                         <ChevronUp className="w-5 h-5 text-amber-700" />
@@ -1017,6 +1022,13 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
                               {selectedValue === 'NEW' && (
                                 <div className="mt-1 space-y-2">
+                                  <input
+                                    type="text"
+                                    placeholder="Descrição (opcional)..."
+                                    value={itemDescriptions[idx] !== undefined ? itemDescriptions[idx] : item.statementItem.rawDescription || ''}
+                                    onChange={e => setItemDescriptions(prev => ({ ...prev, [idx]: e.target.value }))}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                                  />
                                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                     <select
                                       value={itemCategories[idx] || ''}
@@ -1091,7 +1103,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                         <span className="bg-blue-600 text-white rounded-full text-xs w-5 h-5 flex items-center justify-center font-bold">
                           {newItems.length}
                         </span>
-                        <h3 className="font-bold text-blue-900 text-sm sm:text-base">🆕 PROVISIONADOS</h3>
+                        <h3 className="font-bold text-blue-900 text-sm sm:text-base">🆕 GASTOS A SEREM LANÇADOS</h3>
                       </div>
                       {sectionsOpen.NEW ? (
                         <ChevronUp className="w-5 h-5 text-blue-700" />
@@ -1133,6 +1145,13 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
                                 {isCreated && (
                                   <>
+                                    <input
+                                      type="text"
+                                      placeholder="Descrição (opcional)..."
+                                      value={itemDescriptions[idx] !== undefined ? itemDescriptions[idx] : item.statementItem.rawDescription || ''}
+                                      onChange={e => setItemDescriptions(prev => ({ ...prev, [idx]: e.target.value }))}
+                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                                    />
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
                                       <div>
                                         <select
