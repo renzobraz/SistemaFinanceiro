@@ -656,24 +656,18 @@ const pdfLimiter = rateLimit({
 const requireAuth = async (req: any, res: any, next: any) => {
   try {
     const authHeader = req.headers.authorization;
-    console.log('[RequireAuth] Header presente:', !!authHeader);
-    
+
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      console.log('[RequireAuth] Token ausente ou inválido');
       return res.status(401).json({ error: "Acesso negado: Bearer token ausente" });
     }
 
     const token = authHeader.split(" ")[1];
     if (!token) {
-      console.log('[RequireAuth] Token vazio extraído do Bearer');
       return res.status(401).json({ error: "Acesso negado: Token ausente" });
     }
 
     const supabaseUrl = process.env.VITE_SUPABASE_URL;
     const supabaseKey = process.env.VITE_SUPABASE_KEY;
-
-    console.log('[RequireAuth] Supabase URL presente:', !!supabaseUrl);
-    console.log('[RequireAuth] Supabase Key presente:', !!supabaseKey);
 
     if (!supabaseUrl || !supabaseKey) {
       console.error('[RequireAuth] Variáveis de ambiente ausentes!');
@@ -682,10 +676,9 @@ const requireAuth = async (req: any, res: any, next: any) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
     const { data: { user }, error } = await supabase.auth.getUser(token);
-    
-    console.log('[RequireAuth] User encontrado:', !!user, 'Erro:', error?.message);
 
     if (error || !user) {
+      console.error('[Auth] Token inválido');
       return res.status(401).json({ error: "Não autorizado: Token inválido" });
     }
 
@@ -1194,7 +1187,6 @@ app.get("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
 // API SMTP Settings - POST
 app.post("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
   console.log('[SMTP-POST] Requisição recebida');
-  console.log('[SMTP-POST] Body:', JSON.stringify(req.body));
   console.log('[SMTP-POST] SMTP_ENCRYPTION_KEY presente:', !!process.env.SMTP_ENCRYPTION_KEY);
   console.log('[SMTP-POST] User:', req.user?.id);
   try {
@@ -1350,11 +1342,7 @@ app.post("/api/smtp-settings", requireAuth, async (req: any, res: any) => {
   }
 });
 
-// Middleware de Logs
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-  next();
-});
+app.use((_req, _res, next) => { next(); });
 
 // API Prices
 app.get("/api/prices", async (req, res) => {
@@ -1650,12 +1638,6 @@ app.post("/api/parse-fatura-cartao", pdfLimiter, async (req: any, res: any) => {
     if (!extractedText || extractedText.trim().length < 100) {
       return res.status(422).json({ error: "Texto insuficiente. textLen=" + extractedText.length });
     }
-
-    console.log("[debug] primeiros 500 chars:", extractedText.substring(0, 500));
-    console.log("[debug] tem 'final':", extractedText.includes('final'));
-    console.log("[debug] tem 'Lancamentos':", extractedText.includes('Lancamentos'));
-    console.log("[debug] tem 'cartao':", extractedText.includes('cartao'));
-    console.log("[debug] total length:", extractedText.length);
 
     const parseResult = parseItauFaturaWithRegex(extractedText);
 
