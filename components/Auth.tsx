@@ -41,11 +41,21 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     } catch (err: any) {
       console.error(err);
       let message = err.message || 'Erro ao processar sua solicitação';
-      
+
       if (message.includes('Email not confirmed')) {
-        message = 'Seu e-mail ainda não foi confirmado. Por favor, verifique sua caixa de entrada e clique no link de ativação enviado pelo Supabase.';
+        message = 'Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada e clique no link de confirmação.';
+      } else if (message.includes('Password should') || message.includes('Password is too weak') || message.includes('at least') || message.includes('password')) {
+        message = 'Senha muito fraca. Use ao menos 8 caracteres, combinando letras maiúsculas, minúsculas, números e símbolos.';
+      } else if (message.includes('Invalid login credentials') || message.includes('invalid_credentials')) {
+        message = 'E-mail ou senha incorretos. Verifique seus dados e tente novamente.';
+      } else if (message.includes('Email already registered') || message.includes('already been registered') || message.includes('already registered')) {
+        message = 'Este e-mail já está cadastrado. Tente fazer login ou recuperar sua senha.';
+      } else if (message.includes('User not found')) {
+        message = 'Usuário não encontrado. Verifique o e-mail informado.';
+      } else if (message.includes('Token has expired') || message.includes('token has expired')) {
+        message = 'O link expirou. Solicite um novo link de recuperação de senha.';
       }
-      
+
       setError(message);
     } finally {
       setLoading(false);
