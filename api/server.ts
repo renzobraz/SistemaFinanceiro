@@ -1704,6 +1704,15 @@ app.post("/api/parse-fatura-csv", async (req: any, res: any) => {
 
       if (isNaN(valor) || !data) continue;
 
+      // Ignorar linha de pagamento da fatura anterior
+      const descUpper = descRaw.toUpperCase().trim();
+      if (descUpper.includes('PAGAMENTO EFETUADO') ||
+          descUpper.includes('PAGAMENTO RECEBIDO') ||
+          descUpper.includes('CREDITO DE PAGAMENTO') ||
+          descUpper.includes('CREDITO PAGAMENTO')) {
+        continue;
+      }
+
       // Detectar parcela no final do nome (ex: "YDUQS 03/06" ou "YDUQS03/06")
       const parcelMatch = descRaw.match(/\s*(\d{2})\/(\d{2})\s*$/);
       let estabelecimento = descRaw.replace(/\s*\d{2}\/\d{2}\s*$/, '').trim();
