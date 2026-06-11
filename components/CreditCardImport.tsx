@@ -934,6 +934,59 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
                     {sectionsOpen.NEW && (
                       <div className="divide-y divide-slate-100 bg-white">
+                        <div className="flex items-center gap-3 px-4 py-2 bg-slate-50 border-b border-slate-200 text-sm">
+                          <button
+                            onClick={() => {
+                              const newNews: Record<number, boolean> = {};
+                              reconciliation.items.forEach((item, index) => {
+                                if (item.status === 'NEW') newNews[index] = true;
+                              });
+                              setCreatedNews(newNews);
+                            }}
+                            className="text-blue-600 hover:text-blue-800 font-medium"
+                          >
+                            Selecionar todos
+                          </button>
+                          <span className="text-slate-300">|</span>
+                          <button
+                            onClick={() => {
+                              const newNews: Record<number, boolean> = {};
+                              reconciliation.items.forEach((item, index) => {
+                                if (item.status === 'NEW') newNews[index] = false;
+                              });
+                              setCreatedNews(newNews);
+                            }}
+                            className="text-slate-500 hover:text-slate-700 font-medium"
+                          >
+                            Desmarcar todos
+                          </button>
+                          <span className="text-slate-300">|</span>
+                          <button
+                            onClick={() => {
+                              const newFuture: Record<number, boolean> = {};
+                              reconciliation.items.forEach((item, index) => {
+                                if (item.status === 'NEW') newFuture[index] = true;
+                              });
+                              setGenerateFutureInstallments(newFuture);
+                            }}
+                            className="text-green-600 hover:text-green-800 font-medium"
+                          >
+                            Gerar parcelas futuras em todos
+                          </button>
+                          <span className="text-slate-300">|</span>
+                          <button
+                            onClick={() => {
+                              const newFuture: Record<number, boolean> = {};
+                              reconciliation.items.forEach((item, index) => {
+                                if (item.status === 'NEW') newFuture[index] = false;
+                              });
+                              setGenerateFutureInstallments(newFuture);
+                            }}
+                            className="text-slate-500 hover:text-slate-700 font-medium"
+                          >
+                            Remover parcelas futuras de todos
+                          </button>
+                        </div>
                         {reconciliation.items.map((item, idx) => {
                           if (item.status !== 'NEW') return null;
                           const isCreated = createdNews[idx] ?? true;
