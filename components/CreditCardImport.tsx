@@ -561,6 +561,27 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const uncertainItems = reconciliation?.items.filter(i => i.status === 'UNCERTAIN') || [];
   const newItems = reconciliation?.items.filter(i => i.status === 'NEW') || [];
 
+  const localizedTotal = reconciliation?.items
+    .filter((item: any, index: number) => item.status === 'UNCERTAIN' && selectedCandidates[index] !== 'NEW')
+    .reduce((acc: number, item: any) => acc + item.statementItem.value, 0) || 0;
+
+  const newTotal = reconciliation?.items
+    .filter((item: any, index: number) =>
+      (item.status === 'NEW' && createdNews[index] !== false) ||
+      (item.status === 'UNCERTAIN' && selectedCandidates[index] === 'NEW')
+    )
+    .reduce((acc: number, item: any) => acc + item.statementItem.value, 0) || 0;
+
+  const matchedTotal = reconciliation?.items
+    .filter((item: any, index: number) =>
+      item.status === 'MATCHED' && selectedMatchedCandidates[index] !== 'NEW'
+    )
+    .reduce((acc: number, item: any) => acc + item.statementItem.value, 0) || 0;
+
+  const conferredTotal = localizedTotal + newTotal + matchedTotal;
+  const statementTotal = statement?.grandAnchorTotal || statement?.grandParsedTotal || 0;
+  const totalsMatch = Math.abs(conferredTotal - statementTotal) < 0.05;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
       <motion.div 
@@ -777,6 +798,79 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                     Total divergente: {formatCurrency(statement.grandParsedTotal)} vs {formatCurrency(statement.grandAnchorTotal)}
                   </span>
                 )}
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-lg p-4 mb-3">
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+                  Resumo da Fatura
+                </h3>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-slate-600">Total da fatura:</span>
+                    <span className="font-semibold text-slate-800">
+                      {statementTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    </span>
+                  </div>
+                  <div className="border-t border-slate-100 pt-2 space-y-1.5">
+                    {matchedTotal > 0 && (
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-green-600 flex items-center gap-1">
+                          <span>✅ Já lançados</span>
+                          <span className="text-xs text-slate-400">
+                            ({reconciliation.items.filter((item, index) =>
+                              item.status === 'MATCHED' && selectedMatchedCandidates[index] !== 'NEW'
+                            ).length} itens)
+                          </span>
+                        </span>
+                        <span className="text-green-600 font-medium">
+                          {matchedTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-amber-600 flex items-center gap-1">
+                        <span>⚡ Localizados (baixa)</span>
+                        <span className="text-xs text-slate-400">
+                          ({reconciliation.items.filter((item, index) =>
+                            item.status === 'UNCERTAIN' && selectedCandidates[index] !== 'NEW'
+                          ).length} itens)
+                        </span>
+                      </span>
+                      <span className="text-amber-600 font-medium">
+                        {localizedTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-blue-600 flex items-center gap-1">
+                        <span>🆕 Gastos a lançar</span>
+                        <span className="text-xs text-slate-400">
+                          ({reconciliation.items.filter((item, index) =>
+                            (item.status === 'NEW' && createdNews[index] !== false) ||
+                            (item.status === 'UNCERTAIN' && selectedCandidates[index] === 'NEW')
+                          ).length} itens)
+                        </span>
+                      </span>
+                      <span className="text-blue-600 font-medium">
+                        {newTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="border-t border-slate-200 pt-2 flex justify-between items-center">
+                    <span className="text-sm font-semibold text-slate-700">Total conferido:</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`font-bold text-sm ${totalsMatch ? 'text-green-600' : 'text-red-500'}`}>
+                        {conferredTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </span>
+                      <span>{totalsMatch ? '✅' : '⚠️'}</span>
+                    </div>
+                  </div>
+                  {!totalsMatch && (
+                    <p className="text-xs text-red-500">
+                      Diferença de {Math.abs(conferredTotal - statementTotal).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} —
+                      verifique se todos os itens estão sendo considerados.
+                    </p>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm mb-3">
