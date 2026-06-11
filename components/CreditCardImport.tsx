@@ -698,6 +698,61 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 )}
               </div>
 
+              <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm mb-3">
+                <span className="font-medium text-slate-600 mr-2">Ações em massa:</span>
+                <button
+                  onClick={() => {
+                    const newNews: Record<number, boolean> = {};
+                    reconciliation.items.forEach((item, index) => {
+                      if (item.status === 'NEW') newNews[index] = true;
+                    });
+                    setCreatedNews(newNews);
+                  }}
+                  className="text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  ✓ Selecionar todos provisionados
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  onClick={() => {
+                    const newNews: Record<number, boolean> = {};
+                    reconciliation.items.forEach((item, index) => {
+                      if (item.status === 'NEW') newNews[index] = false;
+                    });
+                    setCreatedNews(newNews);
+                  }}
+                  className="text-slate-500 hover:text-slate-700 font-medium"
+                >
+                  ✗ Desmarcar todos provisionados
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  onClick={() => {
+                    const newFuture: Record<number, boolean> = {};
+                    reconciliation.items.forEach((item, index) => {
+                      if (item.status === 'NEW') newFuture[index] = true;
+                    });
+                    setGenerateFutureInstallments(newFuture);
+                  }}
+                  className="text-green-600 hover:text-green-800 font-medium"
+                >
+                  + Gerar parcelas futuras em todos
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  onClick={() => {
+                    const newFuture: Record<number, boolean> = {};
+                    reconciliation.items.forEach((item, index) => {
+                      if (item.status === 'NEW') newFuture[index] = false;
+                    });
+                    setGenerateFutureInstallments(newFuture);
+                  }}
+                  className="text-slate-500 hover:text-slate-700 font-medium"
+                >
+                  − Remover parcelas futuras de todos
+                </button>
+              </div>
+
               <div className="space-y-4">
                 {/* MATCHED SECTION */}
                 {matchedItems.length > 0 && (
@@ -923,7 +978,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                         <span className="bg-blue-600 text-white rounded-full text-xs w-5 h-5 flex items-center justify-center font-bold">
                           {newItems.length}
                         </span>
-                        <h3 className="font-bold text-blue-900 text-sm sm:text-base">🆕 NOVOS (NEW)</h3>
+                        <h3 className="font-bold text-blue-900 text-sm sm:text-base">🆕 PROVISIONADOS</h3>
                       </div>
                       {sectionsOpen.NEW ? (
                         <ChevronUp className="w-5 h-5 text-blue-700" />
@@ -934,59 +989,6 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
                     {sectionsOpen.NEW && (
                       <div className="divide-y divide-slate-100 bg-white">
-                        <div className="flex items-center gap-3 px-4 py-2 bg-slate-50 border-b border-slate-200 text-sm">
-                          <button
-                            onClick={() => {
-                              const newNews: Record<number, boolean> = {};
-                              reconciliation.items.forEach((item, index) => {
-                                if (item.status === 'NEW') newNews[index] = true;
-                              });
-                              setCreatedNews(newNews);
-                            }}
-                            className="text-blue-600 hover:text-blue-800 font-medium"
-                          >
-                            Selecionar todos
-                          </button>
-                          <span className="text-slate-300">|</span>
-                          <button
-                            onClick={() => {
-                              const newNews: Record<number, boolean> = {};
-                              reconciliation.items.forEach((item, index) => {
-                                if (item.status === 'NEW') newNews[index] = false;
-                              });
-                              setCreatedNews(newNews);
-                            }}
-                            className="text-slate-500 hover:text-slate-700 font-medium"
-                          >
-                            Desmarcar todos
-                          </button>
-                          <span className="text-slate-300">|</span>
-                          <button
-                            onClick={() => {
-                              const newFuture: Record<number, boolean> = {};
-                              reconciliation.items.forEach((item, index) => {
-                                if (item.status === 'NEW') newFuture[index] = true;
-                              });
-                              setGenerateFutureInstallments(newFuture);
-                            }}
-                            className="text-green-600 hover:text-green-800 font-medium"
-                          >
-                            Gerar parcelas futuras em todos
-                          </button>
-                          <span className="text-slate-300">|</span>
-                          <button
-                            onClick={() => {
-                              const newFuture: Record<number, boolean> = {};
-                              reconciliation.items.forEach((item, index) => {
-                                if (item.status === 'NEW') newFuture[index] = false;
-                              });
-                              setGenerateFutureInstallments(newFuture);
-                            }}
-                            className="text-slate-500 hover:text-slate-700 font-medium"
-                          >
-                            Remover parcelas futuras de todos
-                          </button>
-                        </div>
                         {reconciliation.items.map((item, idx) => {
                           if (item.status !== 'NEW') return null;
                           const isCreated = createdNews[idx] ?? true;
