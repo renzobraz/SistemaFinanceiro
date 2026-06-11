@@ -72,6 +72,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [selectedMatchedCandidates, setSelectedMatchedCandidates] = useState<Record<number, string>>({});
   const [selectedCandidates, setSelectedCandidates] = useState<Record<number, string>>({});
   const [createdNews, setCreatedNews] = useState<Record<number, boolean>>({});
+  const [ignoredItems, setIgnoredItems] = useState<Record<number, boolean>>({});
   const [itemCategories, setItemCategories] = useState<Record<number, string>>({});
   const [itemCostCenters, setItemCostCenters] = useState<Record<number, string>>({});
   const [itemParticipants, setItemParticipants] = useState<Record<number, string>>({});
@@ -495,6 +496,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             newTransactions.push(buildNew('PAID', baseDesc, baseDate));
           }
         } else if (item.status === 'UNCERTAIN') {
+          if (ignoredItems[index]) return;
           const choice = selectedCandidates[index];
           if (choice && choice !== 'NEW') {
             transactionIdsToMarkPaid.push(choice);
@@ -562,7 +564,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const newItems = reconciliation?.items.filter(i => i.status === 'NEW') || [];
 
   const localizedTotal = reconciliation?.items
-    .filter((item: any, index: number) => item.status === 'UNCERTAIN' && selectedCandidates[index] !== 'NEW')
+    .filter((item: any, index: number) => item.status === 'UNCERTAIN' && selectedCandidates[index] !== 'NEW' && !ignoredItems[index])
     .reduce((acc: number, item: any) => acc + item.statementItem.value, 0) || 0;
 
   const newTotal = reconciliation?.items
@@ -914,15 +916,29 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const newCandidates: Record<number, string> = {};
+                    const newIgnored: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
-                      if (item.status === 'UNCERTAIN') newCandidates[index] = 'NEW';
+                      if (item.status === 'UNCERTAIN') newIgnored[index] = true;
                     });
-                    setSelectedCandidates(newCandidates);
+                    setIgnoredItems(prev => ({ ...prev, ...newIgnored }));
                   }}
-                  className="text-orange-600 hover:text-orange-800 font-medium"
+                  className="text-slate-500 hover:text-slate-700 font-medium"
                 >
-                  ⚡ Definir todos localizados como novo
+                  ⊘ Ignorar todos localizados
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newIgnored: Record<number, boolean> = {};
+                    reconciliation.items.forEach((item, index) => {
+                      if (item.status === 'UNCERTAIN') newIgnored[index] = false;
+                    });
+                    setIgnoredItems(prev => ({ ...prev, ...newIgnored }));
+                  }}
+                  className="text-amber-600 hover:text-amber-800 font-medium"
+                >
+                  ↩ Restaurar todos localizados
                 </button>
                 <span className="text-slate-300">|</span>
                 <button
@@ -1077,7 +1093,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                       <div className="divide-y divide-slate-100 bg-white">
                         {reconciliation.items.map((item, idx) => {
                           if (item.status !== 'UNCERTAIN') return null;
-                          const selectedValue = selectedCandidates[idx] || 'NEW';
+                          const selectedValue = ignoredItems[idx] ? '' : (selectedCandidates[idx] || 'NEW');
 
                           return (
                             <div key={idx} className="p-4 sm:p-5 space-y-3">
@@ -1107,10 +1123,8 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                           value={cand.transaction.id}
                                           checked={selectedValue === cand.transaction.id}
                                           onChange={() => {
-                                            setSelectedCandidates(prev => ({
-                                              ...prev,
-                                              [idx]: cand.transaction.id
-                                            }));
+                                            setIgnoredItems(prev => ({ ...prev, [idx]: false }));
+                                            setSelectedCandidates(prev => ({ ...prev, [idx]: cand.transaction.id }));
                                           }}
                                           className="text-blue-600 focus:ring-blue-600 w-3.5 h-3.5 mt-0.5"
                                         />
@@ -1132,14 +1146,26 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                       value="NEW"
                                       checked={selectedValue === 'NEW'}
                                       onChange={() => {
-                                        setSelectedCandidates(prev => ({
-                                          ...prev,
-                                          [idx]: 'NEW'
-                                        }));
+                                        setIgnoredItems(prev => ({ ...prev, [idx]: false }));
+                                        setSelectedCandidates(prev => ({ ...prev, [idx]: 'NEW' }));
                                       }}
                                       className="text-blue-600 focus:ring-blue-600 w-3.5 h-3.5 mt-0.5"
                                     />
                                     <span className="font-bold text-slate-800 -mt-0.5">Nenhum — tratar como novo</span>
+                                  </label>
+
+                                  <label className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer p-1 rounded hover:bg-white transition-colors">
+                                    <input
+                                      type="radio"
+                                      name={`candidate-${idx}`}
+                                      checked={ignoredItems[idx] === true}
+                                      onChange={() => {
+                                        setIgnoredItems(prev => ({ ...prev, [idx]: true }));
+                                        setSelectedCandidates(prev => ({ ...prev, [idx]: '' }));
+                                      }}
+                                      className="text-slate-400 focus:ring-slate-400 w-3.5 h-3.5 mt-0.5"
+                                    />
+                                    <span className="text-slate-400 italic -mt-0.5">Não lançar (ignorar este item)</span>
                                   </label>
                                 </div>
                               </div>
@@ -1368,7 +1394,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                     }}
                                     className="rounded border-slate-300 text-blue-600 focus:ring-blue-600 w-4 h-4"
                                   />
-                                  <span className="text-xs font-bold text-slate-700">Criar lançamento</span>
+                                  <span className="text-xs font-bold text-slate-700">Criar lançamento (desmarque para ignorar)</span>
                                 </label>
                               </div>
                             </div>
