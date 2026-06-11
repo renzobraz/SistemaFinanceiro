@@ -112,7 +112,7 @@ export function ParticipantAutocomplete({
       {isOpen && (
         <div
           ref={menuRef}
-          style={{ position: 'fixed', ...coords, zIndex: 9999 }}
+          style={{ position: 'fixed', top: coords.top, bottom: coords.bottom, left: coords.left, width: Math.max(coords.width, 280), zIndex: 9999 }}
           className="bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden"
         >
           {deferredSearch.trim() && !exactMatch && (
@@ -130,7 +130,7 @@ export function ParticipantAutocomplete({
               height={Math.min(filtered.length * 56, 280)}
               itemCount={filtered.length}
               itemSize={56}
-              width={coords.width}
+              width={Math.max(coords.width, 280)}
             >
               {({ index, style }: any) => {
                 const p = filtered[index];
@@ -144,7 +144,7 @@ export function ParticipantAutocomplete({
                     <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 text-xs flex items-center justify-center font-bold shrink-0">
                       {initials(p.name)}
                     </span>
-                    <span className="truncate">{p.name}</span>
+                    <span className="text-left leading-tight">{p.name}</span>
                   </button>
                 );
               }}
