@@ -189,7 +189,18 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             if (item.status === 'MATCHED') {
               initialMatchedCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
             } else if (item.status === 'UNCERTAIN') {
-              initialCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
+              const installNum = item.statementItem.installmentNumber;
+              const installTotal = item.statementItem.installmentTotal;
+              let bestCandidate = item.candidates?.[0]?.transaction?.id || 'NEW';
+              if (installNum && installTotal && item.candidates) {
+                const matchingCandidate = item.candidates.find(c => {
+                  const desc = c.transaction?.description || '';
+                  return desc.includes('(' + installNum + '/' + installTotal + ')') ||
+                         desc.includes(installNum + '/' + installTotal);
+                });
+                if (matchingCandidate) bestCandidate = matchingCandidate.transaction?.id || 'NEW';
+              }
+              initialCandidates[index] = bestCandidate;
             } else if (item.status === 'NEW') {
               initialNews[index] = true;
               if (item.statementItem.installmentTotal !== undefined && item.statementItem.installmentNumber !== undefined && item.statementItem.installmentTotal > item.statementItem.installmentNumber) {
@@ -333,8 +344,18 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           const topCandidate = item.candidates?.[0]?.transaction?.id || 'NEW';
           initialMatchedCandidates[index] = topCandidate;
         } else if (item.status === 'UNCERTAIN') {
-          const topCandidate = item.candidates?.[0]?.transaction?.id || 'NEW';
-          initialCandidates[index] = topCandidate;
+          const installNum = item.statementItem.installmentNumber;
+          const installTotal = item.statementItem.installmentTotal;
+          let bestCandidate = item.candidates?.[0]?.transaction?.id || 'NEW';
+          if (installNum && installTotal && item.candidates) {
+            const matchingCandidate = item.candidates.find(c => {
+              const desc = c.transaction?.description || '';
+              return desc.includes('(' + installNum + '/' + installTotal + ')') ||
+                     desc.includes(installNum + '/' + installTotal);
+            });
+            if (matchingCandidate) bestCandidate = matchingCandidate.transaction?.id || 'NEW';
+          }
+          initialCandidates[index] = bestCandidate;
         } else if (item.status === 'NEW') {
           initialNews[index] = true;
           const hasRemainingInstallments =
@@ -702,7 +723,12 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                             <div key={idx} className="p-4 sm:p-5 space-y-3">
                               <div className="flex items-center justify-between">
                                 <div>
-                                  <p className="text-sm font-bold text-slate-800">{item.statementItem.rawDescription}</p>
+                                  <p className="text-sm font-bold text-slate-800">
+                                    {item.statementItem.rawDescription}
+                                    {item.statementItem.installmentNumber && item.statementItem.installmentTotal && (
+                                      <span className="text-slate-500 font-normal"> ({item.statementItem.installmentNumber}/{item.statementItem.installmentTotal})</span>
+                                    )}
+                                  </p>
                                   <p className="text-xs text-slate-500 font-medium">{formatDate(item.statementItem.purchaseDate)}</p>
                                 </div>
                                 <p className="text-sm font-black text-slate-800 whitespace-nowrap">{formatCurrency(item.statementItem.value)}</p>
@@ -795,7 +821,12 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                             <div key={idx} className="p-4 sm:p-5 space-y-3">
                               <div className="flex items-center justify-between">
                                 <div>
-                                  <p className="text-sm font-bold text-slate-800">{item.statementItem.rawDescription}</p>
+                                  <p className="text-sm font-bold text-slate-800">
+                                    {item.statementItem.rawDescription}
+                                    {item.statementItem.installmentNumber && item.statementItem.installmentTotal && (
+                                      <span className="text-slate-500 font-normal"> ({item.statementItem.installmentNumber}/{item.statementItem.installmentTotal})</span>
+                                    )}
+                                  </p>
                                   <p className="text-xs text-slate-500 font-medium">{formatDate(item.statementItem.purchaseDate)}</p>
                                 </div>
                                 <p className="text-sm font-black text-slate-800 whitespace-nowrap">{formatCurrency(item.statementItem.value)}</p>
