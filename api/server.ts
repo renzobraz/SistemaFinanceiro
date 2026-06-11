@@ -1735,6 +1735,13 @@ app.post("/api/parse-fatura-csv", async (req: any, res: any) => {
       return res.status(422).json({ error: "Nenhum lançamento encontrado no CSV." });
     }
 
+    // Ordenar por data ascendente (mais antigo primeiro, igual à fatura impressa)
+    lancamentos.sort((a: any, b: any) => {
+      if (a.data_iso < b.data_iso) return -1;
+      if (a.data_iso > b.data_iso) return 1;
+      return 0;
+    });
+
     return res.json({
       titular: 'TITULAR',
       cartao_final: '0000',
