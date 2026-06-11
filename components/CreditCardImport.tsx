@@ -489,10 +489,12 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             importBatchId,
           } as Transaction);
 
-          // Parcelas futuras (nova lógica) - somente para itens com status original 'NEW'
           const shouldGenerateFuture = generateFutureInstallments[index] ?? true;
+          const isNewOrUncertainAsNew =
+            item.status === 'NEW' ||
+            (item.status === 'UNCERTAIN' && selectedCandidates[index] === 'NEW');
           if (
-            item.status === 'NEW' &&
+            isNewOrUncertainAsNew &&
             shouldGenerateFuture &&
             installNum !== undefined &&
             installTotal !== undefined &&
@@ -1014,19 +1016,60 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                               </div>
 
                               {selectedValue === 'NEW' && (
-                                <div>
-                                  <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider mb-1">Participante (opcional)</p>
-                                  <ParticipantAutocomplete
-                                    participants={localParticipants}
-                                    selectedParticipantId={itemParticipants[idx] || ''}
-                                    onSelect={(id) => setItemParticipants(prev => ({ ...prev, [idx]: id }))}
-                                    onAddParticipant={async (name) => {
-                                      const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
-                                      setLocalParticipants(prev => [...prev, newP]);
-                                      return newP;
-                                    }}
-                                    placeholder="Participante (opcional)..."
-                                  />
+                                <div className="mt-1 space-y-2">
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <select
+                                      value={itemCategories[idx] || ''}
+                                      onChange={e => setItemCategories(prev => ({ ...prev, [idx]: e.target.value }))}
+                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                                    >
+                                      <option value="">Categoria (opcional)...</option>
+                                      {categories.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      value={itemCostCenters[idx] || ''}
+                                      onChange={e => setItemCostCenters(prev => ({ ...prev, [idx]: e.target.value }))}
+                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600"
+                                    >
+                                      <option value="">Centro de Custo (opcional)...</option>
+                                      {costCenters.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                      ))}
+                                    </select>
+                                    <ParticipantAutocomplete
+                                      participants={localParticipants}
+                                      selectedParticipantId={itemParticipants[idx] || ''}
+                                      onSelect={(id) => setItemParticipants(prev => ({ ...prev, [idx]: id }))}
+                                      onAddParticipant={async (name) => {
+                                        const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
+                                        setLocalParticipants(prev => [...prev, newP]);
+                                        return newP;
+                                      }}
+                                      placeholder="Participante (opcional)..."
+                                    />
+                                  </div>
+                                  {item.statementItem.installmentNumber !== undefined &&
+                                   item.statementItem.installmentTotal !== undefined &&
+                                   item.statementItem.installmentTotal > item.statementItem.installmentNumber && (
+                                    <label className="flex items-center gap-2 cursor-pointer text-slate-600 select-none bg-slate-50 border border-slate-150 p-2.5 rounded-xl">
+                                      <input
+                                        type="checkbox"
+                                        checked={generateFutureInstallments[idx] ?? true}
+                                        onChange={e => setGenerateFutureInstallments(prev => ({ ...prev, [idx]: e.target.checked }))}
+                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-600 w-4 h-4"
+                                      />
+                                      <span className="text-xs leading-tight">
+                                        Gerar automaticamente as{' '}
+                                        <strong>{item.statementItem.installmentTotal - item.statementItem.installmentNumber}</strong>{' '}
+                                        parcelas restantes (
+                                        <strong>{item.statementItem.installmentNumber + 1}/{item.statementItem.installmentTotal}</strong>
+                                        {' '}até{' '}
+                                        <strong>{item.statementItem.installmentTotal}/{item.statementItem.installmentTotal}</strong>)
+                                      </span>
+                                    </label>
+                                  )}
                                 </div>
                               )}
                             </div>
