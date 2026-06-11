@@ -701,11 +701,15 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
               <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm mb-3">
                 <span className="font-medium text-slate-600 mr-2">Ações em massa:</span>
                 <button
+                  type="button"
                   onClick={() => {
+                    console.log('reconciliation:', reconciliation);
+                    console.log('items:', reconciliation?.items?.length);
                     const newNews: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
                       if (item.status === 'NEW') newNews[index] = true;
                     });
+                    console.log('newNews:', newNews);
                     setCreatedNews(newNews);
                   }}
                   className="text-blue-600 hover:text-blue-800 font-medium"
@@ -714,6 +718,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </button>
                 <span className="text-slate-300">|</span>
                 <button
+                  type="button"
                   onClick={() => {
                     const newNews: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
@@ -727,6 +732,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </button>
                 <span className="text-slate-300">|</span>
                 <button
+                  type="button"
                   onClick={() => {
                     const newFuture: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
@@ -740,6 +746,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </button>
                 <span className="text-slate-300">|</span>
                 <button
+                  type="button"
                   onClick={() => {
                     const newFuture: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
