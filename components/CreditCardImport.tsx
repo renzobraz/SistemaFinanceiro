@@ -477,6 +477,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             || item.statementItem.purchaseDate
             || new Date().toISOString().split('T')[0];
 
+          console.log('[debug] item date:', item.statementItem.purchaseDate, 'data_iso:', (item.statementItem as any).data_iso, 'status:', item.status);
           newTransactions.push({
             id: '',
             date: baseDate,
