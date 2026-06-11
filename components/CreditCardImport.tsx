@@ -1203,7 +1203,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                     onChange={e => setItemDescriptions(prev => ({ ...prev, [idx]: e.target.value }))}
                                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
                                   />
-                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                  <div className="grid grid-cols-2 gap-2">
                                     <select
                                       value={itemCategories[idx] || ''}
                                       onChange={e => setItemCategories(prev => ({ ...prev, [idx]: e.target.value }))}
@@ -1224,6 +1224,8 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                         <option key={c.id} value={c.id}>{c.name}</option>
                                       ))}
                                     </select>
+                                  </div>
+                                  <div className="mt-1">
                                     <ParticipantAutocomplete
                                       participants={localParticipants}
                                       selectedParticipantId={itemParticipants[idx] || ''}
@@ -1326,57 +1328,53 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                       onChange={e => setItemDescriptions(prev => ({ ...prev, [idx]: e.target.value }))}
                                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
                                     />
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                                      <div>
-                                        <select
-                                          value={itemCat}
-                                          onChange={(e) => {
-                                            setItemCategories(prev => ({
-                                              ...prev,
-                                              [idx]: e.target.value
-                                            }));
-                                          }}
-                                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-                                        >
-                                          <option value="">Categoria (opcional)...</option>
-                                          {categories.map((cat) => (
-                                            <option key={cat.id} value={cat.id}>
-                                              {cat.name}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      <div>
-                                        <select
-                                          value={itemCC}
-                                          onChange={(e) => {
-                                            setItemCostCenters(prev => ({
-                                              ...prev,
-                                              [idx]: e.target.value
-                                            }));
-                                          }}
-                                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600"
-                                        >
-                                          <option value="">Centro de Custo (opcional)...</option>
-                                          {costCenters.map((cc) => (
-                                            <option key={cc.id} value={cc.id}>
-                                              {cc.name}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      <div>
-                                        <ParticipantAutocomplete
-                                          participants={participants}
-                                          selectedParticipantId={itemParticipants[idx] || ''}
-                                          onSelect={(id) => setItemParticipants(prev => ({ ...prev, [idx]: id }))}
-                                          onAddParticipant={async (name) => {
-                                            const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
-                                            return newP;
-                                          }}
-                                          placeholder="Participante (opcional)..."
-                                        />
-                                      </div>
+                                    <div className="grid grid-cols-2 gap-2 pt-1">
+                                      <select
+                                        value={itemCat}
+                                        onChange={(e) => {
+                                          setItemCategories(prev => ({
+                                            ...prev,
+                                            [idx]: e.target.value
+                                          }));
+                                        }}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                                      >
+                                        <option value="">Categoria (opcional)...</option>
+                                        {categories.map((cat) => (
+                                          <option key={cat.id} value={cat.id}>
+                                            {cat.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <select
+                                        value={itemCC}
+                                        onChange={(e) => {
+                                          setItemCostCenters(prev => ({
+                                            ...prev,
+                                            [idx]: e.target.value
+                                          }));
+                                        }}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600"
+                                      >
+                                        <option value="">Centro de Custo (opcional)...</option>
+                                        {costCenters.map((cc) => (
+                                          <option key={cc.id} value={cc.id}>
+                                            {cc.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="mt-1">
+                                      <ParticipantAutocomplete
+                                        participants={participants}
+                                        selectedParticipantId={itemParticipants[idx] || ''}
+                                        onSelect={(id) => setItemParticipants(prev => ({ ...prev, [idx]: id }))}
+                                        onAddParticipant={async (name) => {
+                                          const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
+                                          return newP;
+                                        }}
+                                        placeholder="Participante (opcional)..."
+                                      />
                                     </div>
                                     {item.statementItem.installmentTotal !== undefined &&
                                      item.statementItem.installmentNumber !== undefined &&
