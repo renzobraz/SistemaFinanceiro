@@ -121,6 +121,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       const base64 = await fileToBase64(file);
 
       // Se for CSV, usar endpoint específico
+      let parsedStatement: CardStatement;
       if (file.name.endsWith('.csv')) {
         const csvText = await file.text();
         const regexRes = await fetch('/api/parse-fatura-csv', {
@@ -237,7 +238,6 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
       // 3. Tentando parser regex (rápido, determinístico, sem IA)
       setProgressMsg('Processando fatura...');
-      let parsedStatement: CardStatement;
 
       const regexRes = await fetch('/api/parse-fatura-cartao', {
         method: 'POST',
