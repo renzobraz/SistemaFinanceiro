@@ -60,6 +60,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [step, setStep] = useState<'upload' | 'processing' | 'review'>('upload');
   const [file, setFile] = useState<File | null>(null);
   const [selectedBankId, setSelectedBankId] = useState<string>('');
+  const [selectedWalletId, setSelectedWalletId] = useState<string>('');
   
   const [progressMsg, setProgressMsg] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -444,106 +445,93 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     try {
       const importBatchId = `fatura-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const newTransactions: Transaction[] = [];
+      const transactionIdsToMarkPaid: string[] = [];
 
       reconciliation.items.forEach((item, index) => {
-        let shouldCreate = false;
+        const installNum = item.statementItem.installmentNumber;
+        const installTotal = item.statementItem.installmentTotal;
+        const customDesc = itemDescriptions[index] || item.statementItem.rawDescription || '';
+        const baseDesc = installNum
+          ? `${customDesc} (${installNum}/${installTotal ?? '?'})`
+          : customDesc;
+        const baseDate = item.statementItem.purchaseDate
+          || statement.metadata.dueDate
+          || new Date().toISOString().split('T')[0];
+
+        const buildNew = (status: 'PAID' | 'PENDING', desc: string, date: string) => ({
+          id: '', date, description: desc,
+          value: item.statementItem.value,
+          type: item.statementItem.isRefund ? 'CREDIT' : 'DEBIT',
+          status,
+          bankId: selectedBankId,
+          walletId: selectedWalletId,
+          categoryId: itemCategories[index] || '',
+          costCenterId: itemCostCenters[index] || '',
+          participantId: itemParticipants[index] || undefined,
+          docNumber: '',
+          organization_id: financeService.activeOrganizationId ?? undefined,
+          importBatchId,
+        } as Transaction);
+
+        const pushFutureInstallments = () => {
+          if (!(generateFutureInstallments[index] ?? true)) return;
+          if (installNum === undefined || installTotal === undefined || installTotal <= installNum) return;
+          const remaining = installTotal - installNum;
+          for (let i = 1; i <= remaining; i++) {
+            newTransactions.push(buildNew(
+              'PENDING',
+              `${item.statementItem.rawDescription} (${installNum + i}/${installTotal})`,
+              addMonths(item.statementItem.purchaseDate || baseDate, i),
+            ));
+          }
+        };
 
         if (item.status === 'MATCHED') {
-          const choice = selectedMatchedCandidates[index] || 'NEW';
-          if (choice === 'NEW') {
-            shouldCreate = true;
+          const choice = selectedMatchedCandidates[index] || item.candidates[0]?.transaction.id || 'NEW';
+          if (choice !== 'NEW') {
+            transactionIdsToMarkPaid.push(choice);
+          } else {
+            newTransactions.push(buildNew('PAID', baseDesc, baseDate));
           }
         } else if (item.status === 'UNCERTAIN') {
           const choice = selectedCandidates[index];
-          if (choice === 'NEW') {
-            shouldCreate = true;
+          if (choice && choice !== 'NEW') {
+            transactionIdsToMarkPaid.push(choice);
+          } else if (choice === 'NEW') {
+            newTransactions.push(buildNew('PAID', baseDesc, baseDate));
+            pushFutureInstallments();
           }
         } else if (item.status === 'NEW') {
-          const isChecked = createdNews[index] ?? true;
-          if (isChecked) {
-            shouldCreate = true;
-          }
-        }
-
-        if (shouldCreate) {
-          const installNum = item.statementItem.installmentNumber;
-          const installTotal = item.statementItem.installmentTotal;
-          const customDesc = itemDescriptions[index] || item.statementItem.rawDescription || '';
-          const baseDesc = installNum
-            ? `${customDesc} (${installNum}/${installTotal ?? '?'})`
-            : customDesc;
-          const baseDate = statement.metadata.dueDate
-            || item.statementItem.purchaseDate
-            || new Date().toISOString().split('T')[0];
-
-          newTransactions.push({
-            id: '',
-            date: baseDate,
-            description: baseDesc,
-            value: item.statementItem.value,
-            type: item.statementItem.isRefund ? 'CREDIT' : 'DEBIT',
-            status: item.statementItem.isRefund ? 'PAID' : 'PENDING',
-            bankId: selectedBankId,
-            walletId: wallets[0]?.id ?? '',
-            categoryId: itemCategories[index] || '',
-            costCenterId: itemCostCenters[index] || '',
-            participantId: itemParticipants[index] || undefined,
-            docNumber: '',
-            organization_id: financeService.activeOrganizationId ?? undefined,
-            importBatchId,
-          } as Transaction);
-
-          const shouldGenerateFuture = generateFutureInstallments[index] ?? true;
-          const isNewOrUncertainAsNew =
-            item.status === 'NEW' ||
-            (item.status === 'UNCERTAIN' && selectedCandidates[index] === 'NEW');
-          if (
-            isNewOrUncertainAsNew &&
-            shouldGenerateFuture &&
-            installNum !== undefined &&
-            installTotal !== undefined &&
-            installTotal > installNum
-          ) {
-            const remaining = installTotal - installNum;
-            for (let i = 1; i <= remaining; i++) {
-              newTransactions.push({
-                id: '',
-                date: addMonths(item.statementItem.purchaseDate || baseDate, i),
-                description: `${item.statementItem.rawDescription} (${installNum + i}/${installTotal})`,
-                value: item.statementItem.value,
-                type: 'DEBIT',
-                status: 'PENDING',
-                bankId: selectedBankId,
-                walletId: wallets[0]?.id ?? '',
-                categoryId: itemCategories[index] || '',
-                costCenterId: itemCostCenters[index] || '',
-                participantId: itemParticipants[index] || undefined,
-                docNumber: '',
-                organization_id: financeService.activeOrganizationId ?? undefined,
-                importBatchId,
-              } as Transaction);
-            }
+          if (createdNews[index] ?? true) {
+            newTransactions.push(buildNew('PAID', baseDesc, baseDate));
+            pushFutureInstallments();
           }
         }
       });
 
+      if (transactionIdsToMarkPaid.length > 0) {
+        await financeService.updateTransactionsStatus(transactionIdsToMarkPaid, 'PAID');
+      }
+
       if (newTransactions.length > 0) {
-        console.log('[import] tentando criar', newTransactions.length, 'lançamentos');
-        console.log('[import] primeiro lançamento:', JSON.stringify(newTransactions[0]));
         await financeService.createManyTransactions(newTransactions);
-        console.log('[import] criados com sucesso');
+      }
+
+      const totalOperations = transactionIdsToMarkPaid.length + newTransactions.length;
+      if (totalOperations > 0) {
         const batchInfo = {
           id: importBatchId,
           date: new Date().toISOString(),
-          count: newTransactions.length,
+          count: totalOperations,
           description: `Fatura ${file?.name || 'importada'}`,
         };
         localStorage.setItem('last_import_batch', JSON.stringify(batchInfo));
       }
+
       onSuccess();
     } catch (err: any) {
       console.error(err);
-      setError('Erro ao salvar os novos lançamentos: ' + (err.message || ''));
+      setError('Erro ao salvar os lançamentos: ' + (err.message || ''));
     }
   };
 
@@ -689,6 +677,24 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </select>
               </div>
 
+              <div className="space-y-2">
+                <label className="text-xs font-black text-slate-400 uppercase tracking-widest block">
+                  Carteira de pagamento <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={selectedWalletId}
+                  onChange={(e) => setSelectedWalletId(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-700 font-medium focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 text-sm transition-all"
+                >
+                  <option value="">Selecione a carteira de pagamento...</option>
+                  {wallets.map((wallet) => (
+                    <option key={wallet.id} value={wallet.id}>
+                      {wallet.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
                 <button
                   type="button"
@@ -699,7 +705,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </button>
                 <button
                   onClick={handleProcess}
-                  disabled={!file || !selectedBankId}
+                  disabled={!file || !selectedBankId || !selectedWalletId}
                   className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-md shadow-blue-200"
                 >
                   Processar fatura
