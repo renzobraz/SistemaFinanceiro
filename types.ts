@@ -229,8 +229,9 @@ export interface MerchantAlias {
   organizationId: string;
   rawPattern: string;
   canonicalName: string;
-  defaultCategoryId?: string| null;
+  defaultCategoryId?: string | null;
   defaultCostCenterId?: string | null;
+  defaultParticipantId?: string | null;
   active?: boolean;
 }
 

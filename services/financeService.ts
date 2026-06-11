@@ -3328,7 +3328,44 @@ export const financeService = {
       canonicalName: row.canonical_name,
       defaultCategoryId: row.default_category_id ?? null,
       defaultCostCenterId: row.default_cost_center_id ?? null,
+      defaultParticipantId: row.default_participant_id ?? null,
       active: row.active,
     }));
-  }
+  },
+
+  async saveMerchantAlias(alias: {
+    rawPattern: string;
+    canonicalName: string;
+    defaultCategoryId?: string | null;
+    defaultCostCenterId?: string | null;
+    defaultParticipantId?: string | null;
+  }): Promise<void> {
+    if (!this.activeOrganizationId) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
+
+    const { data: existing } = await supabase
+      .from('merchant_aliases')
+      .select('id')
+      .eq('raw_pattern', alias.rawPattern)
+      .eq('organization_id', this.activeOrganizationId)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    const payload = {
+      organization_id: this.activeOrganizationId,
+      raw_pattern: alias.rawPattern,
+      canonical_name: alias.canonicalName,
+      default_category_id: alias.defaultCategoryId || null,
+      default_cost_center_id: alias.defaultCostCenterId || null,
+      default_participant_id: alias.defaultParticipantId || null,
+      active: true,
+    };
+
+    if (existing) {
+      await supabase.from('merchant_aliases').update(payload).eq('id', existing.id);
+    } else {
+      await supabase.from('merchant_aliases').insert(payload);
+    }
+  },
 };

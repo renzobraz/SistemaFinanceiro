@@ -218,6 +218,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           const initialNews: Record<number, boolean> = {};
           const initialCats: Record<number, string> = {};
           const initialCCs: Record<number, string> = {};
+          const initialParts: Record<number, string> = {};
           const initialGenerateFuture: Record<number, boolean> = {};
           reconResult.items.forEach((item, index) => {
             if (item.status === 'MATCHED') {
@@ -250,6 +251,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             if (matchedAlias) {
               if (matchedAlias.defaultCategoryId) initialCats[index] = matchedAlias.defaultCategoryId;
               if (matchedAlias.defaultCostCenterId) initialCCs[index] = matchedAlias.defaultCostCenterId;
+              if (matchedAlias.defaultParticipantId) initialParts[index] = matchedAlias.defaultParticipantId;
             }
           });
           setSelectedMatchedCandidates(initialMatchedCandidates);
@@ -257,6 +259,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           setCreatedNews(initialNews);
           setItemCategories(initialCats);
           setItemCostCenters(initialCCs);
+          setItemParticipants(initialParts);
           setGenerateFutureInstallments(initialGenerateFuture);
           setStep('review');
           return;
@@ -371,6 +374,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       const initialNews: Record<number, boolean> = {};
       const initialCats: Record<number, string> = {};
       const initialCCs: Record<number, string> = {};
+      const initialParts: Record<number, string> = {};
       const initialGenerateFuture: Record<number, boolean> = {};
 
       reconResult.items.forEach((item, index) => {
@@ -413,12 +417,9 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
         });
 
         if (matchedAlias) {
-          if (matchedAlias.defaultCategoryId) {
-            initialCats[index] = matchedAlias.defaultCategoryId;
-          }
-          if (matchedAlias.defaultCostCenterId) {
-            initialCCs[index] = matchedAlias.defaultCostCenterId;
-          }
+          if (matchedAlias.defaultCategoryId) initialCats[index] = matchedAlias.defaultCategoryId;
+          if (matchedAlias.defaultCostCenterId) initialCCs[index] = matchedAlias.defaultCostCenterId;
+          if (matchedAlias.defaultParticipantId) initialParts[index] = matchedAlias.defaultParticipantId;
         }
       });
 
@@ -427,6 +428,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       setCreatedNews(initialNews);
       setItemCategories(initialCats);
       setItemCostCenters(initialCCs);
+      setItemParticipants(initialParts);
       setGenerateFutureInstallments(initialGenerateFuture);
 
       setStep('review');
@@ -531,6 +533,28 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
         };
         localStorage.setItem('last_import_batch', JSON.stringify(batchInfo));
       }
+
+      // Salvar aliases automaticamente para itens com categoria/CC/participante preenchidos
+      const aliasPromises: Promise<void>[] = [];
+      reconciliation.items.forEach((item: any, index: number) => {
+        if (ignoredItems[index]) return;
+        const categoryId = itemCategories[index];
+        const costCenterId = itemCostCenters[index];
+        const participantId = itemParticipants[index];
+        if (!categoryId && !costCenterId && !participantId) return;
+        const rawDesc = item.statementItem.rawDescription || '';
+        if (!rawDesc) return;
+        aliasPromises.push(
+          financeService.saveMerchantAlias({
+            rawPattern: rawDesc,
+            canonicalName: rawDesc,
+            defaultCategoryId: categoryId || null,
+            defaultCostCenterId: costCenterId || null,
+            defaultParticipantId: participantId || null,
+          }).catch((e: any) => console.warn('[alias] erro ao salvar:', e))
+        );
+      });
+      await Promise.all(aliasPromises);
 
       onSuccess();
     } catch (err: any) {
