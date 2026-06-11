@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ParticipantAutocomplete } from './ParticipantAutocomplete';
 import { motion } from 'motion/react';
 import { 
@@ -74,6 +74,11 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [itemCategories, setItemCategories] = useState<Record<number, string>>({});
   const [itemCostCenters, setItemCostCenters] = useState<Record<number, string>>({});
   const [itemParticipants, setItemParticipants] = useState<Record<number, string>>({});
+  const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
+
+  useEffect(() => {
+    setLocalParticipants(participants);
+  }, [participants]);
   const [generateFutureInstallments, setGenerateFutureInstallments] = useState<Record<number, boolean>>({});
 
   const [sectionsOpen, setSectionsOpen] = useState({
@@ -887,11 +892,12 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                 <div>
                                   <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider mb-1">Participante (opcional)</p>
                                   <ParticipantAutocomplete
-                                    participants={participants}
+                                    participants={localParticipants}
                                     selectedParticipantId={itemParticipants[idx] || ''}
                                     onSelect={(id) => setItemParticipants(prev => ({ ...prev, [idx]: id }))}
                                     onAddParticipant={async (name) => {
                                       const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
+                                      setLocalParticipants(prev => [...prev, newP]);
                                       return newP;
                                     }}
                                     placeholder="Participante (opcional)..."
