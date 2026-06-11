@@ -703,13 +703,10 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    console.log('reconciliation:', reconciliation);
-                    console.log('items:', reconciliation?.items?.length);
                     const newNews: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
                       if (item.status === 'NEW') newNews[index] = true;
                     });
-                    console.log('newNews:', newNews);
                     setCreatedNews(newNews);
                   }}
                   className="text-blue-600 hover:text-blue-800 font-medium"
@@ -734,9 +731,23 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    const newCandidates: Record<number, string> = {};
+                    reconciliation.items.forEach((item, index) => {
+                      if (item.status === 'UNCERTAIN') newCandidates[index] = 'NEW';
+                    });
+                    setSelectedCandidates(newCandidates);
+                  }}
+                  className="text-orange-600 hover:text-orange-800 font-medium"
+                >
+                  ⚡ Definir todos incertos como novo
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  type="button"
+                  onClick={() => {
                     const newFuture: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
-                      if (item.status === 'NEW') newFuture[index] = true;
+                      if (item.status === 'NEW' || item.status === 'UNCERTAIN') newFuture[index] = true;
                     });
                     setGenerateFutureInstallments(newFuture);
                   }}
@@ -750,7 +761,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   onClick={() => {
                     const newFuture: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
-                      if (item.status === 'NEW') newFuture[index] = false;
+                      if (item.status === 'NEW' || item.status === 'UNCERTAIN') newFuture[index] = false;
                     });
                     setGenerateFutureInstallments(newFuture);
                   }}
