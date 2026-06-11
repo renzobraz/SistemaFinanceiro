@@ -43,8 +43,7 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 const addMonths = (dateStr: string, months: number): string => {
-  if (!dateStr) return dateStr;
-  const d = new Date(dateStr + 'T12:00:00');
+  const d = dateStr ? new Date(dateStr + 'T12:00:00') : new Date();
   d.setMonth(d.getMonth() + months);
   return d.toISOString().split('T')[0];
 };
@@ -477,7 +476,6 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             || item.statementItem.purchaseDate
             || new Date().toISOString().split('T')[0];
 
-          console.log('[debug] item date:', item.statementItem.purchaseDate, 'data_iso:', (item.statementItem as any).data_iso, 'status:', item.status);
           newTransactions.push({
             id: '',
             date: baseDate,
@@ -510,7 +508,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             for (let i = 1; i <= remaining; i++) {
               newTransactions.push({
                 id: '',
-                date: addMonths(statement.metadata.dueDate, i),
+                date: addMonths(item.statementItem.purchaseDate || baseDate, i),
                 description: `${item.statementItem.rawDescription} (${installNum + i}/${installTotal})`,
                 value: item.statementItem.value,
                 type: 'DEBIT',
