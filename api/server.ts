@@ -1840,6 +1840,30 @@ app.post("/api/parse-pdf-claude", async (req: any, res: any) => {
   }
 });
 
+app.delete("/api/import-batch/:batchId", requireAuth, async (req: any, res: any) => {
+  try {
+    const { batchId } = req.params;
+    const orgId = req.headers['x-organization-id'];
+
+    const supabaseUrl = process.env.VITE_SUPABASE_URL;
+    const supabaseKey = process.env.VITE_SUPABASE_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ error: "Supabase não configurado" });
+    }
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    let query = supabase.from('transactions').delete().eq('import_batch_id', batchId);
+    if (orgId) query = query.eq('organization_id', orgId);
+
+    const { error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({ success: true, message: `Importação ${batchId} desfeita com sucesso.` });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 app.use("/api", (req, res) => {
   res.status(404).json({ error: "Rota da API não encontrada" });
 });

@@ -75,10 +75,35 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [itemCostCenters, setItemCostCenters] = useState<Record<number, string>>({});
   const [itemParticipants, setItemParticipants] = useState<Record<number, string>>({});
   const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
+  const [lastBatch, setLastBatch] = useState<{ id: string; date: string; count: number; description: string } | null>(null);
+  const [undoing, setUndoing] = useState(false);
 
   useEffect(() => {
     setLocalParticipants(participants);
   }, [participants]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('last_import_batch');
+    if (stored) {
+      try { setLastBatch(JSON.parse(stored)); } catch {}
+    }
+  }, []);
+
+  const handleUndoImport = async () => {
+    if (!lastBatch) return;
+    if (!confirm(`Desfazer a importação "${lastBatch.description}" com ${lastBatch.count} lançamentos?`)) return;
+    setUndoing(true);
+    try {
+      await financeService.deleteImportBatch(lastBatch.id);
+      localStorage.removeItem('last_import_batch');
+      setLastBatch(null);
+      onSuccess();
+    } catch (e: any) {
+      setError('Erro ao desfazer importação: ' + (e.message || ''));
+    } finally {
+      setUndoing(false);
+    }
+  };
   const [generateFutureInstallments, setGenerateFutureInstallments] = useState<Record<number, boolean>>({});
 
   const [sectionsOpen, setSectionsOpen] = useState({
@@ -417,6 +442,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     if (!statement || !reconciliation) return;
 
     try {
+      const importBatchId = `fatura-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const newTransactions: Transaction[] = [];
 
       reconciliation.items.forEach((item, index) => {
@@ -460,6 +486,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             participantId: itemParticipants[index] || undefined,
             docNumber: '',
             organization_id: financeService.activeOrganizationId ?? undefined,
+            importBatchId,
           } as Transaction);
 
           // Parcelas futuras (nova lógica) - somente para itens com status original 'NEW'
@@ -487,6 +514,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 participantId: itemParticipants[index] || undefined,
                 docNumber: '',
                 organization_id: financeService.activeOrganizationId ?? undefined,
+                importBatchId,
               } as Transaction);
             }
           }
@@ -495,6 +523,13 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
       if (newTransactions.length > 0) {
         await financeService.createManyTransactions(newTransactions);
+        const batchInfo = {
+          id: importBatchId,
+          date: new Date().toISOString(),
+          count: newTransactions.length,
+          description: `Fatura ${file?.name || 'importada'}`,
+        };
+        localStorage.setItem('last_import_batch', JSON.stringify(batchInfo));
       }
       onSuccess();
     } catch (err: any) {
@@ -589,6 +624,23 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   </div>
                 </div>
               </div>
+
+              {lastBatch && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between text-sm">
+                  <div className="min-w-0">
+                    <span className="font-medium text-amber-800">Última importação: </span>
+                    <span className="text-amber-700">{lastBatch.description} · {lastBatch.count} lançamentos · {new Date(lastBatch.date).toLocaleString('pt-BR')}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleUndoImport}
+                    disabled={undoing}
+                    className="ml-4 shrink-0 px-3 py-1 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded text-xs font-medium transition-colors"
+                  >
+                    {undoing ? 'Desfazendo...' : 'Desfazer'}
+                  </button>
+                </div>
+              )}
 
               {file && (
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex items-center justify-between">

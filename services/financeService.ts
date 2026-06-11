@@ -411,6 +411,7 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   linkedId: db.linked_id ? String(db.linked_id) : undefined,
   createdAt: db.created_at || undefined,
   managedPortfolioId: db.managed_portfolio_id ? String(db.managed_portfolio_id) : undefined,
+  importBatchId: db.import_batch_id || undefined,
   exchangeRate: db.exchange_rate ? Number(db.exchange_rate) : undefined,
   spread: db.spread ? Number(db.spread) : undefined,
   iof: db.iof ? Number(db.iof) : undefined,
@@ -436,6 +437,7 @@ const mapTransactionToDb = (t: Transaction, userId?: string | null, orgId?: stri
     wallet_id: t.walletId || null,
     linked_id: t.linkedId || null,
     managed_portfolio_id: t.managedPortfolioId || null,
+    import_batch_id: t.importBatchId || null,
   };
 
   // Only include exchange fields if they have actual values to prevent PGRST204 errors on older schemas
@@ -1709,6 +1711,23 @@ export const financeService = {
     list.push(...transactionsWithIds);
     saveEntityLocal(KEYS.TRANSACTIONS, list);
     return transactionsWithIds;
+  },
+
+  async deleteImportBatch(batchId: string): Promise<{ deletedCount: number }> {
+    const supabase = getSupabase();
+    cache.balances = {};
+    if (supabase) {
+      let query = supabase.from('transactions').delete().eq('import_batch_id', batchId);
+      if (this.activeOrganizationId) query = query.eq('organization_id', this.activeOrganizationId);
+      const { error, count } = await query.select('id');
+      if (error) throw new Error(formatSupabaseError(error));
+      return { deletedCount: count ?? 0 };
+    }
+    // Local fallback
+    const list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
+    const filtered = list.filter(t => t.importBatchId !== batchId);
+    saveEntityLocal(KEYS.TRANSACTIONS, filtered);
+    return { deletedCount: list.length - filtered.length };
   },
 
   async deleteTransactions(ids: string[], onProgress?: (completed: number, total: number) => void): Promise<void> {

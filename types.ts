@@ -100,6 +100,7 @@ export interface Transaction {
   linkedId?: string;
   createdAt?: string;
   managedPortfolioId?: string;
+  importBatchId?: string;
 }
 
 export interface AssetAccrual {
