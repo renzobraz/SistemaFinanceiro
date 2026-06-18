@@ -440,35 +440,72 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
     const lineClean = line.trim();
     if (!lineClean) continue;
 
-    const match = lineClean.match(/B3\s+RV\s+LISTADO([CV])\s+(FRACIONARIO|VISTA)\s+(.+?)\s+(?:[@#D*][@ #D*]*)?\s*(\d+)\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([DC])/i);
-    if (match) {
-      const cvFlag = match[1].toUpperCase(); // 'C' = LISTADOC, 'V' = LISTADOV
-      const dcFlag = match[7].toUpperCase(); // 'D' = débito/compra, 'C' = crédito/venda
+    let cvFlag = "", marketType = "", specRaw = "", qty = 0, price = 0, total = 0, dcFlag = "";
+    let matched = false;
 
-      // LISTADOC + D = compra, LISTADOV + C = venda
-      // Em caso de discordância, dcFlag é o desempate
-      const action = (cvFlag === "C" && dcFlag === "D") ? "buy" :
-                     (cvFlag === "V" && dcFlag === "C") ? "sell" :
-                     dcFlag === "D" ? "buy" : "sell";
+    // Formato 1: espaços entre campos (formato legado com espaços preservados)
+    const spaceMatch = lineClean.match(/B3\s+RV\s+LISTADO([CV])\s+(FRACIONARIO|VISTA)\s+(.+?)\s+(?:[@#D*][@ #D*]*)?\s*(\d+)\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([DC])/i);
+    if (spaceMatch) {
+      cvFlag = spaceMatch[1].toUpperCase();
+      dcFlag = spaceMatch[7].toUpperCase();
+      marketType = spaceMatch[2].toUpperCase();
+      specRaw = spaceMatch[3].trim().replace(/\s*[@#*D]+\s*$/, "").trim();
+      qty = parseInt(spaceMatch[4], 10);
+      price = parsePtBrFloat(spaceMatch[5]);
+      total = parsePtBrFloat(spaceMatch[6]);
+      matched = true;
+    } else {
+      // Formato 2: compacto — pdf-parse colapsa espaços entre colunas da tabela
+      // Exemplo: B3 RV LISTADOCVISTABBSEGURIDADE ON      NM@30037,9011.370,00D
+      // Estratégia: separar pelo char de obs (@#*), depois decompor os números de trás pra frente:
+      // total (tem ponto de milhar) → preço (termina em ,dd) → quantidade (o que sobra)
+      const compactMatch = lineClean.match(/^B3\s+RV\s+LISTADO([CV])(FRACIONARIO|VISTA)(.+?)[@#*](\d[\d,.]+[DC])$/i);
+      if (compactMatch) {
+        cvFlag = compactMatch[1].toUpperCase();
+        marketType = compactMatch[2].toUpperCase();
+        specRaw = compactMatch[3].trim();
+        const numbersStr = compactMatch[4];
 
-      const marketType = match[2].toUpperCase();
-      let specRaw = match[3].trim();
-      const qty = parseInt(match[4], 10);
-      const price = parsePtBrFloat(match[5]);
-      const total = parsePtBrFloat(match[6]);
+        dcFlag = numbersStr.slice(-1).toUpperCase();
+        if (dcFlag !== "D" && dcFlag !== "C") continue;
 
-      specRaw = specRaw.replace(/\s*[@#*D]+\s*$/, "").trim();
+        const withoutDC = numbersStr.slice(0, -1);
 
-      individualTrades.push({
-        type: action,
-        market: marketType,
-        spec: specRaw,
-        quantity: qty,
-        price: price,
-        totalValue: total,
-        dc: dcFlag
-      });
+        // Total fica no final; se tiver ponto de milhar captura com ponto, senão pega o último \d+,\d{2}
+        const totalMatch = withoutDC.match(/((?:\d{1,3}\.)+\d{3},\d{2}|\d+,\d{2})$/);
+        if (!totalMatch) continue;
+        total = parsePtBrFloat(totalMatch[1]);
+
+        const withoutTotal = withoutDC.slice(0, -totalMatch[0].length);
+
+        // Preço: último \d+,\d{2} antes do total
+        const priceMatch = withoutTotal.match(/(\d+,\d{2})$/);
+        if (!priceMatch) continue;
+        price = parsePtBrFloat(priceMatch[1]);
+
+        const qtyStr = withoutTotal.slice(0, -priceMatch[0].length);
+        qty = parseInt(qtyStr, 10);
+        if (!qty || qty <= 0) continue;
+
+        matched = true;
+      }
     }
+
+    if (!matched) continue;
+
+    const action = (cvFlag === "C" && dcFlag === "D") ? "buy" :
+                   (cvFlag === "V" && dcFlag === "C") ? "sell" :
+                   dcFlag === "D" ? "buy" : "sell";
+
+    individualTrades.push({
+      type: action,
+      market: marketType,
+      spec: specRaw,
+      quantity: qty,
+      price: price,
+      totalValue: total,
+      dc: dcFlag
+    });
   }
 
   if (individualTrades.length === 0) return null;
