@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ParticipantAutocomplete } from './ParticipantAutocomplete';
 import { motion } from 'motion/react';
 import { 
@@ -15,6 +15,16 @@ import { financeService } from '../services/financeService';
 import { extractStatementAnchors, extractStatementWithAI, extractStatementWithGemini, reconcileStatement } from '../services/cardStatementService';
 import { reconcileStatementWithPayables } from '../services/reconciliationService';
 import type { CardStatement, CardStatementItem, ReconciliationResult, MerchantAlias, Bank, Category, CostCenter, Wallet, Transaction, Participant } from '../types';
+
+// FNV-1a hash para identificar arquivos CSV já importados
+function hashCsv(str: string): string {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(36);
+}
 
 interface CreditCardImportProps {
   onClose: () => void;
@@ -80,6 +90,9 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
   const [lastBatch, setLastBatch] = useState<{ id: string; date: string; count: number; description: string } | null>(null);
   const [undoing, setUndoing] = useState(false);
+  const [duplicateWarning, setDuplicateWarning] = useState<{ hash: string; fileName: string; importedAt: string } | null>(null);
+  const [currentCsvHash, setCurrentCsvHash] = useState<string | null>(null);
+  const bypassDuplicateCheck = useRef(false);
 
   useEffect(() => {
     setLocalParticipants(participants);
@@ -144,20 +157,39 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     }
   };
 
+  const handleImportAnyway = () => {
+    bypassDuplicateCheck.current = true;
+    setDuplicateWarning(null);
+    handleProcess();
+  };
+
   const handleProcess = async () => {
     if (!file || !selectedBankId) return;
-    setStep('processing');
     setError(null);
 
     try {
-      // 1. Extraindo texto do PDF
-      setProgressMsg('Extraindo texto...');
-      const base64 = await fileToBase64(file);
-
       // Se for CSV, usar endpoint específico
       let parsedStatement: CardStatement;
       if (file.name.endsWith('.csv')) {
         const csvText = await file.text();
+
+        // Verificar se este CSV já foi importado antes (proteção contra duplicatas acidentais)
+        if (!bypassDuplicateCheck.current) {
+          const csvHash = hashCsv(csvText);
+          const storedHashes: Array<{ hash: string; fileName: string; importedAt: string }> =
+            JSON.parse(localStorage.getItem('imported_csv_hashes') || '[]');
+          const existing = storedHashes.find(h => h.hash === csvHash);
+          if (existing) {
+            setDuplicateWarning(existing);
+            return;
+          }
+          setCurrentCsvHash(csvHash);
+        }
+        bypassDuplicateCheck.current = false;
+
+        setStep('processing');
+        setProgressMsg('Extraindo texto...');
+        const base64 = await fileToBase64(file);
         const regexRes = await fetch('/api/parse-fatura-csv', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -268,6 +300,10 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           throw new Error(errData.error || 'Erro ao processar CSV');
         }
       }
+
+      setStep('processing');
+      setProgressMsg('Extraindo texto...');
+      const base64 = await fileToBase64(file);
 
       const textRes = await fetch('/api/extract-pdf-text', {
         method: 'POST',
@@ -556,6 +592,15 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
         localStorage.setItem('last_import_batch', JSON.stringify(batchInfo));
       }
 
+      // Registrar hash do CSV para evitar reimportação acidental
+      if (currentCsvHash) {
+        const storedHashes: Array<{ hash: string; fileName: string; importedAt: string }> =
+          JSON.parse(localStorage.getItem('imported_csv_hashes') || '[]');
+        storedHashes.unshift({ hash: currentCsvHash, fileName: file?.name || '', importedAt: new Date().toISOString() });
+        localStorage.setItem('imported_csv_hashes', JSON.stringify(storedHashes.slice(0, 20)));
+        setCurrentCsvHash(null);
+      }
+
       // Salvar aliases automaticamente para itens com categoria/CC/participante preenchidos
       const aliasPromises: Promise<void>[] = [];
       reconciliation.items.forEach((item: any, index: number) => {
@@ -785,6 +830,34 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-700 font-medium focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 text-sm transition-all"
                 />
               </div>
+
+              {duplicateWarning && (
+                <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex gap-3 text-sm text-amber-900 items-start">
+                  <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-bold">Arquivo já importado anteriormente</p>
+                    <p className="mt-1 text-amber-800">
+                      O arquivo <strong>{duplicateWarning.fileName}</strong> foi importado em{' '}
+                      {new Date(duplicateWarning.importedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}.
+                      Importar novamente pode criar lançamentos duplicados.
+                    </p>
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        onClick={() => setDuplicateWarning(null)}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 transition-all"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={handleImportAnyway}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 transition-all"
+                      >
+                        Importar mesmo assim
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
                 <button
