@@ -12,7 +12,7 @@ import {
   AlertTriangle 
 } from 'lucide-react';
 import { financeService } from '../services/financeService';
-import { extractStatementAnchors, extractStatementWithAI, reconcileStatement } from '../services/cardStatementService';
+import { extractStatementAnchors, extractStatementWithAI, extractStatementWithGemini, reconcileStatement } from '../services/cardStatementService';
 import { reconcileStatementWithPayables } from '../services/reconciliationService';
 import type { CardStatement, CardStatementItem, ReconciliationResult, MerchantAlias, Bank, Category, CostCenter, Wallet, Transaction, Participant } from '../types';
 
@@ -351,13 +351,30 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           grandTotalsMatch: Math.abs(grandParsedTotal - grandAnchorTotal) <= 0.02,
         };
       } else {
-        // Parser regex falhou — tentar fallback com IA (Claude)
+        // Parser regex falhou — tentar fallback com Claude, depois Gemini
         setProgressMsg('Analisando com IA (fallback)...');
+        let aiSuccess = false;
+
         try {
           const aiResult = await extractStatementWithAI(base64, 'application/pdf');
           parsedStatement = reconcileStatement(aiResult, anchors);
-        } catch (aiError: any) {
-          throw new Error('Falha ao processar o PDF. O parser automático e a IA não conseguiram extrair os dados. ' + (aiError.message || ''));
+          aiSuccess = true;
+        } catch (claudeErr) {
+          console.warn('[Fallback] Claude falhou, tentando Gemini...', claudeErr);
+        }
+
+        if (!aiSuccess) {
+          try {
+            const aiResult = await extractStatementWithGemini(base64, 'application/pdf');
+            parsedStatement = reconcileStatement(aiResult, anchors);
+            aiSuccess = true;
+          } catch (geminiErr) {
+            console.warn('[Fallback] Gemini também falhou.', geminiErr);
+          }
+        }
+
+        if (!aiSuccess) {
+          throw new Error('Falha ao processar o PDF. O parser automático, Claude e Gemini não conseguiram extrair os dados. Tente exportar a fatura como CSV.');
         }
       }
 

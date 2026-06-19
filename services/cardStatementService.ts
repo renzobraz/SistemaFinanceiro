@@ -128,6 +128,25 @@ export async function extractStatementWithAI(base64: string, mimeType: string): 
 }
 
 /**
+ * 3b-2. Envia o PDF em base64 para extração via Gemini (fallback quando Claude falha)
+ */
+export async function extractStatementWithGemini(base64: string, mimeType: string): Promise<CardStatement> {
+  const response = await fetch("/api/parse-fatura-pdf-gemini", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base64, mimeType }),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error || "Falha ao processar fatura com Gemini");
+  }
+
+  const result = await response.json();
+  return result as CardStatement;
+}
+
+/**
  * 3c. Reconcilia as informações extraídas pela IA (Claude) com os totais âncoras locais (Regex)
  */
 export function reconcileStatement(aiData: any, anchors: StatementAnchors): CardStatement {

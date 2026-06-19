@@ -1831,6 +1831,49 @@ app.post("/api/parse-pdf-claude", async (req: any, res: any) => {
   }
 });
 
+app.post("/api/parse-fatura-pdf-gemini", pdfLimiter, async (req: any, res: any) => {
+  try {
+    const { base64, mimeType } = req.body;
+    if (!base64 || !mimeType) {
+      return res.status(400).json({ error: "Parâmetros 'base64' e 'mimeType' são obrigatórios." });
+    }
+    if (!genAI) {
+      return res.status(400).json({ error: "Chave GEMINI_API_KEY não configurada no servidor." });
+    }
+
+    const prompt = `Você é um extrator de faturas de cartão de crédito. Analise o PDF da fatura e devolva
+APENAS um objeto JSON válido (sem texto antes/depois, sem \`\`\`), nesta forma exata:
+{"issuer":"<nome do emissor, ex. Itau>","metadata":{"dueDate":"YYYY-MM-DD","closingDate":"YYYY-MM-DD","statementTotal":<numero>},"cards":[{"cardLast4":"1234","holderName":"...","printedTotal":<numero>,"items":[{"rawDescription":"...","purchaseDate":"YYYY-MM-DD","value":<positivo>,"isRefund":<bool>,"installmentNumber":<int|null>,"installmentTotal":<int|null>}]}]}
+Regras: 1) value sempre positivo; estornos → isRefund=true. 2) Parcelas como "NN/MM" → installmentNumber/installmentTotal. 3) IGNORE itens após "Total dos lançamentos atuais" e seção "próximas faturas". 4) Datas DD/MM: infira o ano pela data de fechamento. 5) Um cartão por titular adicional.`;
+
+    const aiResult = await genAI.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType, data: base64 } },
+            { text: prompt }
+          ]
+        }
+      ]
+    });
+
+    let rawText = (aiResult.text || "").trim().replace(/```json|```/g, "").trim();
+    const firstBrace = rawText.indexOf("{");
+    const lastBrace = rawText.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      rawText = rawText.substring(firstBrace, lastBrace + 1);
+    }
+
+    const parsed = JSON.parse(rawText);
+    return res.json(parsed);
+  } catch (error: any) {
+    console.error("Erro interno no parse Gemini (fatura):", error);
+    return res.status(500).json({ error: error.message || "Erro interno ao chamar Gemini" });
+  }
+});
+
 app.delete("/api/import-batch/:batchId", requireAuth, async (req: any, res: any) => {
   try {
     const { batchId } = req.params;
