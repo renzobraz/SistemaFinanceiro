@@ -287,7 +287,8 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             const lowerDesc = item.statementItem.rawDescription.toLowerCase();
             const matchedAlias = aliases.find(alias => {
               if (!alias.rawPattern) return false;
-              try { return new RegExp(alias.rawPattern, 'i').test(lowerDesc); }
+              const escaped = alias.rawPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              try { return new RegExp(escaped, 'i').test(lowerDesc); }
               catch { return lowerDesc.includes(alias.rawPattern.toLowerCase()); }
             });
             if (matchedAlias) {
@@ -476,8 +477,9 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
         const lowerDesc = item.statementItem.rawDescription.toLowerCase();
         const matchedAlias = aliases.find(alias => {
           if (!alias.rawPattern) return false;
+          const escaped = alias.rawPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           try {
-            const regex = new RegExp(alias.rawPattern, 'i');
+            const regex = new RegExp(escaped, 'i');
             return regex.test(lowerDesc);
           } catch {
             return lowerDesc.includes(alias.rawPattern.toLowerCase());
