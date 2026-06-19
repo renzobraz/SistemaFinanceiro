@@ -351,9 +351,14 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           grandTotalsMatch: Math.abs(grandParsedTotal - grandAnchorTotal) <= 0.02,
         };
       } else {
-        // Parser regex falhou — mostrar erro diagnóstico
-        const errData = await regexRes.json().catch(() => ({}));
-        throw new Error('Parser regex falhou (422): ' + (errData.error || JSON.stringify(errData).substring(0, 300)));
+        // Parser regex falhou — tentar fallback com IA (Claude)
+        setProgressMsg('Analisando com IA (fallback)...');
+        try {
+          const aiResult = await extractStatementWithAI(base64, 'application/pdf');
+          parsedStatement = reconcileStatement(aiResult, anchors);
+        } catch (aiError: any) {
+          throw new Error('Falha ao processar o PDF. O parser automático e a IA não conseguiram extrair os dados. ' + (aiError.message || ''));
+        }
       }
 
       // 5. Conciliando com Contas a Pagar
