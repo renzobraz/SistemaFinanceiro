@@ -88,8 +88,8 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [itemParticipants, setItemParticipants] = useState<Record<number, string>>({});
   const [itemDescriptions, setItemDescriptions] = useState<Record<number, string>>({});
   const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
-  const [lastBatch, setLastBatch] = useState<{ id: string; date: string; count: number; description: string } | null>(null);
-  const [undoing, setUndoing] = useState(false);
+  const [batchHistory, setBatchHistory] = useState<{ id: string; date: string; count: number; description: string }[]>([]);
+  const [undoingId, setUndoingId] = useState<string | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState<{ hash: string; fileName: string; importedAt: string } | null>(null);
   const [currentCsvHash, setCurrentCsvHash] = useState<string | null>(null);
   const bypassDuplicateCheck = useRef(false);
@@ -99,25 +99,35 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   }, [participants]);
 
   useEffect(() => {
-    const stored = localStorage.getItem('last_import_batch');
-    if (stored) {
-      try { setLastBatch(JSON.parse(stored)); } catch {}
+    // Lê histórico novo; faz fallback para formato legado (last_import_batch)
+    const history = localStorage.getItem('import_batch_history');
+    if (history) {
+      try { setBatchHistory(JSON.parse(history)); } catch {}
+    } else {
+      const legacy = localStorage.getItem('last_import_batch');
+      if (legacy) {
+        try {
+          const parsed = JSON.parse(legacy);
+          setBatchHistory([parsed]);
+        } catch {}
+      }
     }
   }, []);
 
-  const handleUndoImport = async () => {
-    if (!lastBatch) return;
-    if (!confirm(`Desfazer a importação "${lastBatch.description}" com ${lastBatch.count} lançamentos?`)) return;
-    setUndoing(true);
+  const handleUndoImport = async (batch: { id: string; description: string; count: number }) => {
+    if (!confirm(`Desfazer a importação "${batch.description}" com ${batch.count} lançamentos?`)) return;
+    setUndoingId(batch.id);
     try {
-      await financeService.deleteImportBatch(lastBatch.id);
+      await financeService.deleteImportBatch(batch.id);
+      const updated = batchHistory.filter(b => b.id !== batch.id);
+      setBatchHistory(updated);
+      localStorage.setItem('import_batch_history', JSON.stringify(updated));
       localStorage.removeItem('last_import_batch');
-      setLastBatch(null);
-      onSuccess();
+      if (updated.length === 0) onSuccess();
     } catch (e: any) {
       setError('Erro ao desfazer importação: ' + (e.message || ''));
     } finally {
-      setUndoing(false);
+      setUndoingId(null);
     }
   };
   const [generateFutureInstallments, setGenerateFutureInstallments] = useState<Record<number, boolean>>({});
@@ -589,7 +599,10 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           count: totalOperations,
           description: `Fatura ${file?.name || 'importada'}`,
         };
-        localStorage.setItem('last_import_batch', JSON.stringify(batchInfo));
+        const updated = [batchInfo, ...batchHistory].slice(0, 5);
+        setBatchHistory(updated);
+        localStorage.setItem('import_batch_history', JSON.stringify(updated));
+        localStorage.removeItem('last_import_batch');
       }
 
       // Registrar hash do CSV para evitar reimportação acidental
@@ -746,20 +759,25 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </div>
               </div>
 
-              {lastBatch && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between text-sm">
-                  <div className="min-w-0">
-                    <span className="font-medium text-amber-800">Última importação: </span>
-                    <span className="text-amber-700">{lastBatch.description} · {lastBatch.count} lançamentos · {new Date(lastBatch.date).toLocaleString('pt-BR')}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleUndoImport}
-                    disabled={undoing}
-                    className="ml-4 shrink-0 px-3 py-1 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded text-xs font-medium transition-colors"
-                  >
-                    {undoing ? 'Desfazendo...' : 'Desfazer'}
-                  </button>
+              {batchHistory.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Importações recentes</p>
+                  {batchHistory.map(batch => (
+                    <div key={batch.id} className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between text-sm gap-3">
+                      <div className="min-w-0 flex-1">
+                        <span className="font-medium text-amber-800">{batch.description}</span>
+                        <span className="text-amber-600 ml-2">· {batch.count} lançamentos · {new Date(batch.date).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUndoImport(batch)}
+                        disabled={undoingId === batch.id}
+                        className="shrink-0 px-3 py-1 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded text-xs font-medium transition-colors"
+                      >
+                        {undoingId === batch.id ? 'Desfazendo...' : 'Desfazer'}
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
 
