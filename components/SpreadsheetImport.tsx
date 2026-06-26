@@ -45,6 +45,8 @@ type Step = 'upload' | 'mapping' | 'preview' | 'importing' | 'done';
 
 const NONE = -1;
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
 function normalizeStr(s: string): string {
   return s.toLowerCase().trim().normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
@@ -64,13 +66,7 @@ function parseNumber(s: string): number {
   return isNaN(n) ? 0 : Math.abs(n);
 }
 
-function detectSeparator(line: string): string {
-  const sc = (line.match(/;/g) || []).length;
-  const co = (line.match(/,/g) || []).length;
-  return sc >= co ? ';' : ',';
-}
-
-function parseCsvLine(line: string, sep: string): string[] {
+function splitLine(line: string, sep: string): string[] {
   const result: string[] = [];
   let field = '';
   let inQuotes = false;
@@ -84,17 +80,33 @@ function parseCsvLine(line: string, sep: string): string[] {
   return result;
 }
 
-// Strict match only: exact or header contains full search term
+function parseCsv(text: string): { headers: string[]; rows: string[][] } {
+  // Remove UTF-8 BOM (﻿)
+  const clean = text.replace(/^﻿/, '');
+  const lines = clean.split(/\r?\n/).map(l => l.trimEnd()).filter(l => l.trim());
+  if (lines.length < 2) return { headers: [], rows: [] };
+
+  // Try semicolon then comma — pick the one that gives more columns
+  const sc = splitLine(lines[0], ';');
+  const co = splitLine(lines[0], ',');
+  const sep = sc.length >= co.length ? ';' : ',';
+
+  const headers = splitLine(lines[0], sep);
+  const rows = lines.slice(1).map(l => splitLine(l, sep));
+  return { headers, rows };
+}
+
 function findCol(headers: string[], ...names: string[]): number {
   const norm = headers.map(normalizeStr);
+  // 1. Exact match
   for (const name of names) {
-    const n = normalizeStr(name);
-    const exact = norm.indexOf(n);
-    if (exact !== -1) return exact;
+    const idx = norm.indexOf(normalizeStr(name));
+    if (idx !== -1) return idx;
   }
+  // 2. Header contains the full search term (only for terms ≥ 4 chars)
   for (const name of names) {
     const n = normalizeStr(name);
-    if (n.length < 4) continue; // skip short terms to avoid false positives
+    if (n.length < 4) continue;
     const idx = norm.findIndex(h => h.includes(n));
     if (idx !== -1) return idx;
   }
@@ -103,27 +115,61 @@ function findCol(headers: string[], ...names: string[]): number {
 
 function guessMapping(headers: string[]): ColumnMapping {
   return {
-    date:            findCol(headers, 'Data Pagamento', 'Data Pag', 'Pagamento', 'Data'),
+    date:            findCol(headers, 'Data Pagamento', 'Data Pag', 'Pagamento'),
     emissionDate:    findCol(headers, 'Data Emissão', 'Data Emissao', 'Emissão', 'Emissao'),
     dueDate:         findCol(headers, 'Data Vencimento', 'Vencimento', 'Data Venc'),
-    docNumber:       findCol(headers, 'NF Laura', 'NF', 'Nota Fiscal', 'Num Doc', 'Nº Doc', 'Numero'),
+    docNumber:       findCol(headers, 'NF Laura', 'NF', 'Nota Fiscal', 'Num Doc', 'Numero'),
     bankName:        findCol(headers, 'Conta'),
     participantName: findCol(headers, 'Fornecedor', 'Participante', 'Cliente'),
     categoryName:    findCol(headers, 'Categoria'),
-    description:     findCol(headers, 'Observação', 'Observacao', 'Descricao', 'Descrição'),
-    statusCol:       findCol(headers, 'Status', 'Situação', 'Situacao', 'Pago'),
-    debit:           findCol(headers, 'Débito', 'Debito', 'Saída', 'Saida'),
-    credit:          findCol(headers, 'Crédito', 'Credito', 'Entrada', 'Receita'),
+    description:     findCol(headers, 'Observacao', 'Observação', 'Descricao', 'Descrição'),
+    statusCol:       findCol(headers, 'Status', 'Situacao', 'Situação'),
+    debit:           findCol(headers, 'Debito', 'Débito', 'Saida', 'Saída'),
+    credit:          findCol(headers, 'Credito', 'Crédito', 'Entrada', 'Receita'),
   };
 }
 
-function sampleValues(rows: string[][], colIdx: number, count = 3): string[] {
-  if (colIdx === NONE) return [];
-  return rows
-    .map(r => r[colIdx] || '')
-    .filter(Boolean)
-    .slice(0, count);
+// ── ColSelect: defined OUTSIDE main component to avoid inline-component issues ──
+
+interface ColSelectProps {
+  label: string;
+  required?: boolean;
+  field: keyof ColumnMapping;
+  mapping: ColumnMapping;
+  headers: string[];
+  rows: string[][];
+  onChange: (field: keyof ColumnMapping, idx: number) => void;
 }
+
+const ColSelect: React.FC<ColSelectProps> = ({ label, required, field, mapping, headers, rows, onChange }) => {
+  const selected = mapping[field];
+  const samples = selected !== NONE
+    ? rows.map(r => r[selected] || '').filter(Boolean).slice(0, 3)
+    : [];
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-medium text-gray-600">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      <select
+        value={selected}
+        onChange={e => onChange(field, Number(e.target.value))}
+        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+      >
+        <option value={NONE}>— não mapeado —</option>
+        {headers.map((h, i) => (
+          <option key={i} value={i}>{h || `Coluna ${i + 1}`}</option>
+        ))}
+      </select>
+      {samples.length > 0 && (
+        <p className="text-[10px] text-gray-400 truncate">Ex: {samples.join(', ')}</p>
+      )}
+    </div>
+  );
+};
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
   onClose,
@@ -138,8 +184,8 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
     wallets.find(w => w.active !== false)?.id || ''
   );
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [csvRows, setCsvRows] = useState<string[][]>([]);
-  const [mapping, setMapping] = useState<ColumnMapping>({
+  const [csvRows, setCsvRows]       = useState<string[][]>([]);
+  const [mapping, setMapping]       = useState<ColumnMapping>({
     date: NONE, emissionDate: NONE, dueDate: NONE, docNumber: NONE,
     bankName: NONE, participantName: NONE, categoryName: NONE,
     description: NONE, statusCol: NONE, debit: NONE, credit: NONE,
@@ -150,39 +196,40 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
   const fileRef = useRef<HTMLInputElement>(null);
 
   const inputClass = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
-  const selectClass = 'w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white';
 
   function loadFile(file: File) {
     const reader = new FileReader();
     reader.onload = e => {
       try {
-        // Remove BOM if present
-        let text = (e.target?.result as string).replace(/^﻿/, '');
-        const lines = text.split(/\r?\n/).filter(l => l.trim());
-        if (lines.length < 2) { setParseError('Arquivo vazio ou sem dados.'); return; }
-
-        const sep = detectSeparator(lines[0]);
-        const headers = parseCsvLine(lines[0], sep);
-        const rows = lines.slice(1).map(l => parseCsvLine(l, sep));
-
-        if (headers.length < 2) {
-          setParseError('Não foi possível detectar as colunas. Salve o arquivo como CSV e tente novamente.');
+        const raw = e.target?.result;
+        if (!raw || typeof raw !== 'string') {
+          setParseError('Não foi possível ler o arquivo.');
           return;
         }
-
+        const { headers, rows } = parseCsv(raw);
+        if (headers.length < 2) {
+          setParseError(`Não foi possível detectar as colunas (encontradas: ${headers.length}). Salve o arquivo como CSV separado por ponto e vírgula e tente novamente.`);
+          return;
+        }
         setCsvHeaders(headers);
         setCsvRows(rows);
         setMapping(guessMapping(headers));
         setParseError('');
         setStep('mapping');
-      } catch {
-        setParseError('Erro ao processar o arquivo. Verifique o formato.');
+      } catch (err: any) {
+        setParseError('Erro ao processar o arquivo: ' + (err?.message || 'formato inválido'));
       }
     };
+    reader.onerror = () => setParseError('Erro ao ler o arquivo.');
     reader.readAsText(file, 'UTF-8');
   }
 
+  function handleMappingChange(field: keyof ColumnMapping, idx: number) {
+    setMapping(prev => ({ ...prev, [field]: idx }));
+  }
+
   function applyMapping() {
+    setParseError('');
     if (mapping.date === NONE && mapping.dueDate === NONE) {
       setParseError('Selecione ao menos uma coluna de data.');
       return;
@@ -203,25 +250,25 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
       if (debitVal === 0 && creditVal === 0) continue;
 
       const statusRaw = get(r, mapping.statusCol).toLowerCase().trim();
-      const status: 'PAID' | 'PENDING' = statusRaw === 'v' ? 'PENDING' : 'PAID';
-
       rows.push({
-        emissionDate: parseDate(get(r, mapping.emissionDate)),
+        emissionDate:    parseDate(get(r, mapping.emissionDate)),
         date,
-        docNumber: get(r, mapping.docNumber),
-        bankName: get(r, mapping.bankName).trim(),
+        docNumber:       get(r, mapping.docNumber),
+        bankName:        get(r, mapping.bankName).trim(),
         participantName: get(r, mapping.participantName).trim(),
-        categoryName: get(r, mapping.categoryName).trim(),
-        description: get(r, mapping.description).trim(),
-        status,
-        value: debitVal > 0 ? debitVal : creditVal,
-        type: debitVal > 0 ? 'DEBIT' : 'CREDIT',
+        categoryName:    get(r, mapping.categoryName).trim(),
+        description:     get(r, mapping.description).trim(),
+        status:          statusRaw === 'v' ? 'PENDING' : 'PAID',
+        value:           debitVal > 0 ? debitVal : creditVal,
+        type:            debitVal > 0 ? 'DEBIT' : 'CREDIT',
       });
     }
 
-    if (rows.length === 0) { setParseError('Nenhuma linha com dados válidos encontrada.'); return; }
+    if (rows.length === 0) {
+      setParseError('Nenhuma linha com dados válidos encontrada. Verifique o mapeamento de Data e Valor.');
+      return;
+    }
     setParsedRows(rows);
-    setParseError('');
     setStep('preview');
   }
 
@@ -268,10 +315,10 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
         type: row.type,
         status: row.status,
         walletId: selectedWalletId,
-        bankId: bankMap.get(normalizeStr(row.bankName)) || '',
-        categoryId: catMap.get(normalizeStr(row.categoryName)) || '',
+        bankId:        bankMap.get(normalizeStr(row.bankName))        || '',
+        categoryId:    catMap.get(normalizeStr(row.categoryName))     || '',
         participantId: partMap.get(normalizeStr(row.participantName)) || '',
-        costCenterId: '',
+        costCenterId:  '',
       }));
 
       await financeService.createManyTransactions(transactions);
@@ -283,52 +330,25 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
     }
   }
 
-  // Stats for preview
   const bankNamesToCreate  = [...new Set(parsedRows.map(r => r.bankName).filter(Boolean))].filter(n => !initialBanks.some(b => normalizeStr(b.name) === normalizeStr(n)));
   const catNamesToCreate   = [...new Set(parsedRows.map(r => r.categoryName).filter(Boolean))].filter(n => !initialCategories.some(c => normalizeStr(c.name) === normalizeStr(n)));
   const partNamesToCreate  = [...new Set(parsedRows.map(r => r.participantName).filter(Boolean))].filter(n => !initialParticipants.some(p => normalizeStr(p.name) === normalizeStr(n)));
   const totalToCreate = bankNamesToCreate.length + catNamesToCreate.length + partNamesToCreate.length;
 
-  // Column selector helper
-  const ColSelect = ({
-    label, required, field,
-  }: { label: string; required?: boolean; field: keyof ColumnMapping }) => (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-gray-600">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
-      </label>
-      <select
-        value={mapping[field]}
-        onChange={e => setMapping(prev => ({ ...prev, [field]: Number(e.target.value) }))}
-        className={selectClass}
-      >
-        <option value={NONE}>— não mapeado —</option>
-        {csvHeaders.map((h, i) => (
-          <option key={i} value={i}>{h}</option>
-        ))}
-      </select>
-      {mapping[field] !== NONE && (
-        <p className="text-[10px] text-gray-400 truncate">
-          Ex: {sampleValues(csvRows, mapping[field]).join(', ')}
-        </p>
-      )}
-    </div>
-  );
+  const colProps = { mapping, headers: csvHeaders, rows: csvRows, onChange: handleMappingChange };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b flex-shrink-0">
           <div className="flex items-center gap-3">
             <FileSpreadsheet className="w-6 h-6 text-green-600" />
             <div>
               <h2 className="text-xl font-semibold text-gray-900">Importar Planilha</h2>
-              {step !== 'upload' && step !== 'done' && (
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {step === 'mapping' ? 'Etapa 1 de 2 — Mapeamento de colunas' : 'Etapa 2 de 2 — Prévia da importação'}
-                </p>
-              )}
+              {step === 'mapping' && <p className="text-xs text-gray-400 mt-0.5">Etapa 1 de 2 — Mapeamento de colunas</p>}
+              {step === 'preview' && <p className="text-xs text-gray-400 mt-0.5">Etapa 2 de 2 — Prévia da importação</p>}
             </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -338,7 +358,7 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
 
         <div className="flex-1 overflow-y-auto p-6">
 
-          {/* UPLOAD */}
+          {/* ── UPLOAD ── */}
           {step === 'upload' && (
             <div className="flex flex-col items-center gap-6">
               <div
@@ -364,25 +384,39 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
             </div>
           )}
 
-          {/* COLUMN MAPPING */}
+          {/* ── MAPEAMENTO ── */}
           {step === 'mapping' && (
-            <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-5">
+              {/* Diagnóstico: colunas detectadas */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+                <p className="text-xs font-medium text-gray-500 mb-1">
+                  {csvHeaders.length} colunas detectadas no arquivo:
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {csvHeaders.map((h, i) => (
+                    <span key={i} className="text-xs bg-white border border-gray-200 text-gray-700 px-2 py-0.5 rounded">
+                      {i + 1}. {h || '(vazio)'}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
               <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-800">
-                <strong>Confirme o mapeamento das colunas.</strong> Verifique os exemplos abaixo de cada campo e corrija se necessário.
+                <strong>Confirme o mapeamento.</strong> Para cada campo, selecione qual coluna da planilha corresponde. Veja os exemplos de valores abaixo de cada seleção.
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <ColSelect label="Data do Lançamento" required field="date" />
-                <ColSelect label="Data de Emissão" field="emissionDate" />
-                <ColSelect label="Data de Vencimento" field="dueDate" />
-                <ColSelect label="Nº Doc / NF" field="docNumber" />
-                <ColSelect label="Conta / Banco" field="bankName" />
-                <ColSelect label="Fornecedor / Participante" field="participantName" />
-                <ColSelect label="Categoria" field="categoryName" />
-                <ColSelect label="Observação / Descrição" field="description" />
-                <ColSelect label="Status (c=pago, v=a pagar)" field="statusCol" />
-                <ColSelect label="Débito" field="debit" />
-                <ColSelect label="Crédito" field="credit" />
+                <ColSelect label="Data do Lançamento" required field="date" {...colProps} />
+                <ColSelect label="Data de Emissão"           field="emissionDate"    {...colProps} />
+                <ColSelect label="Data de Vencimento"        field="dueDate"         {...colProps} />
+                <ColSelect label="Nº Doc / NF"               field="docNumber"       {...colProps} />
+                <ColSelect label="Conta / Banco"             field="bankName"        {...colProps} />
+                <ColSelect label="Fornecedor / Participante" field="participantName" {...colProps} />
+                <ColSelect label="Categoria"                 field="categoryName"    {...colProps} />
+                <ColSelect label="Observação / Descrição"    field="description"     {...colProps} />
+                <ColSelect label="Status (c=pago, v=a pagar)" field="statusCol"     {...colProps} />
+                <ColSelect label="Débito"  required field="debit"  {...colProps} />
+                <ColSelect label="Crédito"          field="credit" {...colProps} />
               </div>
 
               {parseError && (
@@ -394,7 +428,7 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
             </div>
           )}
 
-          {/* PREVIEW */}
+          {/* ── PRÉVIA ── */}
           {step === 'preview' && (
             <div className="flex flex-col gap-5">
               <div className="flex items-center gap-4 bg-blue-50 rounded-xl p-4">
@@ -493,15 +527,13 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
                   </tbody>
                 </table>
                 {parsedRows.length > 100 && (
-                  <p className="text-xs text-gray-400 text-center py-2 border-t">
-                    ... e mais {parsedRows.length - 100} lançamentos
-                  </p>
+                  <p className="text-xs text-gray-400 text-center py-2 border-t">... e mais {parsedRows.length - 100} lançamentos</p>
                 )}
               </div>
             </div>
           )}
 
-          {/* IMPORTING */}
+          {/* ── IMPORTANDO ── */}
           {step === 'importing' && (
             <div className="flex flex-col items-center justify-center py-16 gap-4">
               <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
@@ -510,7 +542,7 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
             </div>
           )}
 
-          {/* DONE */}
+          {/* ── CONCLUÍDO ── */}
           {step === 'done' && (
             <div className="flex flex-col items-center justify-center py-16 gap-4">
               <CheckCircle className="w-16 h-16 text-green-500" />
@@ -553,7 +585,7 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
             </>
           ) : step === 'mapping' ? (
             <>
-              <button onClick={() => { setParseError(''); setStep('upload'); }} className="px-4 py-2 text-gray-600 text-sm hover:text-gray-800 transition-colors">
+              <button onClick={() => { setParseError(''); setCsvHeaders([]); setCsvRows([]); setStep('upload'); }} className="px-4 py-2 text-gray-600 text-sm hover:text-gray-800 transition-colors">
                 Voltar
               </button>
               <button
