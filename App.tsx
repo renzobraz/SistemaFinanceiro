@@ -19,6 +19,7 @@ import { financeService, DEFAULT_SUPABASE_CONFIG } from './services/financeServi
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus, AssetType, AssetSector, AssetTicker, Organization } from './types';
 import { BrokerageImport } from './components/BrokerageImport';
 import { CreditCardImport } from './components/CreditCardImport';
+import { SpreadsheetImport } from './components/SpreadsheetImport';
 import { Auth } from './components/Auth';
 import { 
   Plus, 
@@ -47,7 +48,8 @@ import {
   Scaling,
   Menu,
   SlidersHorizontal,
-  CreditCard
+  CreditCard,
+  Sheet
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 import { ManagedPortfolios } from './components/ManagedPortfolios';
@@ -383,6 +385,7 @@ const App: FC = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isCreditCardImportOpen, setIsCreditCardImportOpen] = useState(false);
+  const [isSpreadsheetImportOpen, setIsSpreadsheetImportOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [partnerTransaction, setPartnerTransaction] = useState<Transaction | null>(null);
 
@@ -1708,6 +1711,15 @@ const App: FC = () => {
                     <span className="hidden sm:inline">Importar fatura</span>
                   </button>
                 )}
+                {canCreateTransaction && ['payables', 'bank-transactions'].includes(activeTab) && (
+                  <button
+                    onClick={() => setIsSpreadsheetImportOpen(true)}
+                    className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors h-[38px] shadow-sm animate-fade-in"
+                  >
+                    <Sheet className="w-4 h-4 text-green-600" />
+                    <span className="hidden sm:inline">Importar planilha</span>
+                  </button>
+                )}
                 {canCreateTransaction && activeTab !== 'investments' && (
                   <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
                       <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Lançar</span>
@@ -2155,6 +2167,20 @@ const App: FC = () => {
           banks={registries.banks}
           categories={registries.categories}
           costCenters={registries.costCenters}
+          wallets={registries.wallets}
+          participants={registries.participants}
+        />
+      )}
+
+      {isSpreadsheetImportOpen && (
+        <SpreadsheetImport
+          onClose={() => setIsSpreadsheetImportOpen(false)}
+          onSuccess={() => {
+            setIsSpreadsheetImportOpen(false);
+            loadTransactions();
+          }}
+          banks={registries.banks}
+          categories={registries.categories}
           wallets={registries.wallets}
           participants={registries.participants}
         />
