@@ -69,6 +69,7 @@ export interface Wallet extends BaseEntity {}
 export interface Transaction {
   id: string;
   date: string; // ISO Date
+  emissionDate?: string; // Data de emissão do documento (opcional)
   description: string;
   docNumber: string;
   value: number;

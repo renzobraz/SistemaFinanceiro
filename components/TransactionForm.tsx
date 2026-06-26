@@ -44,6 +44,7 @@ interface TransactionFormProps {
 
 const emptyTransaction: Omit<Transaction, "id"> = {
   date: new Date().toISOString().split("T")[0],
+  emissionDate: "",
   description: "",
   docNumber: "",
   value: 0,
@@ -1000,7 +1001,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             return null;
           })()}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Data <span className="text-red-500">*</span>
@@ -1012,6 +1013,20 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 value={formData.date}
                 onChange={(e) =>
                   setFormData({ ...formData, date: e.target.value })
+                }
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Data de Emissão
+              </label>
+              <input
+                type="date"
+                disabled={isSaving}
+                value={formData.emissionDate ?? ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, emissionDate: e.target.value || undefined })
                 }
                 className={inputClass}
               />

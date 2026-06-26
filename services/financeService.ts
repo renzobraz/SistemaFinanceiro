@@ -412,6 +412,7 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   createdAt: db.created_at || undefined,
   managedPortfolioId: db.managed_portfolio_id ? String(db.managed_portfolio_id) : undefined,
   importBatchId: db.import_batch_id || undefined,
+  emissionDate: db.emission_date ? String(db.emission_date).substring(0, 10) : undefined,
   exchangeRate: db.exchange_rate ? Number(db.exchange_rate) : undefined,
   spread: db.spread ? Number(db.spread) : undefined,
   iof: db.iof ? Number(db.iof) : undefined,
@@ -438,6 +439,7 @@ const mapTransactionToDb = (t: Transaction, userId?: string | null, orgId?: stri
     linked_id: t.linkedId || null,
     managed_portfolio_id: t.managedPortfolioId || null,
     import_batch_id: t.importBatchId || null,
+    emission_date: t.emissionDate || null,
   };
 
   // Only include exchange fields if they have actual values to prevent PGRST204 errors on older schemas
