@@ -2629,7 +2629,7 @@ export const financeService = {
     saveEntityLocal(keyMap[type], list);
   },
 
-  async deduplicateRegistry(type: string, onProgress?: (current: number, total: number) => void): Promise<{ merged: number, deleted: number }> {
+  async deduplicateRegistry(type: string, walletId?: string, onProgress?: (current: number, total: number) => void): Promise<{ merged: number, deleted: number }> {
     const supabase = getSupabase();
     const tableMap: any = { 
       banks: 'banks', 
@@ -2673,19 +2673,8 @@ export const financeService = {
     };
 
     if (supabase) {
-      let items: any[] = [];
-      let from = 0;
-      let finished = false;
-      while (!finished) {
-        const { data, error: fetchError } = await supabase.from(tableName).select('*').range(from, from + 999);
-        if (fetchError) throw new Error(formatSupabaseError(fetchError));
-        if (!data || data.length === 0) {
-          finished = true;
-        } else {
-          items = [...items, ...data];
-          from += 1000;
-        }
-      }
+      const effectiveWalletId = walletId === 'ALL' ? undefined : walletId;
+      const items = await this.getRegistry(type, false, effectiveWalletId);
 
       const groups = new Map<string, any[]>();
       for (const item of items) {
@@ -2820,12 +2809,15 @@ export const financeService = {
     return { merged: mergedCount, deleted: deletedCount };
   },
 
-  async findSimilarGroups(type: string): Promise<Array<{ master: any, duplicates: any[] }>> {
-    const items = await this.getRegistry(type);
+  async findSimilarGroups(type: string, walletId?: string): Promise<Array<{ master: any, duplicates: any[] }>> {
+    const effectiveWalletId = walletId === 'ALL' ? undefined : walletId;
+    const items = await this.getRegistry(type, false, effectiveWalletId);
     const groups: Array<{ master: any, duplicates: any[] }> = [];
     const processed = new Set<string>();
-    
-    const ignoredKey = `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
+
+    const ignoredKey = effectiveWalletId
+      ? `${KEYS.IGNORED_UNIFICATIONS}_${type}_${effectiveWalletId}`
+      : `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
     const ignoredPairs: string[] = JSON.parse(localStorage.getItem(ignoredKey) || '[]');
 
     const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
@@ -2883,8 +2875,11 @@ export const financeService = {
     return groups;
   },
 
-  async ignoreUnification(type: string, masterId: string, duplicateIds: string[]): Promise<void> {
-    const ignoredKey = `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
+  async ignoreUnification(type: string, masterId: string, duplicateIds: string[], walletId?: string): Promise<void> {
+    const effectiveWalletId = walletId === 'ALL' ? undefined : walletId;
+    const ignoredKey = effectiveWalletId
+      ? `${KEYS.IGNORED_UNIFICATIONS}_${type}_${effectiveWalletId}`
+      : `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
     const ignoredPairs: string[] = JSON.parse(localStorage.getItem(ignoredKey) || '[]');
     
     duplicateIds.forEach(dupId => {
@@ -2897,9 +2892,12 @@ export const financeService = {
     localStorage.setItem(ignoredKey, JSON.stringify(ignoredPairs));
   },
 
-  async getIgnoredUnifications(type: string): Promise<Array<{ id: string, name1: string, name2: string, pairId: string }>> {
-    const items = await this.getRegistry(type);
-    const ignoredKey = `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
+  async getIgnoredUnifications(type: string, walletId?: string): Promise<Array<{ id: string, name1: string, name2: string, pairId: string }>> {
+    const effectiveWalletId = walletId === 'ALL' ? undefined : walletId;
+    const items = await this.getRegistry(type, false, effectiveWalletId);
+    const ignoredKey = effectiveWalletId
+      ? `${KEYS.IGNORED_UNIFICATIONS}_${type}_${effectiveWalletId}`
+      : `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
     const ignoredPairs: string[] = JSON.parse(localStorage.getItem(ignoredKey) || '[]');
     
     const result: any[] = [];
@@ -2921,8 +2919,11 @@ export const financeService = {
     return result;
   },
 
-  async removeIgnoredUnification(type: string, pairId: string): Promise<void> {
-    const ignoredKey = `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
+  async removeIgnoredUnification(type: string, pairId: string, walletId?: string): Promise<void> {
+    const effectiveWalletId = walletId === 'ALL' ? undefined : walletId;
+    const ignoredKey = effectiveWalletId
+      ? `${KEYS.IGNORED_UNIFICATIONS}_${type}_${effectiveWalletId}`
+      : `${KEYS.IGNORED_UNIFICATIONS}_${type}`;
     let ignoredPairs: string[] = JSON.parse(localStorage.getItem(ignoredKey) || '[]');
     ignoredPairs = ignoredPairs.filter(id => id !== pairId);
     localStorage.setItem(ignoredKey, JSON.stringify(ignoredPairs));

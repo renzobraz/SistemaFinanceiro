@@ -2100,15 +2100,15 @@ const App: FC = () => {
                             }
                         }}
                         onDeduplicate={async (onProgress) => {
-                            const res = await financeService.deduplicateRegistry(activeRegistryTab, onProgress);
+                            const res = await financeService.deduplicateRegistry(activeRegistryTab, selectedWalletId, onProgress);
                             await loadRegistries(true, selectedWalletId);
                             await loadTransactions();
                             return res;
                         }}
-                        onFindSimilar={() => financeService.findSimilarGroups(activeRegistryTab)}
-                        onIgnoreSimilar={(masterId, duplicateIds) => financeService.ignoreUnification(activeRegistryTab, masterId, duplicateIds)}
-                        onGetIgnored={() => financeService.getIgnoredUnifications(activeRegistryTab)}
-                        onRemoveIgnored={(pairId) => financeService.removeIgnoredUnification(activeRegistryTab, pairId)}
+                        onFindSimilar={() => financeService.findSimilarGroups(activeRegistryTab, selectedWalletId)}
+                        onIgnoreSimilar={(masterId, duplicateIds) => financeService.ignoreUnification(activeRegistryTab, masterId, duplicateIds, selectedWalletId)}
+                        onGetIgnored={() => financeService.getIgnoredUnifications(activeRegistryTab, selectedWalletId)}
+                        onRemoveIgnored={(pairId) => financeService.removeIgnoredUnification(activeRegistryTab, pairId, selectedWalletId)}
                         onMerge={async (masterId, duplicateIds) => {
                             await financeService.mergeItems(activeRegistryTab, masterId, duplicateIds);
                             await loadRegistries(true, selectedWalletId);
