@@ -891,12 +891,15 @@ const App: FC = () => {
       const da = new Date(a.date).getTime();
       const db = new Date(b.date).getTime();
       if (da !== db) return da - db;
-      
-      // Secondary sort: Oldest creation first for balance calculation
+
+      // Secondary sort: createdAt se ambos tiverem (mais antigo primeiro)
       if (a.createdAt && b.createdAt) {
-          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        const diff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        if (diff !== 0) return diff;
       }
-      return (a.id || '').localeCompare(b.id || '');
+
+      // Terceiro critério: ID em ordem DECRESCENTE para coincidir com o display padrão (desc)
+      return (b.id || '').localeCompare(a.id || '');
     });
 
     const map: Record<string, number> = {};
