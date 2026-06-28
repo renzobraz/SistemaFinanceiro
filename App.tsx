@@ -864,6 +864,17 @@ const App: FC = () => {
     };
   }, [startDate, endDate, selectedBankId, selectedWalletId, performanceBankId, performanceWalletId, statusFilter, activeTab, loadTransactions, loading]);
 
+  // Ao trocar carteira: reseta banco selecionado e invalida cache para forçar recarga dos bancos corretos
+  const isFirstWalletEffectRef = useRef(true);
+  useEffect(() => {
+    if (isFirstWalletEffectRef.current) {
+      isFirstWalletEffectRef.current = false;
+      return;
+    }
+    setSelectedBankId('');
+    loadedRegistriesRef.current = {};
+  }, [selectedWalletId]);
+
   useEffect(() => {
     if (loading || (isConnected && !financeService.activeOrganizationId)) return;
     // Carrega registros para quase todas as abas que usam o formulário ou exibem nomes
