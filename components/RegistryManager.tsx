@@ -83,6 +83,8 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [sortField, setSortField] = useState<string>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const hasEditPermission = useMemo(() => {
     return (
@@ -125,6 +127,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
     setStatusFilter('ACTIVE');
     setIsAdding(false);
     setEditingId(null);
+    setSelectedIds(new Set());
   }, [title]);
 
   const uniqueCategories = useMemo(() => Array.from(new Set(items.map(i => i.category).filter(Boolean))).sort(), [items]);
@@ -133,7 +136,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
-    type: 'DELETE' | 'IMPORT' | 'DEDUPLICATE' | 'AUTOFILL';
+    type: 'DELETE' | 'BULK_DELETE' | 'IMPORT' | 'DEDUPLICATE' | 'AUTOFILL';
     data: any;
     message: string;
     title: string;
@@ -141,10 +144,10 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
 
   const isAssetRegistry = title.toLowerCase().includes('participante');
   const isBankRegistry = title.toLowerCase().includes('banco');
-  
-  const gridClasses = isAssetRegistry 
-    ? 'grid grid-cols-[minmax(180px,2fr)_110px_110px_90px_140px_80px_260px]' 
-    : 'grid grid-cols-[minmax(200px,1fr)_120px_100px]';
+
+  const gridClasses = isAssetRegistry
+    ? 'grid grid-cols-[20px_minmax(180px,2fr)_110px_110px_90px_140px_80px_260px]'
+    : 'grid grid-cols-[20px_minmax(200px,1fr)_120px_100px]';
 
   const filteredItems = useMemo(() => {
     const filtered = items.filter(item => {
@@ -179,6 +182,40 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
       return 0;
     });
   }, [items, nameFilter, categoryFilter, sectorFilter, tickerFilter, currencyFilter, sortField, sortDirection, statusFilter]);
+
+  const allFilteredSelected = filteredItems.length > 0 && filteredItems.every(item => selectedIds.has(item.id));
+  const someFilteredSelected = filteredItems.some(item => selectedIds.has(item.id));
+
+  React.useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someFilteredSelected && !allFilteredSelected;
+    }
+  }, [someFilteredSelected, allFilteredSelected]);
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        filteredItems.forEach(item => next.delete(item.id));
+        return next;
+      });
+    } else {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        filteredItems.forEach(item => next.add(item.id));
+        return next;
+      });
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const toggleSort = (field: string) => {
     if (sortField === field) {
@@ -354,6 +391,20 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               await onDelete(confirmModal.data);
           } catch (error: any) {
               alert(error.message);
+          }
+      } else if (confirmModal.type === 'BULK_DELETE') {
+          const ids: string[] = confirmModal.data;
+          const errors: string[] = [];
+          for (const id of ids) {
+              try {
+                  await onDelete(id);
+              } catch (error: any) {
+                  errors.push(error.message);
+              }
+          }
+          setSelectedIds(new Set());
+          if (errors.length > 0) {
+              alert(`${ids.length - errors.length} excluído(s). ${errors.length} não puderam ser excluídos:\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}`);
           }
       } else if (confirmModal.type === 'IMPORT') {
           await onImport(confirmModal.data);
@@ -577,6 +628,21 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               </span>
             </h3>
             <div className="flex gap-2">
+              {hasDeletePermission && selectedIds.size > 0 && (
+                <button
+                  onClick={() => setConfirmModal({
+                    isOpen: true,
+                    type: 'BULK_DELETE',
+                    data: Array.from(selectedIds),
+                    title: 'Excluir Selecionados',
+                    message: `Tem certeza que deseja excluir ${selectedIds.size} registro(s) selecionado(s)? Esta ação não pode ser desfeita.`
+                  })}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-xs font-bold shadow-sm"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Excluir {selectedIds.size}
+                </button>
+              )}
               {hasEditPermission && onGetIgnored && (
                 <button 
                   onClick={handleShowIgnored}
@@ -651,7 +717,17 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
           <div className="sticky top-0 z-20 bg-slate-50 border-b border-slate-200 shadow-sm">
             {/* Cabeçalho de Títulos e Ordenação */}
             <div className={`${gridClasses} gap-4 px-6 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider`}>
-              <button 
+              <div className="flex items-center justify-center">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded cursor-pointer"
+                  title="Selecionar todos"
+                />
+              </div>
+              <button
                 onClick={() => toggleSort('name')}
                 className="flex items-center gap-1 hover:text-blue-600 transition-colors text-left group/sort"
               >
@@ -708,6 +784,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
 
             {/* Linha de Filtros */}
             <div className={`${gridClasses} gap-4 px-6 pb-3`}>
+              <div></div>
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
                 <input 
@@ -813,6 +890,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
           <div className="flex-1 overflow-y-auto">
             {isAdding && (
             <div className={`bg-blue-50/50 border-b border-blue-100 animate-fade-in ${gridClasses} gap-4 items-center px-6 py-4`}>
+              <div></div>
               <input
                 autoFocus
                 type="text"
@@ -962,6 +1040,7 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               <div key={item.id} className={`group hover:bg-slate-50/50 transition-all ${gridClasses} gap-4 items-center px-6 py-3`}>
                 {editingId === item.id ? (
                   <>
+                    <div></div>
                     <input
                       autoFocus
                       type="text"
@@ -1105,6 +1184,14 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                   </>
                 ) : (
                   <>
+                    <div className="flex items-center justify-center" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(item.id)}
+                        onChange={() => toggleSelectOne(item.id)}
+                        className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded cursor-pointer"
+                      />
+                    </div>
                     <div className="flex flex-col min-w-0 pr-4">
                       <div className="flex items-center gap-2">
                         <span className="text-sm text-slate-700 font-bold truncate" title={item.name}>{item.name}</span>
@@ -1455,8 +1542,8 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         onConfirm={handleConfirmAction}
         title={confirmModal.title}
         message={confirmModal.message}
-        isDestructive={confirmModal.type === 'DELETE' || confirmModal.type === 'DEDUPLICATE'}
-        confirmText={confirmModal.type === 'DELETE' ? 'Excluir' : confirmModal.type === 'DEDUPLICATE' ? 'Unificar' : 'Importar'}
+        isDestructive={confirmModal.type === 'DELETE' || confirmModal.type === 'BULK_DELETE' || confirmModal.type === 'DEDUPLICATE'}
+        confirmText={confirmModal.type === 'DELETE' || confirmModal.type === 'BULK_DELETE' ? 'Excluir' : confirmModal.type === 'DEDUPLICATE' ? 'Unificar' : 'Importar'}
       />
 
       {dedupProgress && (
