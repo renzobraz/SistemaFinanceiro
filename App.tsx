@@ -1563,13 +1563,20 @@ const App: FC = () => {
                     >
                       <option value={activeTab === 'investments' ? 'ALL' : ''}>{activeTab === 'investments' ? 'Todos Bancos' : 'Banco'}</option>
                       {registries.banks
-                        .filter(b => b.active !== false || b.id === (activeTab === 'investments' ? performanceBankId : selectedBankId))
+                        .filter(b => {
+                          const curBankId = activeTab === 'investments' ? performanceBankId : selectedBankId;
+                          const curWalletId = activeTab === 'investments' ? performanceWalletId : selectedWalletId;
+                          if (b.id === curBankId) return true; // sempre mostra o selecionado
+                          if (b.active === false) return false;
+                          if (!curWalletId || curWalletId === 'ALL') return true;
+                          return b.walletId === curWalletId;
+                        })
                         .map(b => (
                           <option key={b.id} value={b.id}>{b.name}</option>
                         ))}
                     </select>
 
-                    <select 
+                    <select
                       value={activeTab === 'investments' ? performanceWalletId : selectedWalletId} 
                       onChange={(e) => activeTab === 'investments' ? setPerformanceWalletId(e.target.value) : setSelectedWalletId(e.target.value)} 
                       className="bg-white border border-gray-300 rounded-lg px-2 text-[10px] focus:ring-1 focus:ring-blue-500 outline-none text-slate-700 font-bold h-[34px] min-w-[130px]"
@@ -1787,7 +1794,14 @@ const App: FC = () => {
                 >
                   <option value={activeTab === 'investments' ? 'ALL' : ''}>{activeTab === 'investments' ? 'Todos Bancos' : 'Todos Bancos'}</option>
                   {registries.banks
-                    .filter(b => b.active !== false || b.id === (activeTab === 'investments' ? performanceBankId : selectedBankId))
+                    .filter(b => {
+                      const curBankId = activeTab === 'investments' ? performanceBankId : selectedBankId;
+                      const curWalletId = activeTab === 'investments' ? performanceWalletId : selectedWalletId;
+                      if (b.id === curBankId) return true;
+                      if (b.active === false) return false;
+                      if (!curWalletId || curWalletId === 'ALL') return true;
+                      return b.walletId === curWalletId;
+                    })
                     .map(b => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
