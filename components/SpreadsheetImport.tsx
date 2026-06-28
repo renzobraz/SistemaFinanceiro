@@ -197,28 +197,47 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
 
   const inputClass = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
 
+  function processText(raw: string) {
+    try {
+      const { headers, rows } = parseCsv(raw);
+      if (headers.length < 2) {
+        setParseError(`Não foi possível detectar as colunas (encontradas: ${headers.length}). Salve o arquivo como CSV separado por ponto e vírgula e tente novamente.`);
+        return;
+      }
+      setCsvHeaders(headers);
+      setCsvRows(rows);
+      setMapping(guessMapping(headers));
+      setParseError('');
+      setStep('mapping');
+    } catch (err: any) {
+      setParseError('Erro ao processar o arquivo: ' + (err?.message || 'formato inválido'));
+    }
+  }
+
   function loadFile(file: File) {
     const reader = new FileReader();
     reader.onload = e => {
-      try {
-        const raw = e.target?.result;
-        if (!raw || typeof raw !== 'string') {
-          setParseError('Não foi possível ler o arquivo.');
-          return;
-        }
-        const { headers, rows } = parseCsv(raw);
-        if (headers.length < 2) {
-          setParseError(`Não foi possível detectar as colunas (encontradas: ${headers.length}). Salve o arquivo como CSV separado por ponto e vírgula e tente novamente.`);
-          return;
-        }
-        setCsvHeaders(headers);
-        setCsvRows(rows);
-        setMapping(guessMapping(headers));
-        setParseError('');
-        setStep('mapping');
-      } catch (err: any) {
-        setParseError('Erro ao processar o arquivo: ' + (err?.message || 'formato inválido'));
+      const raw = e.target?.result;
+      if (!raw || typeof raw !== 'string') {
+        setParseError('Não foi possível ler o arquivo.');
+        return;
       }
+      // Se há caracteres de substituição (U+FFFD), o arquivo não é UTF-8 — reler como Windows-1252
+      if (raw.includes('�')) {
+        const reader2 = new FileReader();
+        reader2.onload = e2 => {
+          const raw2 = e2.target?.result;
+          if (!raw2 || typeof raw2 !== 'string') {
+            setParseError('Não foi possível ler o arquivo.');
+            return;
+          }
+          processText(raw2);
+        };
+        reader2.onerror = () => setParseError('Erro ao ler o arquivo.');
+        reader2.readAsText(file, 'windows-1252');
+        return;
+      }
+      processText(raw);
     };
     reader.onerror = () => setParseError('Erro ao ler o arquivo.');
     reader.readAsText(file, 'UTF-8');
