@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Edit2, Save, X, Trash2, TrendingUp, TrendingDown, Calendar, Building2, CheckCircle2, XCircle, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { financeService } from '../services/financeService';
-import { Wallet, Transaction, Category } from '../types';
+import { Wallet, Transaction, Category, Participant } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 
 interface ManagedPortfolio {
@@ -25,6 +25,7 @@ interface ManagedPortfoliosProps {
   userRole?: string;
   transactions?: Transaction[];
   categories?: Category[];
+  participants?: Participant[];
 }
 
 const COLOR_OPTIONS = [
@@ -40,7 +41,7 @@ const getColor = (color: string) => COLOR_OPTIONS.find(c => c.value === color) |
 
 const EMPTY_FORM = { name: '', manager: '', color: 'blue', wallet_id: '', started_at: '', notes: '' };
 
-export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, organizationId, userRole, transactions = [], categories = [] }) => {
+export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, organizationId, userRole, transactions = [], categories = [], participants = [] }) => {
   const [portfolios, setPortfolios] = useState<ManagedPortfolio[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -160,6 +161,43 @@ export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, o
       });
     return stats;
   }, [transactions, categories]);
+
+  const portfolioComposition = useMemo(() => {
+    const composition: Record<string, string[]> = {};
+    const qtyMap: Record<string, Record<string, number>> = {};
+
+    transactions
+      .filter(t => t.managedPortfolioId && t.status === 'PAID' && t.participantId)
+      .forEach(t => {
+        const pid = t.managedPortfolioId!;
+        if (!qtyMap[pid]) qtyMap[pid] = {};
+        const catName = categories.find(c => c.id === t.categoryId)?.name?.toLowerCase() || '';
+        const desc = t.description?.toLowerCase() || '';
+        const isProvento = catName.includes('provento') || catName.includes('divid') || catName.includes('jcp') ||
+          desc.includes('divid') || desc.includes('jcp') || desc.includes('rendimento') || desc.includes('aluguel');
+        if (isProvento) return;
+        const qty = t.quantity || 0;
+        if (t.type === 'DEBIT') {
+          qtyMap[pid][t.participantId] = (qtyMap[pid][t.participantId] || 0) + qty;
+        } else {
+          qtyMap[pid][t.participantId] = (qtyMap[pid][t.participantId] || 0) - qty;
+        }
+      });
+
+    Object.entries(qtyMap).forEach(([pid, assetQtys]) => {
+      const tickers = Object.entries(assetQtys)
+        .filter(([, qty]) => qty > 0.001)
+        .map(([participantId]) => {
+          const p = participants.find(p => p.id === participantId);
+          return p?.ticker || p?.name?.split(' ')[0] || '';
+        })
+        .filter(Boolean)
+        .sort();
+      composition[pid] = tickers;
+    });
+
+    return composition;
+  }, [transactions, categories, participants]);
 
   return (
     <div className="space-y-4">
@@ -400,6 +438,22 @@ export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, o
                           </span>
                         </div>
                       )}
+                    </div>
+                  );
+                })()}
+
+                {/* Composição atual */}
+                {(() => {
+                  const tickers = portfolioComposition[p.id];
+                  if (!tickers || tickers.length === 0) return null;
+                  return (
+                    <div className="px-4 pb-3 flex flex-wrap gap-1.5 items-center border-t border-slate-50 pt-2">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Composição atual:</span>
+                      {tickers.map(ticker => (
+                        <span key={ticker} className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 rounded-full text-[10px] font-bold text-slate-600 transition-colors">
+                          {ticker}
+                        </span>
+                      ))}
                     </div>
                   );
                 })()}

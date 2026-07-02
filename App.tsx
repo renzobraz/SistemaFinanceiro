@@ -2047,6 +2047,7 @@ const App: FC = () => {
                           userRole={userRole}
                           transactions={transactions}
                           categories={registries.categories}
+                          participants={registries.participants}
                         />
                       </div>
                     ) : (
