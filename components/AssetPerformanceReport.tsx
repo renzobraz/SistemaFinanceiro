@@ -416,10 +416,16 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                           (bank && registries.banks.find(b => String(b.id) === String(selectedBankId))?.name.trim() === bank.name.trim());
       
       // Filtro de Carteira: compara ID diretamente
-      const matchesWallet = selectedWalletId === 'ALL' || 
+      const matchesWallet = selectedWalletId === 'ALL' ||
                             (transactionWalletId && String(transactionWalletId) === String(selectedWalletId));
-      
-      return isConfirmed && isInvestmentParticipant && matchesBank && matchesWallet;
+
+      // Filtro de Gestão: quando uma gestão específica está selecionada, considera apenas transações daquela gestão
+      const matchesGestao = selectedManagedPortfolioFilter === 'ALL' ||
+        (selectedManagedPortfolioFilter === 'MANUAL'
+          ? !t.managedPortfolioId
+          : t.managedPortfolioId === selectedManagedPortfolioFilter);
+
+      return isConfirmed && isInvestmentParticipant && matchesBank && matchesWallet && matchesGestao;
     });
 
     relevantTransactions.forEach(t => {
@@ -730,7 +736,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       const valB = (b.marketValue || b.totalInvested) * rateB;
       return valB - valA;
     });
-  }, [transactions, accruals, registries.participants, registries.categories, registries.wallets, prices, exchangeRates, selectedBankId, selectedWalletId]);
+  }, [transactions, accruals, registries.participants, registries.categories, registries.wallets, prices, exchangeRates, selectedBankId, selectedWalletId, selectedManagedPortfolioFilter]);
 
   const fetchPrices = async (force: boolean = false) => {
     // Busca tickers de investimentos reais e da watchlist
