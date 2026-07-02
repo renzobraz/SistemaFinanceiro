@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Edit2, Save, X, Trash2, TrendingUp, TrendingDown, Calendar, Building2, CheckCircle2, XCircle, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { financeService } from '../services/financeService';
-import { Wallet } from '../types';
+import { Wallet, Transaction, Category } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 
 interface ManagedPortfolio {
@@ -23,6 +23,8 @@ interface ManagedPortfoliosProps {
   wallets: Wallet[];
   organizationId: string;
   userRole?: string;
+  transactions?: Transaction[];
+  categories?: Category[];
 }
 
 const COLOR_OPTIONS = [
@@ -38,7 +40,7 @@ const getColor = (color: string) => COLOR_OPTIONS.find(c => c.value === color) |
 
 const EMPTY_FORM = { name: '', manager: '', color: 'blue', wallet_id: '', started_at: '', notes: '' };
 
-export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, organizationId, userRole }) => {
+export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, organizationId, userRole, transactions = [], categories = [] }) => {
   const [portfolios, setPortfolios] = useState<ManagedPortfolio[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -132,6 +134,32 @@ export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, o
   };
 
   const fmt = (d?: string) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' }) : '—';
+
+  const fmtBRL = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 });
+
+  const portfolioStats = useMemo(() => {
+    const stats: Record<string, { totalAportado: number; totalRecebido: number; proventos: number; firstDate: string | null }> = {};
+    transactions
+      .filter(t => t.managedPortfolioId && t.status === 'PAID')
+      .forEach(t => {
+        const id = t.managedPortfolioId!;
+        if (!stats[id]) stats[id] = { totalAportado: 0, totalRecebido: 0, proventos: 0, firstDate: null };
+        const s = stats[id];
+        const catName = categories.find(c => c.id === t.categoryId)?.name?.toLowerCase() || '';
+        const desc = t.description?.toLowerCase() || '';
+        const isProvento = catName.includes('provento') || catName.includes('divid') || catName.includes('jcp') ||
+          desc.includes('divid') || desc.includes('jcp') || desc.includes('rendimento') || desc.includes('aluguel');
+        if (t.type === 'DEBIT') {
+          s.totalAportado += t.value;
+        } else if (isProvento) {
+          s.proventos += t.value;
+        } else {
+          s.totalRecebido += t.value;
+        }
+        if (!s.firstDate || t.date < s.firstDate) s.firstDate = t.date;
+      });
+    return stats;
+  }, [transactions, categories]);
 
   return (
     <div className="space-y-4">
@@ -333,6 +361,48 @@ export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, o
                     {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                   </button>
                 </div>
+
+                {/* Métricas calculadas das transações */}
+                {(() => {
+                  const s = portfolioStats[p.id];
+                  if (!s || s.totalAportado === 0) return null;
+                  const saldoCusto = s.totalAportado - s.totalRecebido - s.proventos;
+                  const retornoTotal = s.totalRecebido + s.proventos - s.totalAportado;
+                  const retornoPct = s.totalAportado > 0 ? (retornoTotal / s.totalAportado) * 100 : 0;
+                  const isPositive = retornoTotal >= 0;
+                  return (
+                    <div className="px-4 pb-3 flex flex-wrap gap-2 border-t border-slate-50 pt-2">
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 rounded-lg">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total aportado</span>
+                        <span className="text-[11px] font-black text-slate-700">{fmtBRL(s.totalAportado)}</span>
+                      </div>
+                      {s.totalRecebido > 0 && (
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 rounded-lg">
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Resgates</span>
+                          <span className="text-[11px] font-black text-slate-700">{fmtBRL(s.totalRecebido)}</span>
+                        </div>
+                      )}
+                      {s.proventos > 0 && (
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 rounded-lg">
+                          <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Proventos</span>
+                          <span className="text-[11px] font-black text-emerald-700">{fmtBRL(s.proventos)}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 rounded-lg">
+                        <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Saldo custo</span>
+                        <span className="text-[11px] font-black text-blue-700">{fmtBRL(saldoCusto)}</span>
+                      </div>
+                      {(s.totalRecebido > 0 || s.proventos > 0) && (
+                        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${isPositive ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                          <span className={`text-[9px] font-black uppercase tracking-widest ${isPositive ? 'text-emerald-600' : 'text-red-500'}`}>Retorno realizado</span>
+                          <span className={`text-[11px] font-black ${isPositive ? 'text-emerald-700' : 'text-red-600'}`}>
+                            {isPositive ? '+' : ''}{fmtBRL(retornoTotal)} ({isPositive ? '+' : ''}{retornoPct.toFixed(1)}%)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Expandido */}
                 {isExpanded && (

@@ -2045,6 +2045,8 @@ const App: FC = () => {
                           wallets={registries.wallets}
                           organizationId={financeService.activeOrganizationId || ''}
                           userRole={userRole}
+                          transactions={transactions}
+                          categories={registries.categories}
                         />
                       </div>
                     ) : (
