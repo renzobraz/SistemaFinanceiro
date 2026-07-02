@@ -324,6 +324,7 @@ const App: FC = () => {
   const [selectedBankId, setSelectedBankId] = useState<string>(() => financeService.getUserPreferences().defaultBankId);
   const [performanceBankId, setPerformanceBankId] = useState<string>(() => financeService.getUserPreferences().defaultPerformanceBankId || 'ALL');
   const [performanceWalletId, setPerformanceWalletId] = useState<string>(() => financeService.getUserPreferences().defaultPerformanceWalletId || 'ALL');
+  const [assetPrices, setAssetPrices] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PAID' | 'PENDING'>(() => financeService.getUserPreferences().defaultStatus); 
   
   // Salvar preferências automaticamente quando mudarem
@@ -1957,6 +1958,7 @@ const App: FC = () => {
                   userModulePermissions={userModulePermissions}
                   userRole={userRole}
                   managedPortfolios={managedPortfoliosRef.current}
+                  onAssetPrices={setAssetPrices}
                 />
               </div>
             </div>
@@ -2048,6 +2050,7 @@ const App: FC = () => {
                           transactions={transactions}
                           categories={registries.categories}
                           participants={registries.participants}
+                          assetPrices={assetPrices}
                         />
                       </div>
                     ) : (

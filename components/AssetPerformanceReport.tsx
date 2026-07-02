@@ -81,6 +81,7 @@ interface AssetPerformanceReportProps {
   userModulePermissions?: Record<string, any>;
   userRole?: string;
   managedPortfolios?: { id: string; name: string; color: string; active: boolean }[];
+  onAssetPrices?: (prices: Record<string, number>) => void;
 }
 
 interface AssetPerformance {
@@ -131,7 +132,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
   onExportPDF,
   userModulePermissions = {},
   userRole = "",
-  managedPortfolios = []
+  managedPortfolios = [],
+  onAssetPrices
 }) => {
   const hasExportPermission = useMemo(() => {
     return (
@@ -737,6 +739,19 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       return valB - valA;
     });
   }, [transactions, accruals, registries.participants, registries.categories, registries.wallets, prices, exchangeRates, selectedBankId, selectedWalletId, selectedManagedPortfolioFilter]);
+
+  // Publica preços por participante para outros componentes (ex: Carteiras Gerenciadas)
+  useEffect(() => {
+    if (!onAssetPrices) return;
+    const map: Record<string, number> = {};
+    performanceData.forEach(asset => {
+      if (asset.lastPrice && asset.lastPrice > 0 && asset.currentQuantity > 0) {
+        const rate = asset.currency === 'BRL' ? 1 : (exchangeRates[asset.currency] || 1);
+        map[asset.participantId] = asset.lastPrice * rate;
+      }
+    });
+    if (Object.keys(map).length > 0) onAssetPrices(map);
+  }, [performanceData, exchangeRates, onAssetPrices]);
 
   const fetchPrices = async (force: boolean = false) => {
     // Busca tickers de investimentos reais e da watchlist

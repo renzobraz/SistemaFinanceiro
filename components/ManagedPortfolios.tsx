@@ -26,6 +26,7 @@ interface ManagedPortfoliosProps {
   transactions?: Transaction[];
   categories?: Category[];
   participants?: Participant[];
+  assetPrices?: Record<string, number>;
 }
 
 const COLOR_OPTIONS = [
@@ -41,7 +42,7 @@ const getColor = (color: string) => COLOR_OPTIONS.find(c => c.value === color) |
 
 const EMPTY_FORM = { name: '', manager: '', color: 'blue', wallet_id: '', started_at: '', notes: '' };
 
-export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, organizationId, userRole, transactions = [], categories = [], participants = [] }) => {
+export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, organizationId, userRole, transactions = [], categories = [], participants = [], assetPrices = {} }) => {
   const [portfolios, setPortfolios] = useState<ManagedPortfolio[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -162,15 +163,13 @@ export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, o
     return stats;
   }, [transactions, categories]);
 
-  const portfolioComposition = useMemo(() => {
-    const composition: Record<string, string[]> = {};
-    const qtyMap: Record<string, Record<string, number>> = {};
-
+  const portfolioQtyMap = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {};
     transactions
       .filter(t => t.managedPortfolioId && t.status === 'PAID' && t.participantId)
       .forEach(t => {
         const pid = t.managedPortfolioId!;
-        if (!qtyMap[pid]) qtyMap[pid] = {};
+        if (!map[pid]) map[pid] = {};
         const catName = categories.find(c => c.id === t.categoryId)?.name?.toLowerCase() || '';
         const desc = t.description?.toLowerCase() || '';
         const isProvento = catName.includes('provento') || catName.includes('divid') || catName.includes('jcp') ||
@@ -178,13 +177,17 @@ export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, o
         if (isProvento) return;
         const qty = t.quantity || 0;
         if (t.type === 'DEBIT') {
-          qtyMap[pid][t.participantId] = (qtyMap[pid][t.participantId] || 0) + qty;
+          map[pid][t.participantId] = (map[pid][t.participantId] || 0) + qty;
         } else {
-          qtyMap[pid][t.participantId] = (qtyMap[pid][t.participantId] || 0) - qty;
+          map[pid][t.participantId] = (map[pid][t.participantId] || 0) - qty;
         }
       });
+    return map;
+  }, [transactions, categories]);
 
-    Object.entries(qtyMap).forEach(([pid, assetQtys]) => {
+  const portfolioComposition = useMemo(() => {
+    const composition: Record<string, string[]> = {};
+    Object.entries(portfolioQtyMap).forEach(([pid, assetQtys]) => {
       const tickers = Object.entries(assetQtys)
         .filter(([, qty]) => qty > 0.001)
         .map(([participantId]) => {
@@ -195,9 +198,8 @@ export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, o
         .sort();
       composition[pid] = tickers;
     });
-
     return composition;
-  }, [transactions, categories, participants]);
+  }, [portfolioQtyMap, participants]);
 
   return (
     <div className="space-y-4">
@@ -408,6 +410,13 @@ export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, o
                   const retornoTotal = s.totalRecebido + s.proventos - s.totalAportado;
                   const retornoPct = s.totalAportado > 0 ? (retornoTotal / s.totalAportado) * 100 : 0;
                   const isPositive = retornoTotal >= 0;
+                  const activeAssets = Object.entries(portfolioQtyMap[p.id] || {}).filter(([, qty]) => qty > 0.001);
+                  const marketValue = activeAssets.reduce((sum, [participantId, qty]) => {
+                    const price = assetPrices[participantId];
+                    return price ? sum + qty * price : sum;
+                  }, 0);
+                  const pricesAvailable = Object.keys(assetPrices).length > 0;
+                  const assetsWithPrice = activeAssets.filter(([participantId]) => !!assetPrices[participantId]).length;
                   return (
                     <div className="px-4 pb-3 flex flex-wrap gap-2 border-t border-slate-50 pt-2">
                       <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 rounded-lg">
@@ -436,6 +445,21 @@ export const ManagedPortfolios: React.FC<ManagedPortfoliosProps> = ({ wallets, o
                           <span className={`text-[11px] font-black ${isPositive ? 'text-emerald-700' : 'text-red-600'}`}>
                             {isPositive ? '+' : ''}{fmtBRL(retornoTotal)} ({isPositive ? '+' : ''}{retornoPct.toFixed(1)}%)
                           </span>
+                        </div>
+                      )}
+                      {pricesAvailable && activeAssets.length > 0 && (
+                        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${marketValue >= saldoCusto ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                          <span className={`text-[9px] font-black uppercase tracking-widest ${marketValue >= saldoCusto ? 'text-emerald-600' : 'text-red-500'}`}>
+                            Saldo mercado{assetsWithPrice < activeAssets.length ? ` (${assetsWithPrice}/${activeAssets.length})` : ''}
+                          </span>
+                          <span className={`text-[11px] font-black ${marketValue >= saldoCusto ? 'text-emerald-700' : 'text-red-600'}`}>
+                            {fmtBRL(marketValue)}
+                          </span>
+                          {saldoCusto > 0 && (
+                            <span className={`text-[10px] font-bold ${marketValue >= saldoCusto ? 'text-emerald-600' : 'text-red-500'}`}>
+                              ({marketValue >= saldoCusto ? '+' : ''}{(((marketValue - saldoCusto) / saldoCusto) * 100).toFixed(1)}%)
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
