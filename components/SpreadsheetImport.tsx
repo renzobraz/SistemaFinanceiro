@@ -311,14 +311,14 @@ export const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
       }
       for (const name of [...new Set(parsedRows.map(r => r.categoryName).filter(Boolean))]) {
         if (!catMap.has(normalizeStr(name))) {
-          const saved = await financeService.saveRegistryItem('categories', { id: '', name, active: true });
+          const saved = await financeService.saveRegistryItem('categories', { id: '', name, walletId: selectedWalletId, active: true });
           catMap.set(normalizeStr(name), saved.id);
           created++;
         }
       }
       for (const name of [...new Set(parsedRows.map(r => r.participantName).filter(Boolean))]) {
         if (!partMap.has(normalizeStr(name))) {
-          const saved = await financeService.saveRegistryItem('participants', { id: '', name, active: true });
+          const saved = await financeService.saveRegistryItem('participants', { id: '', name, walletId: selectedWalletId, active: true });
           partMap.set(normalizeStr(name), saved.id);
           created++;
         }
