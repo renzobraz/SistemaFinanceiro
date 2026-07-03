@@ -190,6 +190,13 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     });
   };
 
+  const handleUpdateTradePortfolio = (index: number, portfolioId: string) => {
+    if (!parsedNote) return;
+    const updatedTrades = [...(parsedNote.trades || [])];
+    updatedTrades[index] = { ...updatedTrades[index], managedPortfolioId: portfolioId || undefined };
+    setParsedNote({ ...parsedNote, trades: updatedTrades });
+  };
+
   const handleUpdateTradeTicker = (index: number, newTicker: string) => {
     if (!parsedNote) return;
     const updatedTrades = [...(parsedNote.trades || [])];
@@ -667,7 +674,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
         participantId: participant.id,
         costCenterId: selectedCostCenterId,
         walletId: selectedWalletId,
-        managedPortfolioId: selectedManagedPortfolioId || undefined
+        managedPortfolioId: trade.managedPortfolioId || selectedManagedPortfolioId || undefined
       };
       
       await financeService.saveTransaction(transaction);
@@ -889,7 +896,8 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
           categoryId: investmentCategoryId,
           participantId: participant.id,
           costCenterId: selectedCostCenterId,
-          walletId: selectedWalletId
+          walletId: selectedWalletId,
+          managedPortfolioId: tradeData?.managedPortfolioId || selectedManagedPortfolioId || undefined
         };
         await financeService.saveTransaction(transaction);
       }
@@ -1243,6 +1251,9 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                           <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Nome Sinacor (PDF)</th>
                           <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Ticker Mapeado</th>
                           <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Operação</th>
+                          {managedPortfolios && managedPortfolios.length > 0 && (
+                            <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Gestão</th>
+                          )}
                           <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Qtd</th>
                           <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Preço</th>
                           <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Total</th>
@@ -1303,13 +1314,27 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                               </td>
                               <td className="px-6 py-4">
                                 <span className={`text-[10px] font-black px-2 py-1 rounded-lg border ${
-                                  trade.type === 'BUY' 
-                                    ? 'bg-amber-50 text-amber-600 border-amber-200' 
+                                  trade.type === 'BUY'
+                                    ? 'bg-amber-50 text-amber-600 border-amber-200'
                                     : 'bg-blue-50 text-blue-600 border-blue-200'
                                 }}`}>
                                   {trade.type === 'BUY' ? 'COMPRA' : 'VENDA'}
                                 </span>
                               </td>
+                              {managedPortfolios && managedPortfolios.length > 0 && (
+                                <td className="px-6 py-4">
+                                  <select
+                                    value={trade.managedPortfolioId || selectedManagedPortfolioId || ''}
+                                    onChange={(e) => handleUpdateTradePortfolio(idx, e.target.value)}
+                                    className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500 text-slate-700 font-medium min-w-[110px]"
+                                  >
+                                    <option value="">— nenhuma —</option>
+                                    {managedPortfolios.filter(p => p.active).map(p => (
+                                      <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                  </select>
+                                </td>
+                              )}
                               <td className="px-6 py-4 text-right">
                                 <input
                                   type="number"

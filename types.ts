@@ -165,6 +165,7 @@ export interface BrokerageTrade {
   price: number;
   total: number;
   assetName: string;
+  managedPortfolioId?: string;
 }
 
 export interface BrokerageNote {

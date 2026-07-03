@@ -40,6 +40,7 @@ interface TransactionFormProps {
     wallets: Wallet[];
   };
   transactions: Transaction[];
+  managedPortfolios?: { id: string; name: string; color: string; active: boolean }[];
 }
 
 const emptyTransaction: Omit<Transaction, "id"> = {
@@ -55,6 +56,7 @@ const emptyTransaction: Omit<Transaction, "id"> = {
   costCenterId: "",
   participantId: "",
   walletId: "",
+  managedPortfolioId: "",
 };
 
 type FormMode = "DEFAULT" | "TRANSFER";
@@ -143,6 +145,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   preSelectedWalletId,
   registries,
   transactions,
+  managedPortfolios = [],
 }) => {
   const [formData, setFormData] =
     useState<Omit<Transaction, "id">>(emptyTransaction);
@@ -1294,6 +1297,26 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 ))}
               </select>
             </div>
+            {managedPortfolios.filter(p => p.active).length > 0 && (
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                  Carteira Gerenciada
+                </label>
+                <select
+                  disabled={isSaving}
+                  value={formData.managedPortfolioId || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, managedPortfolioId: e.target.value || undefined })
+                  }
+                  className={`${inputClass} border-blue-100 bg-blue-50/10`}
+                >
+                  <option value="">— nenhuma —</option>
+                  {managedPortfolios.filter(p => p.active).map((mp) => (
+                    <option key={mp.id} value={mp.id}>{mp.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="relative" ref={dropdownRef}>

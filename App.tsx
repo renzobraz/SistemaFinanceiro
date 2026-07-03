@@ -2231,8 +2231,9 @@ const App: FC = () => {
         defaultStatus={statusFilter === 'ALL' ? 'PENDING' : statusFilter} 
         preSelectedBankId={selectedBankId}
         preSelectedWalletId={selectedWalletId}
-        registries={registries} 
+        registries={registries}
         transactions={transactions}
+        managedPortfolios={managedPortfoliosRef.current}
       />
 
       <ConfirmModal isOpen={alertState.isOpen} onClose={() => setAlertState(prev => ({ ...prev, isOpen: false }))} onConfirm={() => setAlertState(prev => ({ ...prev, isOpen: false }))} title={alertState.title} message={alertState.message} confirmText="OK" showCancel={false} isDestructive={alertState.title.toLowerCase().includes('erro')} />
