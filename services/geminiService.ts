@@ -382,13 +382,16 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
     noteNumber = noteMatch[1];
     tradeDate = parseDateToIso(noteMatch[3]);
   } else {
-    const fallbackNote = normText.match(/Nr\.?\s*Nota\s*:?\s*(\d+)/i) || 
-                         normText.match(/Nota\s+de\s+Corretagem\s+n?[ºo]?\s*:?\s*(\d+)/i) || 
+    // Tenta formato ItaúCorretora visual: "Nº da Nota\n13449"
+    const itauNoteMatch = normText.match(/N[ºo°]\s*da\s*Nota\s*\n\s*(\d+)/i);
+    const fallbackNote = itauNoteMatch ||
+                         normText.match(/Nr\.?\s*Nota\s*:?\s*(\d+)/i) ||
+                         normText.match(/Nota\s+de\s+Corretagem\s+n?[ºo]?\s*:?\s*(\d+)/i) ||
                          normText.match(/Nota\s*:?\s*(\d+)/i);
     if (fallbackNote) noteNumber = fallbackNote[1];
 
-    const fallbackDate = normText.match(/Data\s+Preg[ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) || 
-                         normText.match(/Data\s+do\s+Preg[ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) || 
+    const fallbackDate = normText.match(/Data\s+Preg[ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) ||
+                         normText.match(/Data\s+do\s+Preg[ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) ||
                          normText.match(/Preg[ãa]o\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i);
     if (fallbackDate) tradeDate = parseDateToIso(fallbackDate[1]);
   }
@@ -396,7 +399,7 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
   const todayIso = new Date().toISOString().split('T')[0];
   if (!tradeDate) tradeDate = todayIso;
 
-  const liquidRegex = /L[íi]quido\s+para\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}:\d{2}:\d{2})?\s+([\d.]+,\d{2})\s+([DC])/i;
+  const liquidRegex = /L[íi]quido\s+para\s+(\d{2}\/\d{2}\/\d{4})(?:\s+\d{2}:\d{2}:\d{2})?\s+(?:R\$\s*)?([\d.]+,\d{2})\s+([DC])/i;
   const liquidMatch = normText.match(liquidRegex);
   if (liquidMatch) {
     settlementDate = parseDateToIso(liquidMatch[1]);
@@ -422,7 +425,7 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].replace(/\s+/g, " ");
-    if (line.includes("Negócios Realizados") || line.includes("Negocios Realizados") || (line.includes("Q Negociação") && line.includes("Especificação"))) {
+    if (line.includes("Negócios Realizados") || line.includes("Negócios realizados") || line.includes("Negocios Realizados") || line.includes("Negocios realizados") || (line.includes("Q Negociação") && line.includes("Especificação"))) {
       startIndex = i;
     }
     if (startIndex !== -1 && (line.includes("Resumo de negócios") || line.includes("Resumo dos negócios") || line.includes("Resumo financeiro"))) {
@@ -431,8 +434,11 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
     }
   }
 
+  // Não usa endIndex: em notas multi-página (ex: ItaúCorretora), "Resumo de negócios"
+  // aparece em branco em todas as páginas intermediárias e cortaria os trades cedo demais.
+  // O padrão "B3 RV LISTADO" só casa com linhas reais de operação, então varrer até o fim é seguro.
   const targetLines = (startIndex !== -1)
-    ? lines.slice(startIndex, endIndex !== -1 ? endIndex : undefined)
+    ? lines.slice(startIndex)
     : lines;
 
   const individualTrades = [];
@@ -444,7 +450,7 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
     let matched = false;
 
     // Formato 1: espaços entre campos (formato legado com espaços preservados)
-    const spaceMatch = lineClean.match(/B3\s+RV\s+LISTADO([CV])\s+(FRACIONARIO|VISTA)\s+(.+?)\s+(?:[@#D*][@ #D*]*)?\s*(\d+)\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([DC])/i);
+    const spaceMatch = lineClean.match(/B3\s+RV\s+LISTADO([CV])\s+(FRACIONARIO|VISTA)\s+(.+?)\s+(?:[@#D*][@ #D*]*)?\s*(\d+)\s+(?:R\$\s*)?([\d.]+,\d{2})\s+(?:R\$\s*)?([\d.]+,\d{2})\s+([DC])/i);
     if (spaceMatch) {
       cvFlag = spaceMatch[1].toUpperCase();
       dcFlag = spaceMatch[7].toUpperCase();
