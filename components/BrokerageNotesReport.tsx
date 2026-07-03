@@ -88,6 +88,16 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
   const [filterEndDate, setFilterEndDate] = useState('');
   const [filterBankId, setFilterBankId] = useState('ALL');
 
+  // Column inline filters
+  const [filterNoteNumber, setFilterNoteNumber] = useState('');
+  const [filterPortfolioId, setFilterPortfolioId] = useState('ALL');
+  const [filterMinQty, setFilterMinQty] = useState('');
+  const [filterMaxQty, setFilterMaxQty] = useState('');
+  const [filterMinPrice, setFilterMinPrice] = useState('');
+  const [filterMaxPrice, setFilterMaxPrice] = useState('');
+  const [filterMinTotal, setFilterMinTotal] = useState('');
+  const [filterMaxTotal, setFilterMaxTotal] = useState('');
+
   // Paginação State
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(50);
@@ -95,7 +105,8 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
   // Redefine para a primeira página se algum filtro mudar
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterTicker, filterType, filterStartDate, filterEndDate, filterBankId]);
+  }, [searchTerm, filterTicker, filterType, filterStartDate, filterEndDate, filterBankId,
+      filterNoteNumber, filterPortfolioId, filterMinQty, filterMaxQty, filterMinPrice, filterMaxPrice, filterMinTotal, filterMaxTotal]);
 
   const handleDeleteConfirm = async () => {
     if (!noteToDelete) return;
@@ -190,7 +201,29 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
         // Advanced filter - Bank/Corretora
         const matchesBank = filterBankId === 'ALL' || String(t.bankId) === String(filterBankId);
 
-        return isInvestment && hasDoc && matchesSearch && matchesTicker && matchesType && matchesStartDate && matchesEndDate && matchesBank;
+        // Column inline filters
+        const matchesNoteNumber = !filterNoteNumber || t.docNumber?.toLowerCase().includes(filterNoteNumber.toLowerCase().trim());
+
+        const matchesPortfolio = filterPortfolioId === 'ALL' ||
+          (filterPortfolioId === 'NONE' ? !t.managedPortfolioId : t.managedPortfolioId === filterPortfolioId);
+
+        const qty = t.quantity ?? 0;
+        const matchesMinQty = !filterMinQty || qty >= parseFloat(filterMinQty.replace(',', '.'));
+        const matchesMaxQty = !filterMaxQty || qty <= parseFloat(filterMaxQty.replace(',', '.'));
+
+        const unitPrice = qty > 0 ? t.value / qty : 0;
+        const matchesMinPrice = !filterMinPrice || unitPrice >= parseFloat(filterMinPrice.replace(',', '.'));
+        const matchesMaxPrice = !filterMaxPrice || unitPrice <= parseFloat(filterMaxPrice.replace(',', '.'));
+
+        const total = t.value ?? 0;
+        const matchesMinTotal = !filterMinTotal || total >= parseFloat(filterMinTotal.replace(',', '.'));
+        const matchesMaxTotal = !filterMaxTotal || total <= parseFloat(filterMaxTotal.replace(',', '.'));
+
+        return isInvestment && hasDoc && matchesSearch && matchesTicker && matchesType && matchesStartDate && matchesEndDate && matchesBank &&
+          matchesNoteNumber && matchesPortfolio &&
+          matchesMinQty && matchesMaxQty &&
+          matchesMinPrice && matchesMaxPrice &&
+          matchesMinTotal && matchesMaxTotal;
       })
       .map(t => {
         const participant = participants.find(p => p.id === t.participantId);
@@ -200,7 +233,8 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
           assetName: participant?.name || 'Desconhecido',
         };
       });
-  }, [transactions, participants, searchTerm, filterTicker, filterType, filterStartDate, filterEndDate, filterBankId]);
+  }, [transactions, participants, searchTerm, filterTicker, filterType, filterStartDate, filterEndDate, filterBankId,
+      filterNoteNumber, filterPortfolioId, filterMinQty, filterMaxQty, filterMinPrice, filterMaxPrice, filterMinTotal, filterMaxTotal]);
 
   // Ordenação
   const sortedData = useMemo(() => {
@@ -541,13 +575,21 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider">Filtros Avançados</h4>
-            <button 
+            <button
               onClick={() => {
                 setFilterTicker('');
                 setFilterType('ALL');
                 setFilterStartDate('');
                 setFilterEndDate('');
                 setFilterBankId('ALL');
+                setFilterNoteNumber('');
+                setFilterPortfolioId('ALL');
+                setFilterMinQty('');
+                setFilterMaxQty('');
+                setFilterMinPrice('');
+                setFilterMaxPrice('');
+                setFilterMinTotal('');
+                setFilterMaxTotal('');
               }}
               className="text-[10px] font-black text-blue-600 hover:text-blue-700 uppercase tracking-widest"
             >
@@ -658,20 +700,20 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
               <tr className="bg-slate-50/50 border-b border-slate-100">
                 {/* Opção B - Coluna Checkbox Selecionar Todos */}
                 <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-12 text-center">
-                  <input 
+                  <input
                     type="checkbox"
                     checked={isAllSelected}
                     onChange={handleSelectAll}
                     className="w-4 h-4 text-blue-600 bg-slate-50 border-slate-200 rounded focus:ring-blue-500 checked:bg-blue-600 accent-blue-600 cursor-pointer"
                   />
                 </th>
-                <th 
+                <th
                   className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors"
                   onClick={() => requestSort('date')}
                 >
                   <div className="flex items-center gap-1">Data {getSortIcon('date')}</div>
                 </th>
-                <th 
+                <th
                   className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors"
                   onClick={() => requestSort('docNumber')}
                 >
@@ -680,7 +722,7 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                 <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   Banco/Corretora
                 </th>
-                <th 
+                <th
                   className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors"
                   onClick={() => requestSort('ticker')}
                 >
@@ -691,6 +733,145 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                 <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-right">Preço Unit.</th>
                 <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-right">Total Bruto</th>
                 <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Carteira</th>
+              </tr>
+              {/* Linha de filtros inline por coluna */}
+              <tr className="bg-white border-b border-slate-100">
+                <td className="px-2 py-1.5" />
+                {/* Data — filtros de data já existem no painel avançado */}
+                <td className="px-2 py-1.5">
+                  <div className="flex gap-1">
+                    <input
+                      type="date"
+                      value={filterStartDate}
+                      onChange={(e) => setFilterStartDate(e.target.value)}
+                      title="Data inicial"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                    />
+                    <input
+                      type="date"
+                      value={filterEndDate}
+                      onChange={(e) => setFilterEndDate(e.target.value)}
+                      title="Data final"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                    />
+                  </div>
+                </td>
+                {/* Número da Nota */}
+                <td className="px-2 py-1.5">
+                  <input
+                    type="text"
+                    value={filterNoteNumber}
+                    onChange={(e) => setFilterNoteNumber(e.target.value)}
+                    placeholder="Filtrar nota..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                  />
+                </td>
+                {/* Banco/Corretora */}
+                <td className="px-2 py-1.5">
+                  <select
+                    value={filterBankId}
+                    onChange={(e) => setFilterBankId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                  >
+                    <option value="ALL">Todas</option>
+                    {uniqueBanks.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </td>
+                {/* Ticker */}
+                <td className="px-2 py-1.5">
+                  <input
+                    type="text"
+                    value={filterTicker}
+                    onChange={(e) => setFilterTicker(e.target.value)}
+                    placeholder="Ex: PETR4"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                  />
+                </td>
+                {/* Tipo */}
+                <td className="px-2 py-1.5">
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                  >
+                    <option value="ALL">Todos</option>
+                    <option value="DEBIT">Compra</option>
+                    <option value="CREDIT">Venda</option>
+                  </select>
+                </td>
+                {/* Quantidade — range min/max */}
+                <td className="px-2 py-1.5">
+                  <div className="flex gap-1">
+                    <input
+                      type="number"
+                      value={filterMinQty}
+                      onChange={(e) => setFilterMinQty(e.target.value)}
+                      placeholder="Min"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                    />
+                    <input
+                      type="number"
+                      value={filterMaxQty}
+                      onChange={(e) => setFilterMaxQty(e.target.value)}
+                      placeholder="Max"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                    />
+                  </div>
+                </td>
+                {/* Preço Unit. — range min/max */}
+                <td className="px-2 py-1.5">
+                  <div className="flex gap-1">
+                    <input
+                      type="number"
+                      value={filterMinPrice}
+                      onChange={(e) => setFilterMinPrice(e.target.value)}
+                      placeholder="Min"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                    />
+                    <input
+                      type="number"
+                      value={filterMaxPrice}
+                      onChange={(e) => setFilterMaxPrice(e.target.value)}
+                      placeholder="Max"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                    />
+                  </div>
+                </td>
+                {/* Total Bruto — range min/max */}
+                <td className="px-2 py-1.5">
+                  <div className="flex gap-1">
+                    <input
+                      type="number"
+                      value={filterMinTotal}
+                      onChange={(e) => setFilterMinTotal(e.target.value)}
+                      placeholder="Min"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                    />
+                    <input
+                      type="number"
+                      value={filterMaxTotal}
+                      onChange={(e) => setFilterMaxTotal(e.target.value)}
+                      placeholder="Max"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                    />
+                  </div>
+                </td>
+                {/* Carteira */}
+                <td className="px-2 py-1.5">
+                  <select
+                    value={filterPortfolioId}
+                    onChange={(e) => setFilterPortfolioId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold focus:ring-2 focus:ring-blue-400 outline-none"
+                  >
+                    <option value="ALL">Todas</option>
+                    <option value="NONE">Sem carteira</option>
+                    {managedPortfolios.filter(p => p.active).map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </td>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
