@@ -190,6 +190,26 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     });
   };
 
+  const handleSplitTrade = (index: number) => {
+    if (!parsedNote) return;
+    const trades = [...(parsedNote.trades || [])];
+    const original = trades[index];
+    const qtyA = Math.ceil(original.quantity / 2);
+    const qtyB = Math.floor(original.quantity / 2);
+    const rowA = { ...original, quantity: qtyA, total: parseFloat((qtyA * original.price).toFixed(2)) };
+    const rowB = { ...original, quantity: qtyB, total: parseFloat((qtyB * original.price).toFixed(2)), managedPortfolioId: undefined };
+    trades.splice(index, 1, rowA, rowB);
+    setParsedNote({ ...parsedNote, trades });
+  };
+
+  const handleDeleteTrade = (index: number) => {
+    if (!parsedNote) return;
+    const trades = [...(parsedNote.trades || [])];
+    if (trades.length <= 1) return;
+    trades.splice(index, 1);
+    setParsedNote({ ...parsedNote, trades });
+  };
+
   const handleUpdateTradePortfolio = (index: number, portfolioId: string) => {
     if (!parsedNote) return;
     const updatedTrades = [...(parsedNote.trades || [])];
@@ -1257,6 +1277,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                           <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Qtd</th>
                           <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Preço</th>
                           <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Total</th>
+                          <th className="px-4 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1371,6 +1392,26 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                                     className="w-24 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:ring-1 focus:ring-blue-500 shadow-sm text-slate-800"
                                     placeholder="Total"
                                   />
+                                </div>
+                              </td>
+                              <td className="px-4 py-4 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={() => handleSplitTrade(idx)}
+                                    title="Dividir em duas linhas"
+                                    className="w-7 h-7 flex items-center justify-center rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 font-black text-sm transition-colors border border-blue-200"
+                                  >
+                                    ÷
+                                  </button>
+                                  {(parsedNote.trades || []).length > 1 && (
+                                    <button
+                                      onClick={() => handleDeleteTrade(idx)}
+                                      title="Remover linha"
+                                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-500 font-black text-sm transition-colors border border-rose-200"
+                                    >
+                                      ×
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </tr>
