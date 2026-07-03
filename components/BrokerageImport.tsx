@@ -1825,7 +1825,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                 )}
               </div>
             </motion.div>
-          )}
+          ))}
 
           {hasInvalidTickers && (
             <div className="mt-6 bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start gap-3 text-amber-800 animate-pulse">
