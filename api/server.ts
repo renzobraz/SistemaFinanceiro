@@ -69,16 +69,49 @@ async function extractPdfText(base64: string): Promise<string> {
         normalizeWhitespace: true,
         disableCombineTextItems: false
       }).then(function(textContent: any) {
-        let lastY = -1;
-        let pageText = "";
+        // Coleta todos os itens com posição X,Y
+        type TextItem = { x: number; y: number; str: string; width: number };
+        const allItems: TextItem[] = [];
         for (const item of textContent.items) {
+          if (!item.str) continue;
+          const x = item.transform ? item.transform[4] : 0;
           const y = item.transform ? item.transform[5] : 0;
-          if (lastY !== -1 && Math.abs(y - lastY) > 5) {
-            pageText += "\n";
-          }
-          pageText += item.str;
-          lastY = y;
+          allItems.push({ x, y, str: item.str, width: item.width || 0 });
         }
+
+        // Agrupa itens em linhas pela coordenada Y (tolerância de 3 pts)
+        const ROW_TOLERANCE = 3;
+        const COLUMN_GAP_THRESHOLD = 3; // gap em pts para inserir espaço entre células
+        const rows: { y: number; items: TextItem[] }[] = [];
+        for (const item of allItems) {
+          const row = rows.find(r => Math.abs(r.y - item.y) <= ROW_TOLERANCE);
+          if (row) {
+            row.items.push(item);
+          } else {
+            rows.push({ y: item.y, items: [item] });
+          }
+        }
+
+        // Ordena linhas de cima para baixo (Y do PDF cresce de baixo para cima)
+        rows.sort((a, b) => b.y - a.y);
+
+        // Monta o texto linha a linha, com espaço proporcional à lacuna horizontal
+        const lines: string[] = [];
+        for (const row of rows) {
+          row.items.sort((a, b) => a.x - b.x);
+          let line = "";
+          let lastXEnd = -Infinity;
+          for (const item of row.items) {
+            if (lastXEnd > -Infinity && item.x - lastXEnd > COLUMN_GAP_THRESHOLD) {
+              line += " ";
+            }
+            line += item.str;
+            lastXEnd = item.x + item.width;
+          }
+          if (line.trim()) lines.push(line);
+        }
+
+        const pageText = lines.join("\n");
         pageTexts.push(pageText);
         return pageText;
       });
