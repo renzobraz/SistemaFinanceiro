@@ -2,20 +2,22 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  FileUp, 
-  Loader2, 
-  X, 
-  CheckCircle2, 
-  AlertCircle, 
-  Search, 
-  ArrowRight, 
-  TrendingUp, 
+  FileUp,
+  Loader2,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  Search,
+  ArrowRight,
+  TrendingUp,
   TrendingDown,
   Info,
   Save,
   Trash2,
   Plus,
-  ClipboardList
+  ClipboardList,
+  History,
+  ChevronLeft
 } from 'lucide-react';
 import { geminiService } from '../services/geminiService';
 import { financeService } from '../services/financeService';
@@ -171,6 +173,63 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
   const [settlementDate, setSettlementDate] = useState('');
   const [noteNumber, setNoteNumber] = useState('');
   const [selectedManagedPortfolioId, setSelectedManagedPortfolioId] = useState('');
+
+  // Histórico de notas importadas
+  const [activeView, setActiveView] = useState<'import' | 'history'>('import');
+  const [importedNotes, setImportedNotes] = useState<{ key: string; docNumber: string; bankId: string; date: string; txs: Transaction[] }[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [selectedNoteKey, setSelectedNoteKey] = useState<string | null>(null);
+  const [editingTxs, setEditingTxs] = useState<(Transaction & { _changed?: boolean })[]>([]);
+  const [savingEdits, setSavingEdits] = useState(false);
+
+  const loadImportedNotes = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const supabase = financeService.getSupabase();
+      const orgId = financeService.activeOrganizationId;
+      if (!supabase || !orgId) return;
+      const { data } = await supabase
+        .from('transactions')
+        .select('id, date, value, type, quantity, unit_price, description, doc_number, participant_id, managed_portfolio_id, bank_id, wallet_id, status, category_id, cost_center_id, linked_id, payment_date, emission_date')
+        .eq('organization_id', orgId)
+        .not('doc_number', 'is', null)
+        .neq('doc_number', '')
+        .eq('status', 'PAID')
+        .order('date', { ascending: false });
+      if (!data) return;
+      const investmentIds = new Set(participants.filter(p => p.ticker || p.category).map(p => p.id));
+      const mapped: Transaction[] = data
+        .filter((r: any) => investmentIds.has(r.participant_id))
+        .map((r: any) => ({
+          id: r.id, date: r.date, value: r.value, type: r.type,
+          quantity: r.quantity, unitPrice: r.unit_price,
+          description: r.description, docNumber: r.doc_number,
+          participantId: r.participant_id, managedPortfolioId: r.managed_portfolio_id,
+          bankId: r.bank_id, walletId: r.wallet_id, status: r.status,
+          categoryId: r.category_id, costCenterId: r.cost_center_id,
+          linkedId: r.linked_id, paymentDate: r.payment_date, emissionDate: r.emission_date
+        }));
+      const groups = new Map<string, Transaction[]>();
+      mapped.forEach(t => {
+        const key = `${t.docNumber}||${t.bankId}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(t);
+      });
+      const notes = Array.from(groups.entries())
+        .map(([key, txs]) => {
+          const [docNumber, bankId] = key.split('||');
+          return { key, docNumber, bankId, date: txs[0].date, txs };
+        })
+        .sort((a, b) => b.date.localeCompare(a.date));
+      setImportedNotes(notes);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [participants]);
+
+  useEffect(() => {
+    if (activeView === 'history') loadImportedNotes();
+  }, [activeView, loadImportedNotes]);
 
   // Helpers for interactive ticker review
   const registeredTickers = useMemo(() => {
@@ -1029,6 +1088,21 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     }, 50);
   };
 
+  const handleSaveNoteEdits = async () => {
+    setSavingEdits(true);
+    try {
+      const changed = editingTxs.filter(t => t._changed);
+      for (const t of changed) {
+        const { _changed, ...tx } = t;
+        await financeService.saveTransaction(tx);
+      }
+      setEditingTxs(prev => prev.map(t => ({ ...t, _changed: false })));
+      await loadImportedNotes();
+    } finally {
+      setSavingEdits(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
       <motion.div 
@@ -1038,16 +1112,30 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       >
         {/* Header */}
         <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-200">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-200 shrink-0">
               <FileUp className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h2 className="text-xl font-black text-slate-800 tracking-tight">Importar Nota de Corretagem</h2>
+              <h2 className="text-xl font-black text-slate-800 tracking-tight">Notas de Corretagem</h2>
               <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Área Transitória de Investimentos</p>
             </div>
+            <div className="flex gap-1 ml-4 bg-slate-200 rounded-xl p-1">
+              <button
+                onClick={() => { setActiveView('import'); setSelectedNoteKey(null); }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeView === 'import' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <FileUp className="w-3 h-3" /> Importar
+              </button>
+              <button
+                onClick={() => setActiveView('history')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeView === 'history' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <History className="w-3 h-3" /> Notas Importadas
+              </button>
+            </div>
           </div>
-          <button 
+          <button
             onClick={onClose}
             className="p-2 hover:bg-slate-200 rounded-xl transition-colors"
           >
@@ -1056,7 +1144,188 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-6">
-          {!parsedNote ? (
+
+          {/* ── Vista Histórico ── */}
+          {activeView === 'history' && (
+            <div className="space-y-4">
+              {loadingHistory ? (
+                <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="font-bold text-sm">Carregando notas importadas…</span>
+                </div>
+              ) : selectedNoteKey ? (
+                /* ── Detalhe da nota selecionada ── */
+                (() => {
+                  const note = importedNotes.find(n => n.key === selectedNoteKey);
+                  if (!note) return null;
+                  const bankName = banks.find(b => b.id === note.bankId)?.name || note.bankId;
+                  return (
+                    <div className="space-y-4">
+                      {/* Back + title */}
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => { setSelectedNoteKey(null); setEditingTxs([]); }}
+                          className="flex items-center gap-1 text-sm font-bold text-blue-600 hover:text-blue-800 transition-colors"
+                        >
+                          <ChevronLeft className="w-4 h-4" /> Voltar
+                        </button>
+                        <span className="text-slate-300">|</span>
+                        <div>
+                          <span className="font-black text-slate-800">Nota #{note.docNumber}</span>
+                          <span className="ml-2 text-xs text-slate-400 font-bold">{new Date(note.date).toLocaleDateString('pt-BR')} · {bankName}</span>
+                        </div>
+                        <div className="ml-auto flex items-center gap-2">
+                          {editingTxs.some(t => t._changed) && (
+                            <span className="text-xs text-amber-600 font-bold">Alterações pendentes</span>
+                          )}
+                          <button
+                            onClick={handleSaveNoteEdits}
+                            disabled={savingEdits || !editingTxs.some(t => t._changed)}
+                            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white px-4 py-2 rounded-xl font-bold text-sm transition-all shadow-md shadow-blue-200"
+                          >
+                            {savingEdits ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                            Salvar alterações
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Tabela de transações editáveis */}
+                      <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200">
+                              <th className="text-left px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Ativo</th>
+                              <th className="text-center px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo</th>
+                              <th className="text-right px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Qtd</th>
+                              <th className="text-right px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">P. Unit.</th>
+                              <th className="text-right px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</th>
+                              <th className="text-left px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Gestão</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {editingTxs.map((tx, i) => {
+                              const asset = participants.find(p => p.id === tx.participantId);
+                              const isBuy = tx.type === 'DEBIT';
+                              return (
+                                <tr key={tx.id} className={`border-b border-slate-100 ${tx._changed ? 'bg-amber-50' : 'hover:bg-slate-50'} transition-colors`}>
+                                  <td className="px-4 py-3">
+                                    <div className="font-bold text-slate-800">{asset?.ticker || asset?.name || tx.participantId}</div>
+                                    {asset?.name && asset?.ticker && <div className="text-[11px] text-slate-400">{asset.name}</div>}
+                                  </td>
+                                  <td className="px-4 py-3 text-center">
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-bold ${isBuy ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                      {isBuy ? 'C' : 'V'}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-right font-mono text-slate-700">{tx.quantity ?? '—'}</td>
+                                  <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                    {tx.unitPrice ? tx.unitPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—'}
+                                  </td>
+                                  <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">
+                                    {tx.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <select
+                                      value={tx.managedPortfolioId || ''}
+                                      onChange={e => {
+                                        const newVal = e.target.value || undefined;
+                                        setEditingTxs(prev => prev.map((t, idx) =>
+                                          idx === i ? { ...t, managedPortfolioId: newVal, _changed: true } : t
+                                        ));
+                                      }}
+                                      className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                                    >
+                                      <option value="">— nenhuma —</option>
+                                      {managedPortfolios.filter(p => p.active).map(p => (
+                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : (
+                /* ── Lista de notas importadas ── */
+                importedNotes.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-400">
+                    <History className="w-12 h-12 opacity-30" />
+                    <p className="font-bold text-sm">Nenhuma nota importada encontrada.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="text-left px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Data</th>
+                          <th className="text-left px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Nota Nº</th>
+                          <th className="text-left px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Corretora</th>
+                          <th className="text-center px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Ativos</th>
+                          <th className="text-right px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</th>
+                          <th className="text-center px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Gestão</th>
+                          <th className="px-4 py-3"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importedNotes.map(note => {
+                          const bankName = banks.find(b => b.id === note.bankId)?.name || note.bankId;
+                          const totalValue = note.txs.reduce((s, t) => s + t.value, 0);
+                          const withPortfolio = note.txs.filter(t => t.managedPortfolioId).length;
+                          const allAssigned = withPortfolio === note.txs.length;
+                          const noneAssigned = withPortfolio === 0;
+                          return (
+                            <tr key={note.key} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-3 font-bold text-slate-700">{new Date(note.date).toLocaleDateString('pt-BR')}</td>
+                              <td className="px-4 py-3 font-mono text-slate-800">#{note.docNumber}</td>
+                              <td className="px-4 py-3 text-slate-600">{bankName}</td>
+                              <td className="px-4 py-3 text-center text-slate-700">{note.txs.length}</td>
+                              <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">
+                                {totalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                {allAssigned ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-bold bg-green-100 text-green-700">
+                                    Todas ({withPortfolio})
+                                  </span>
+                                ) : noneAssigned ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-500">
+                                    Nenhuma
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-100 text-amber-700">
+                                    {withPortfolio}/{note.txs.length}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  onClick={() => {
+                                    setSelectedNoteKey(note.key);
+                                    setEditingTxs(note.txs.map(t => ({ ...t, _changed: false })));
+                                  }}
+                                  className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors px-3 py-1.5 rounded-lg hover:bg-blue-50"
+                                >
+                                  Editar gestão
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+
+          {/* ── Vista Importar ── */}
+          {activeView === 'import' && (!parsedNote ? (
             <div className="flex flex-col items-center justify-center py-12">
               <div className="w-full max-w-md border-2 border-dashed border-slate-200 rounded-3xl p-12 text-center hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer group relative">
                 <input 
