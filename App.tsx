@@ -2140,10 +2140,11 @@ const App: FC = () => {
           {activeTab === 'brokerage-notes' && (
             <div className="flex-1 overflow-auto p-2 sm:p-4 bg-slate-50">
               <div className="max-w-7xl mx-auto">
-                <BrokerageNotesReport 
-                  transactions={transactions} 
-                  participants={registries.participants} 
+                <BrokerageNotesReport
+                  transactions={transactions}
+                  participants={registries.participants}
                   banks={registries.banks}
+                  managedPortfolios={managedPortfoliosRef.current}
                   onRefresh={loadAll}
                 />
               </div>

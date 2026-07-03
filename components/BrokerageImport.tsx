@@ -1112,27 +1112,13 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       >
         {/* Header */}
         <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-200 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-200">
               <FileUp className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h2 className="text-xl font-black text-slate-800 tracking-tight">Notas de Corretagem</h2>
+              <h2 className="text-xl font-black text-slate-800 tracking-tight">Importar Nota de Corretagem</h2>
               <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Área Transitória de Investimentos</p>
-            </div>
-            <div className="flex gap-1 ml-4 bg-slate-200 rounded-xl p-1">
-              <button
-                onClick={() => { setActiveView('import'); setSelectedNoteKey(null); }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeView === 'import' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                <FileUp className="w-3 h-3" /> Importar
-              </button>
-              <button
-                onClick={() => setActiveView('history')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeView === 'history' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                <History className="w-3 h-3" /> Notas Importadas
-              </button>
             </div>
           </div>
           <button
@@ -1145,8 +1131,8 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
 
         <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-6">
 
-          {/* ── Vista Histórico ── */}
-          {activeView === 'history' && (
+          {/* ── Vista Histórico (removida — use Notas Únicas em Notas de Corretagem) ── */}
+          {false && (
             <div className="space-y-4">
               {loadingHistory ? (
                 <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
@@ -1325,7 +1311,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
           )}
 
           {/* ── Vista Importar ── */}
-          {activeView === 'import' && (!parsedNote ? (
+          {!parsedNote ? (
             <div className="flex flex-col items-center justify-center py-12">
               <div className="w-full max-w-md border-2 border-dashed border-slate-200 rounded-3xl p-12 text-center hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer group relative">
                 <input 
@@ -1825,7 +1811,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                 )}
               </div>
             </motion.div>
-          ))}
+          )}
 
           {hasInvalidTickers && (
             <div className="mt-6 bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start gap-3 text-amber-800 animate-pulse">

@@ -29,15 +29,17 @@ interface BrokerageNotesReportProps {
   transactions: Transaction[];
   participants: Participant[];
   banks?: any[];
+  managedPortfolios?: { id: string; name: string; color: string; active: boolean }[];
   userModulePermissions?: Record<string, any>;
   userRole?: string;
   onRefresh?: () => void;
 }
 
-export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({ 
-  transactions, 
+export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
+  transactions,
   participants,
   banks = [],
+  managedPortfolios = [],
   userModulePermissions = {},
   userRole = "",
   onRefresh
@@ -72,6 +74,11 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
 
   // Deletion Progress
   const [deleteProgress, setDeleteProgress] = useState<{ completed: number; total: number } | null>(null);
+
+  // State para edição de gestão por nota
+  const [editingNoteNumber, setEditingNoteNumber] = useState<string | null>(null);
+  const [editingTxs, setEditingTxs] = useState<(Transaction & { _changed?: boolean })[]>([]);
+  const [savingNoteEdits, setSavingNoteEdits] = useState(false);
 
   // Advanced Filters State
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -130,6 +137,21 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
     } finally {
       setDeletingBatch(false);
       setDeleteProgress(null);
+    }
+  };
+
+  const handleSaveNoteEdits = async () => {
+    setSavingNoteEdits(true);
+    try {
+      const changed = editingTxs.filter(t => t._changed);
+      for (const t of changed) {
+        const { _changed, ...tx } = t as any;
+        await financeService.saveTransaction(tx);
+      }
+      setEditingTxs(prev => prev.map(t => ({ ...t, _changed: false })));
+      if (onRefresh) onRefresh();
+    } finally {
+      setSavingNoteEdits(false);
     }
   };
 
@@ -908,7 +930,21 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                         </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      {managedPortfolios.filter(p => p.active).length > 0 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const noteTxs = brokerageData.filter(t => t.docNumber === note.number);
+                            setEditingNoteNumber(note.number);
+                            setEditingTxs(noteTxs.map(t => ({ ...t, _changed: false })));
+                          }}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700 rounded-xl transition-all text-xs font-black shadow-sm"
+                          title="Editar carteira gerenciada de cada ativo desta nota"
+                        >
+                          Editar Gestão
+                        </button>
+                      )}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -926,12 +962,116 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
             </div>
 
             <div className="p-6 bg-slate-50 border-t border-slate-100">
-              <button 
+              <button
                 onClick={() => setIsNotesModalOpen(false)}
                 className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-black rounded-2xl shadow-lg shadow-slate-200 transition-all text-sm tracking-wide uppercase"
               >
                 Fechar Listagem
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição de Gestão por Nota */}
+      {editingNoteNumber && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-3xl overflow-hidden flex flex-col max-h-[85vh] animate-slide-up">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-xl">
+                  <ClipboardList className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-800 tracking-tight">Nota #{editingNoteNumber}</h3>
+                  <p className="text-xs text-slate-500 font-medium">Editar carteira gerenciada por ativo</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setEditingNoteNumber(null); setEditingTxs([]); }}
+                className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Tabela editável */}
+            <div className="flex-1 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="text-left px-5 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Ativo</th>
+                    <th className="text-center px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Op.</th>
+                    <th className="text-right px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Qtd</th>
+                    <th className="text-right px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Valor</th>
+                    <th className="text-left px-4 py-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Carteira Gerenciada</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {editingTxs.map((tx, i) => {
+                    const asset = participants.find(p => p.id === tx.participantId);
+                    const isBuy = tx.type === 'DEBIT';
+                    return (
+                      <tr key={tx.id} className={`border-b border-slate-100 ${tx._changed ? 'bg-amber-50' : 'hover:bg-slate-50'} transition-colors`}>
+                        <td className="px-5 py-3">
+                          <div className="font-bold text-slate-800">{asset?.ticker || asset?.name || '—'}</div>
+                          {asset?.ticker && asset?.name && <div className="text-[11px] text-slate-400">{asset.name}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-bold ${isBuy ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                            {isBuy ? 'C' : 'V'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-slate-700">{tx.quantity ?? '—'}</td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">
+                          {tx.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </td>
+                        <td className="px-4 py-3">
+                          <select
+                            value={tx.managedPortfolioId || ''}
+                            onChange={e => {
+                              const newVal = e.target.value || undefined;
+                              setEditingTxs(prev => prev.map((t, idx) =>
+                                idx === i ? { ...t, managedPortfolioId: newVal, _changed: true } : t
+                              ));
+                            }}
+                            className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                          >
+                            <option value="">— nenhuma —</option>
+                            {managedPortfolios.filter(p => p.active).map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div className="p-5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3">
+              <button
+                onClick={() => { setEditingNoteNumber(null); setEditingTxs([]); }}
+                className="px-5 py-2 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <div className="flex items-center gap-3">
+                {editingTxs.some(t => t._changed) && (
+                  <span className="text-xs text-amber-600 font-bold">Alterações pendentes</span>
+                )}
+                <button
+                  onClick={handleSaveNoteEdits}
+                  disabled={savingNoteEdits || !editingTxs.some(t => t._changed)}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-md shadow-blue-200"
+                >
+                  {savingNoteEdits && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Salvar alterações
+                </button>
+              </div>
             </div>
           </div>
         </div>
