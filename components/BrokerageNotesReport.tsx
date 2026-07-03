@@ -690,6 +690,7 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                 <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-right">Quantidade</th>
                 <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-right">Preço Unit.</th>
                 <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-right">Total Bruto</th>
+                <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Carteira</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -747,12 +748,35 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                       }`}>
                         {formatCurrency(item.value)}
                       </td>
+                      <td className="p-4">
+                        {item.managedPortfolioId ? (() => {
+                          const mp = managedPortfolios.find(p => p.id === item.managedPortfolioId);
+                          const colors: Record<string, { bg: string; text: string }> = {
+                            blue:   { bg: '#E6F1FB', text: '#0C447C' },
+                            green:  { bg: '#EAF3DE', text: '#27500A' },
+                            amber:  { bg: '#FAEEDA', text: '#633806' },
+                            purple: { bg: '#EEEDFE', text: '#26215C' },
+                            teal:   { bg: '#E1F5EE', text: '#04342C' },
+                            rose:   { bg: '#FBEAF0', text: '#4B1528' },
+                          };
+                          const c = colors[mp?.color || ''] || colors.blue;
+                          return (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black whitespace-nowrap" style={{ background: c.bg, color: c.text }}>
+                              {mp?.name || '—'}
+                            </span>
+                          );
+                        })() : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-400 whitespace-nowrap">
+                            Manual
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={9} className="p-20 text-center">
+                  <td colSpan={10} className="p-20 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <div className="p-4 bg-slate-50 rounded-full text-slate-300">
                         <FileText className="w-10 h-10" />
