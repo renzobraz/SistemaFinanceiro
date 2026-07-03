@@ -1063,7 +1063,7 @@ export const geminiService = {
                 required: ["metadata", "summary", "trades", "costs"]
               },
               temperature: 0.1,
-              maxOutputTokens: 8192
+              maxOutputTokens: 16384
             }
           });
 
