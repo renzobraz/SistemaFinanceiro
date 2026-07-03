@@ -1221,7 +1221,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                                       }}
                                       className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
                                     >
-                                      <option value="">— nenhuma —</option>
+                                      <option value="">— Compra Avulsa —</option>
                                       {managedPortfolios.filter(p => p.active).map(p => (
                                         <option key={p.id} value={p.id}>{p.name}</option>
                                       ))}
@@ -1604,7 +1604,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                                     onChange={(e) => handleUpdateTradePortfolio(idx, e.target.value)}
                                     className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500 text-slate-700 font-medium min-w-[110px]"
                                   >
-                                    <option value="">— nenhuma —</option>
+                                    <option value="">— Compra Avulsa —</option>
                                     {managedPortfolios.filter(p => p.active).map(p => (
                                       <option key={p.id} value={p.id}>{p.name}</option>
                                     ))}

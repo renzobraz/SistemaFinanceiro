@@ -1383,7 +1383,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
 
   const groupedByGestao = useMemo(() => {
     const groups: Record<string, { label: string; color: string; assets: AssetPerformance[] }> = {};
-    groups['MANUAL'] = { label: 'Manual', color: 'slate', assets: [] };
+    groups['MANUAL'] = { label: 'Compra Avulsa', color: 'slate', assets: [] };
     managedPortfolios.forEach(p => {
       groups[p.id] = { label: p.name, color: p.color, assets: [] };
     });
@@ -2367,7 +2367,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                     className="pl-7 pr-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[10px] focus:ring-1 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer"
                   >
                     <option value="ALL">Todas Gestões</option>
-                    <option value="MANUAL">Manual</option>
+                    <option value="MANUAL">Compra Avulsa</option>
                     {managedPortfolios.map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}

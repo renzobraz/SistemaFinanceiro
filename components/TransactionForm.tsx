@@ -1310,7 +1310,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                   }
                   className={`${inputClass} border-blue-100 bg-blue-50/10`}
                 >
-                  <option value="">— nenhuma —</option>
+                  <option value="">— Compra Avulsa —</option>
                   {managedPortfolios.filter(p => p.active).map((mp) => (
                     <option key={mp.id} value={mp.id}>{mp.name}</option>
                   ))}

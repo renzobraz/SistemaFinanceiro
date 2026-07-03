@@ -767,7 +767,7 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                           );
                         })() : (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-400 whitespace-nowrap">
-                            Manual
+                            Compra Avulsa
                           </span>
                         )}
                       </td>
@@ -1062,7 +1062,7 @@ export const BrokerageNotesReport: React.FC<BrokerageNotesReportProps> = ({
                             }}
                             className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
                           >
-                            <option value="">— nenhuma —</option>
+                            <option value="">— Compra Avulsa —</option>
                             {managedPortfolios.filter(p => p.active).map(p => (
                               <option key={p.id} value={p.id}>{p.name}</option>
                             ))}
