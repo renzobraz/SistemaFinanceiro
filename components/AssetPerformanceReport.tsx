@@ -1596,7 +1596,9 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     // 3. Processar dados para cada mês
     return months.map(monthEnd => {
       const label = `${(monthEnd.getMonth() + 1).toString().padStart(2, '0')}/${monthEnd.getFullYear().toString().slice(2)}`;
-      
+      // Limite real do mês: início do mês seguinte (monthEnd só guarda o dia 1, não o fim do mês)
+      const monthBoundary = new Date(monthEnd.getFullYear(), monthEnd.getMonth() + 1, 1);
+
       const checkMatchesType = (t: any) => {
          if (equityTypeFilter === 'ALL') return true;
          // Tentar encontrar categoria pelo ID ou pelo Asset se disponível através de registries
@@ -1612,7 +1614,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       // Investido Acumulado até o final do mês
       const relevantTransactions = transactions.filter(t => {
         const transDate = getSafeDate(t.date);
-        return transDate <= monthEnd && checkMatchesType(t);
+        return transDate < monthBoundary && checkMatchesType(t);
       });
 
       let invested = 0;
@@ -1626,7 +1628,7 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       // Usamos os accruals (acréscimos manuais) acumulados para representar o ganho/valorização
       const relevantAccruals = accruals.filter(a => {
         const accDate = getSafeDate(a.date);
-        return accDate <= monthEnd && checkMatchesType(a);
+        return accDate < monthBoundary && checkMatchesType(a);
       });
       
       let accruedGain = 0;
