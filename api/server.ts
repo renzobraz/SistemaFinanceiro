@@ -1985,9 +1985,15 @@ function getReportCellValue(column: string, t: any, lookups: ReportLookups): str
   }
 }
 
+// Mesmas cores usadas na Movimentação Bancária: Débito (Contas a Pagar) em vermelho, Crédito (Contas a Receber) em verde
+function getTypeColor(type: string): string {
+  return type === 'CREDIT' ? '#16a34a' : '#dc2626';
+}
+
 function buildContasAPagarEmailHtml(orgName: string, transactions: any[], columns: string[], lookups: ReportLookups, customMessage?: string): string {
   const activeColumns = sortReportColumns(columns.length > 0 ? columns : DEFAULT_REPORT_COLUMNS);
-  const total = transactions.reduce((sum, t) => sum + (Number(t.value) || 0), 0);
+  const totalPagar = transactions.filter(t => t.type === 'DEBIT').reduce((sum, t) => sum + (Number(t.value) || 0), 0);
+  const totalReceber = transactions.filter(t => t.type === 'CREDIT').reduce((sum, t) => sum + (Number(t.value) || 0), 0);
 
   const headerCells = activeColumns.map(col => {
     const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const };
@@ -1995,9 +2001,11 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
   }).join('');
 
   const rows = transactions.map(t => {
+    const color = getTypeColor(t.type);
     const cells = activeColumns.map(col => {
       const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const };
-      return `<td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:#334155;text-align:${def.align};">${getReportCellValue(col, t, lookups)}</td>`;
+      const cellColor = col === 'value' ? color : '#334155';
+      return `<td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:${cellColor};text-align:${def.align};font-weight:${col === 'value' ? 700 : 400};">${getReportCellValue(col, t, lookups)}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');
@@ -2007,7 +2015,7 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
       <div style="text-align: center; margin-bottom: 24px;">
         <h1 style="color: #2563eb; margin: 0; font-size: 24px; font-weight: 800;">FinControl</h1>
       </div>
-      <h2 style="color: #1e293b; font-size: 20px; font-weight: 700; margin-bottom: 8px;">Contas a Pagar — ${orgName}</h2>
+      <h2 style="color: #1e293b; font-size: 20px; font-weight: 700; margin-bottom: 8px;">Contas a Pagar e a Receber — ${orgName}</h2>
       ${customMessage ? `<p style="font-size: 14px; color: #334155; margin-bottom: 20px; white-space: pre-line;">${customMessage}</p>` : ''}
       <p style="font-size: 14px; color: #64748b; margin-bottom: 20px;">Relatório gerado em ${new Date().toLocaleString('pt-BR')}.</p>
       ${transactions.length === 0 ? `
@@ -2017,13 +2025,41 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
           <thead><tr>${headerCells}</tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        <div style="text-align:right;margin-top:16px;padding-top:12px;border-top:2px solid #e2e8f0;">
-          <span style="font-size:14px;color:#64748b;">Total: </span>
-          <span style="font-size:18px;font-weight:800;color:#1e293b;">${formatCurrencyBRL(total)}</span>
+        <div style="margin-top:16px;padding-top:12px;border-top:2px solid #e2e8f0;text-align:right;">
+          <div style="font-size:14px;margin-bottom:4px;"><span style="color:#64748b;">Total a Pagar: </span><span style="font-weight:800;color:${getTypeColor('DEBIT')};">${formatCurrencyBRL(totalPagar)}</span></div>
+          <div style="font-size:14px;"><span style="color:#64748b;">Total a Receber: </span><span style="font-weight:800;color:${getTypeColor('CREDIT')};">${formatCurrencyBRL(totalReceber)}</span></div>
         </div>
       `}
     </div>
   `;
+}
+
+// Busca todas as linhas de um cadastro (banks/categories/cost_centers/participants) da organização,
+// paginando — o Supabase limita a 1000 linhas por consulta, e alguns cadastros (ex.: participantes,
+// reaproveitados também para ativos de investimento) podem passar disso.
+async function fetchAllRegistryRows(admin: any, table: string, organizationId: string): Promise<{ id: string; name: string }[]> {
+  const allRows: { id: string; name: string }[] = [];
+  const pageSize = 1000;
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await admin
+      .from(table)
+      .select('id, name')
+      .eq('organization_id', organizationId)
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      console.error(`[Relatórios] Erro ao buscar "${table}" para o relatório:`, error.message);
+      break;
+    }
+
+    allRows.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allRows;
 }
 
 // Envia um relatório de Contas a Pagar (agendamento salvo ou objeto avulso, sem id) —
@@ -2074,8 +2110,7 @@ async function sendScheduledReport(admin: any, schedule: any): Promise<{ success
   let query = admin
     .from('transactions')
     .select('*')
-    .eq('organization_id', schedule.organization_id)
-    .eq('type', 'DEBIT');
+    .eq('organization_id', schedule.organization_id);
 
   const status = filters.status || 'PENDING';
   if (status !== 'ALL') query = query.eq('status', status);
@@ -2097,15 +2132,8 @@ async function sendScheduledReport(admin: any, schedule: any): Promise<{ success
 
   for (const spec of lookupSpecs) {
     if (!columns.includes(spec.column)) continue;
-    const { data: rows, error: lookupError } = await admin
-      .from(spec.table)
-      .select('id, name')
-      .eq('organization_id', schedule.organization_id);
-    if (lookupError) {
-      console.error(`[Relatórios] Erro ao buscar "${spec.table}" para o relatório:`, lookupError.message);
-      continue;
-    }
-    for (const row of rows || []) {
+    const rows = await fetchAllRegistryRows(admin, spec.table, schedule.organization_id);
+    for (const row of rows) {
       lookups[spec.key][row.id] = row.name;
     }
   }
@@ -2120,7 +2148,7 @@ async function sendScheduledReport(admin: any, schedule: any): Promise<{ success
   await transporter.sendMail({
     from: `"${smtpConfig.from_name}" <${smtpConfig.from_email}>`,
     to: recipients.join(', '),
-    subject: schedule.subject || `Contas a Pagar — ${org.name}`,
+    subject: schedule.subject || `Contas a Pagar e a Receber — ${org.name}`,
     html: buildContasAPagarEmailHtml(org.name, transactions || [], columns, lookups, schedule.message),
   });
 

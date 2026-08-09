@@ -240,7 +240,7 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
           <CalendarClock className="w-6 h-6 text-blue-600" />
           Relatórios Agendados
         </h2>
-        <p className="text-slate-500 font-medium">Envie o relatório de Contas a Pagar agora, ou agende para repetir automaticamente.</p>
+        <p className="text-slate-500 font-medium">Envie o relatório de Contas a Pagar e a Receber agora, ou agende para repetir automaticamente.</p>
       </div>
 
       <div className="bg-blue-50 rounded-2xl p-4 flex gap-4 border border-blue-100">
@@ -294,7 +294,7 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
                     type="text"
                     value={form.subject}
                     onChange={(e) => setForm({ ...form, subject: e.target.value })}
-                    placeholder="Contas a Pagar — Sua Empresa"
+                    placeholder="Contas a Pagar e a Receber — Sua Empresa"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                   />
                 </div>
@@ -526,7 +526,7 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
             {schedules.map((s) => (
               <div key={s.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
-                  <span className="font-bold text-slate-800">Contas a Pagar — {describeSchedule(s)}</span>
+                  <span className="font-bold text-slate-800">{s.subject || 'Contas a Pagar e a Receber'} — {describeSchedule(s)}</span>
                   <span className="text-xs text-slate-500">{s.recipients}</span>
                   {s.last_sent_at && (
                     <span className="text-xs text-slate-400">Último envio: {new Date(s.last_sent_at).toLocaleString('pt-BR')}</span>
