@@ -1931,6 +1931,200 @@ app.delete("/api/import-batch/:batchId", requireAuth, async (req: any, res: any)
   }
 });
 
+// =========================================================================
+// CRON — Envio automático de relatórios agendados (Contas a Pagar, etc.)
+// =========================================================================
+function formatCurrencyBRL(value: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+}
+
+function formatDateBR(iso: string): string {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function buildContasAPagarEmailHtml(orgName: string, transactions: any[]): string {
+  const total = transactions.reduce((sum, t) => sum + (Number(t.value) || 0), 0);
+  const rows = transactions.map(t => `
+    <tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:#334155;">${formatDateBR(t.date)}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:#334155;">${t.description || ''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:#334155;text-align:right;">${formatCurrencyBRL(t.value)}</td>
+    </tr>
+  `).join('');
+
+  return `
+    <div style="font-family: sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <h1 style="color: #2563eb; margin: 0; font-size: 24px; font-weight: 800;">FinControl</h1>
+      </div>
+      <h2 style="color: #1e293b; font-size: 20px; font-weight: 700; margin-bottom: 8px;">Contas a Pagar — ${orgName}</h2>
+      <p style="font-size: 14px; color: #64748b; margin-bottom: 20px;">Relatório automático gerado em ${new Date().toLocaleString('pt-BR')}.</p>
+      ${transactions.length === 0 ? `
+        <p style="font-size:14px;color:#64748b;">Nenhuma conta pendente no momento.</p>
+      ` : `
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;">Vencimento</th>
+              <th style="text-align:left;padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;">Descrição</th>
+              <th style="text-align:right;padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;">Valor</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="text-align:right;margin-top:16px;padding-top:12px;border-top:2px solid #e2e8f0;">
+          <span style="font-size:14px;color:#64748b;">Total pendente: </span>
+          <span style="font-size:18px;font-weight:800;color:#1e293b;">${formatCurrencyBRL(total)}</span>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+app.post("/api/cron/send-reports", async (req: any, res: any) => {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.authorization;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ error: "Não autorizado" });
+  }
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceKey) {
+    return res.status(500).json({ error: "Configuração do Supabase (service role) ausente" });
+  }
+
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
+
+  const summary = { processed: 0, sent: 0, skipped: 0, errors: [] as string[] };
+
+  try {
+    const todayInSaoPaulo = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const [year, month, day] = todayInSaoPaulo.split('-').map(Number);
+    const todayWeekday = new Date(`${todayInSaoPaulo}T12:00:00`).getDay();
+    const lastDayOfMonth = new Date(year, month, 0).getDate();
+
+    const { data: schedules, error: schedulesError } = await admin
+      .from('report_schedules')
+      .select('*')
+      .eq('active', true);
+
+    if (schedulesError) throw schedulesError;
+
+    for (const schedule of schedules || []) {
+      summary.processed++;
+      try {
+        if (schedule.last_sent_at) {
+          const lastSentInSaoPaulo = new Date(schedule.last_sent_at).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+          if (lastSentInSaoPaulo === todayInSaoPaulo) {
+            summary.skipped++;
+            continue;
+          }
+        }
+
+        let isDueToday = false;
+        if (schedule.frequency === 'daily') {
+          isDueToday = true;
+        } else if (schedule.frequency === 'weekly') {
+          isDueToday = schedule.day_of_week === todayWeekday;
+        } else if (schedule.frequency === 'monthly') {
+          const targetDay = Math.min(schedule.day_of_month || 1, lastDayOfMonth);
+          isDueToday = targetDay === day;
+        }
+
+        if (!isDueToday) {
+          summary.skipped++;
+          continue;
+        }
+
+        const { data: org } = await admin
+          .from('organizations')
+          .select('id, name, owner_id')
+          .eq('id', schedule.organization_id)
+          .maybeSingle();
+
+        if (!org?.owner_id) {
+          summary.errors.push(`Agendamento ${schedule.id}: organização não encontrada`);
+          continue;
+        }
+
+        const { data: smtpConfig } = await admin
+          .from('smtp_settings')
+          .select('*')
+          .eq('user_id', org.owner_id)
+          .maybeSingle();
+
+        if (!smtpConfig) {
+          summary.errors.push(`Agendamento ${schedule.id}: SMTP não configurado para a organização "${org.name}"`);
+          continue;
+        }
+
+        let pass = smtpConfig.pass;
+        const encryptionKey = process.env.SMTP_ENCRYPTION_KEY;
+        if (encryptionKey && pass) {
+          try {
+            pass = decrypt(pass, encryptionKey);
+          } catch (decError: any) {
+            console.error('[CRON] Erro ao decriptografar senha SMTP:', decError.message);
+          }
+        }
+
+        const { data: transactions, error: txError } = await admin
+          .from('transactions')
+          .select('*')
+          .eq('organization_id', schedule.organization_id)
+          .eq('status', 'PENDING')
+          .eq('type', 'DEBIT')
+          .order('date', { ascending: true });
+
+        if (txError) throw txError;
+
+        const recipients = String(schedule.recipients || '')
+          .split(/[,;]/)
+          .map((e: string) => e.trim())
+          .filter(Boolean);
+
+        if (recipients.length === 0) {
+          summary.errors.push(`Agendamento ${schedule.id}: sem destinatários`);
+          continue;
+        }
+
+        const transporter = nodemailer.createTransport({
+          host: smtpConfig.host,
+          port: parseInt(String(smtpConfig.port)),
+          secure: String(smtpConfig.port) === "465",
+          auth: { user: smtpConfig.user, pass },
+        });
+
+        await transporter.sendMail({
+          from: `"${smtpConfig.from_name}" <${smtpConfig.from_email}>`,
+          to: recipients.join(', '),
+          subject: `Contas a Pagar — ${org.name}`,
+          html: buildContasAPagarEmailHtml(org.name, transactions || []),
+        });
+
+        await admin
+          .from('report_schedules')
+          .update({ last_sent_at: new Date().toISOString() })
+          .eq('id', schedule.id);
+
+        summary.sent++;
+      } catch (itemError: any) {
+        summary.errors.push(`Agendamento ${schedule.id}: ${itemError.message}`);
+      }
+    }
+
+    return res.json(summary);
+  } catch (error: any) {
+    console.error("[CRON] Erro ao processar relatórios agendados:", error);
+    return res.status(500).json({ error: "Falha ao processar relatórios agendados", details: error.message, ...summary });
+  }
+});
+
 app.use("/api", (req, res) => {
   res.status(404).json({ error: "Rota da API não encontrada" });
 });

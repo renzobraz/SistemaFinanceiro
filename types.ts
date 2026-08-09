@@ -146,6 +146,21 @@ export interface UserPermission {
   organization_id?: string; // Isolamento multi-tenant
 }
 
+export type ReportFrequency = 'daily' | 'weekly' | 'monthly';
+
+export interface ReportSchedule {
+  id?: string;
+  organization_id?: string;
+  report_type: 'contas_a_pagar';
+  frequency: ReportFrequency;
+  day_of_week?: number | null;  // 0=domingo..6=sábado, usado quando frequency='weekly'
+  day_of_month?: number | null; // 1-31, usado quando frequency='monthly'
+  recipients: string; // e-mails separados por vírgula
+  active: boolean;
+  last_sent_at?: string | null;
+  created_at?: string;
+}
+
 export interface SmtpSettings {
   id?: string;
   user_id?: string;

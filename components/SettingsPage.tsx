@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { TeamManagement } from './TeamManagement';
 import { SmtpSettings } from './SmtpSettings';
+import { ReportSchedules } from './ReportSchedules';
 import { HelpManual } from './HelpManual';
 import { SettingsView } from './SettingsView';
 import { financeService } from '../services/financeService';
@@ -31,7 +32,7 @@ interface SettingsPageProps {
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, registries, onSaveConfig, onUpdatePrefs }) => {
-  const [activeTab, setActiveTab] = useState<'team' | 'email' | 'filters' | 'database' | 'sql' | 'manual'>('filters');
+  const [activeTab, setActiveTab] = useState<'team' | 'email' | 'reports-schedule' | 'filters' | 'database' | 'sql' | 'manual'>('filters');
   const [prefs, setPrefs] = useState<UserPreferences>({
     defaultDateRange: 'CURRENT_MONTH',
     defaultStatus: 'ALL',
@@ -244,6 +245,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, regist
           {activeTab === 'team' && <TeamManagement />}
           
           {activeTab === 'email' && <SmtpSettings />}
+
+          {activeTab === 'reports-schedule' && <ReportSchedules />}
 
           {activeTab === 'database' && (
             <div className="animate-in fade-in duration-500">

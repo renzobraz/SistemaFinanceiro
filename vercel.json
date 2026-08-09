@@ -3,5 +3,8 @@
     { "source": "/api/prices", "destination": "/api/prices" },
     { "source": "/api/(.*)", "destination": "/api/server" },
     { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/cron/send-reports", "schedule": "0 10 * * *" }
   ]
 }

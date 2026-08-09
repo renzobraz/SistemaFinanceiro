@@ -16,7 +16,8 @@ import {
   AssetAccrual,
   Organization,
   OrganizationMember,
-  MerchantAlias
+  MerchantAlias,
+  ReportSchedule
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -3370,5 +3371,52 @@ export const financeService = {
     } else {
       await supabase.from('merchant_aliases').insert(payload);
     }
+  },
+
+  async getReportSchedules(): Promise<ReportSchedule[]> {
+    if (!this.activeOrganizationId) return [];
+    const supabase = getSupabase();
+    if (!supabase) return [];
+
+    const { data, error } = await supabase
+      .from('report_schedules')
+      .select('*')
+      .eq('organization_id', this.activeOrganizationId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  },
+
+  async saveReportSchedule(schedule: ReportSchedule): Promise<void> {
+    if (!this.activeOrganizationId) throw new Error("Nenhuma organização ativa selecionada");
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const payload = {
+      organization_id: this.activeOrganizationId,
+      report_type: schedule.report_type,
+      frequency: schedule.frequency,
+      day_of_week: schedule.frequency === 'weekly' ? schedule.day_of_week : null,
+      day_of_month: schedule.frequency === 'monthly' ? schedule.day_of_month : null,
+      recipients: schedule.recipients,
+      active: schedule.active,
+    };
+
+    if (schedule.id) {
+      const { error } = await supabase.from('report_schedules').update(payload).eq('id', schedule.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from('report_schedules').insert(payload);
+      if (error) throw error;
+    }
+  },
+
+  async deleteReportSchedule(id: string): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const { error } = await supabase.from('report_schedules').delete().eq('id', id);
+    if (error) throw error;
   },
 };

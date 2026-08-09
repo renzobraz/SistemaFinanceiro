@@ -92,6 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'settings-filters', label: 'Filtro Inicialização', icon: Filter },
     { id: 'settings-team', label: 'Gerenciar Equipe', icon: Users },
     { id: 'settings-email', label: 'Configuração E-mail', icon: AtSign },
+    { id: 'settings-reports-schedule', label: 'Relatórios Agendados', icon: CalendarClock },
     { id: 'settings-database', label: 'Conexão Banco de Dados', icon: Database },
     { id: 'settings-sql', label: 'Configuração SQL', icon: Terminal },
     { id: 'settings-manual', label: 'Manual / Ajuda', icon: BookOpen },
