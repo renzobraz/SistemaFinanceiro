@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { financeService } from '../services/financeService';
 import { ReportSchedule, ReportFrequency, ReportFilters, ReportColumnKey, Bank, Wallet, Category, CostCenter } from '../types';
 import {
@@ -12,7 +12,9 @@ import {
   Info,
   Power,
   Filter,
-  ListChecks
+  ListChecks,
+  Pencil,
+  X
 } from 'lucide-react';
 
 const WEEKDAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
@@ -79,6 +81,8 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
+  const isEditing = !!form.id;
 
   const loadSchedules = async () => {
     try {
@@ -102,7 +106,7 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
     }));
   };
 
-  const handleSendNow = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.recipients.trim()) {
       setMessage({ type: 'error', text: 'Informe ao menos um e-mail de destino.' });
@@ -112,9 +116,23 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
     setSending(true);
     setMessage(null);
     try {
-      if (form.saveAndSchedule) {
-        const scheduleId = await financeService.saveReportSchedule({
+      if (isEditing) {
+        await financeService.saveReportSchedule({
           id: form.id,
+          report_type: 'contas_a_pagar',
+          frequency: form.frequency,
+          day_of_week: form.day_of_week,
+          day_of_month: form.day_of_month,
+          recipients: form.recipients,
+          subject: form.subject,
+          message: form.message,
+          filters: form.filters,
+          columns: form.columns,
+          active: form.active,
+        });
+        setMessage({ type: 'success', text: 'Agendamento atualizado com sucesso!' });
+      } else if (form.saveAndSchedule) {
+        const scheduleId = await financeService.saveReportSchedule({
           report_type: 'contas_a_pagar',
           frequency: form.frequency,
           day_of_week: form.day_of_week,
@@ -146,6 +164,29 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
     } finally {
       setSending(false);
     }
+  };
+
+  const handleEdit = (schedule: ReportSchedule) => {
+    setForm({
+      id: schedule.id,
+      recipients: schedule.recipients || '',
+      subject: schedule.subject || '',
+      message: schedule.message || '',
+      filters: schedule.filters || {},
+      columns: (schedule.columns && schedule.columns.length > 0) ? schedule.columns : [...DEFAULT_COLUMNS],
+      saveAndSchedule: true,
+      frequency: schedule.frequency,
+      day_of_week: schedule.day_of_week ?? 1,
+      day_of_month: schedule.day_of_month ?? 1,
+      active: schedule.active,
+    });
+    setMessage(null);
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handleCancelEdit = () => {
+    setForm(emptyForm);
+    setMessage(null);
   };
 
   const handleSendExisting = async (schedule: ReportSchedule) => {
@@ -210,9 +251,21 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
         </p>
       </div>
 
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+      <div ref={formRef} className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-8">
-          <form onSubmit={handleSendNow} className="space-y-8">
+          {isEditing && (
+            <div className="mb-6 flex items-center justify-between bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3">
+              <span className="text-sm font-bold text-amber-800 flex items-center gap-2">
+                <Pencil className="w-4 h-4" />
+                Editando agendamento salvo
+              </span>
+              <button type="button" onClick={handleCancelEdit} className="flex items-center gap-1 text-xs font-bold text-amber-700 hover:text-amber-900">
+                <X className="w-3.5 h-3.5" />
+                Cancelar edição
+              </button>
+            </div>
+          )}
+          <form onSubmit={handleSubmit} className="space-y-8">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {/* DADOS DO ENVIO */}
               <div className="space-y-4">
@@ -285,7 +338,13 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                   >
                     <option value="">Todos os Bancos</option>
-                    {registries.banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    {registries.banks
+                      .filter(b => {
+                        if (b.id === form.filters.bankId) return true; // sempre mostra o selecionado
+                        if (!form.filters.walletId) return true;
+                        return b.walletId === form.filters.walletId;
+                      })
+                      .map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                 </div>
 
@@ -357,17 +416,19 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
 
             {/* SALVAR E AGENDAR */}
             <div className="pt-6 border-t border-slate-100 space-y-4">
-              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.saveAndSchedule}
-                  onChange={(e) => setForm({ ...form, saveAndSchedule: e.target.checked })}
-                  className="w-4 h-4 rounded accent-blue-600"
-                />
-                Salvar e Agendar Relatório (repetir automaticamente)
-              </label>
+              {!isEditing && (
+                <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.saveAndSchedule}
+                    onChange={(e) => setForm({ ...form, saveAndSchedule: e.target.checked })}
+                    className="w-4 h-4 rounded accent-blue-600"
+                  />
+                  Salvar e Agendar Relatório (repetir automaticamente)
+                </label>
+              )}
 
-              {form.saveAndSchedule && (
+              {(isEditing || form.saveAndSchedule) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 rounded-2xl p-6 border border-slate-100 animate-in fade-in duration-300">
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-1.5">Frequência</label>
@@ -421,20 +482,36 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={sending}
-              className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 text-white font-bold py-3.5 px-8 rounded-xl transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2 group"
-            >
-              {sending ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <>
-                  <Send className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                  <span>Enviar Agora</span>
-                </>
+            <div className="flex items-center gap-3">
+              <button
+                type="submit"
+                disabled={sending}
+                className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 text-white font-bold py-3.5 px-8 rounded-xl transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2 group"
+              >
+                {sending ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : isEditing ? (
+                  <>
+                    <Pencil className="w-4 h-4" />
+                    <span>Salvar Alterações</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                    <span>Enviar Agora</span>
+                  </>
+                )}
+              </button>
+              {isEditing && (
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="py-3.5 px-6 rounded-xl font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-all"
+                >
+                  Cancelar
+                </button>
               )}
-            </button>
+            </div>
           </form>
         </div>
       </div>
@@ -462,6 +539,13 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
                   >
                     {sendingId === s.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                     Enviar Agora
+                  </button>
+                  <button
+                    onClick={() => handleEdit(s)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 transition-all"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    Editar
                   </button>
                   <button
                     onClick={() => handleToggleActive(s)}
