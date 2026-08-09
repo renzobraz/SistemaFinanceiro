@@ -19,13 +19,15 @@ import { ReportSchedules } from './ReportSchedules';
 import { HelpManual } from './HelpManual';
 import { SettingsView } from './SettingsView';
 import { financeService } from '../services/financeService';
-import { Bank, Wallet, UserPreferences } from '../types';
+import { Bank, Wallet, Category, CostCenter, UserPreferences } from '../types';
 
 interface SettingsPageProps {
   activeSubTab?: string;
   registries: {
     banks: Bank[];
     wallets: Wallet[];
+    categories: Category[];
+    costCenters: CostCenter[];
   };
   onSaveConfig?: () => void;
   onUpdatePrefs: (prefs: UserPreferences) => void;
@@ -246,7 +248,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, regist
           
           {activeTab === 'email' && <SmtpSettings />}
 
-          {activeTab === 'reports-schedule' && <ReportSchedules />}
+          {activeTab === 'reports-schedule' && <ReportSchedules registries={registries} />}
 
           {activeTab === 'database' && (
             <div className="animate-in fade-in duration-500">

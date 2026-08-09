@@ -1932,7 +1932,7 @@ app.delete("/api/import-batch/:batchId", requireAuth, async (req: any, res: any)
 });
 
 // =========================================================================
-// CRON — Envio automático de relatórios agendados (Contas a Pagar, etc.)
+// RELATÓRIOS AGENDADOS — geração e envio (usado pelo cron e pelo envio manual)
 // =========================================================================
 function formatCurrencyBRL(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -1944,15 +1944,56 @@ function formatDateBR(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
-function buildContasAPagarEmailHtml(orgName: string, transactions: any[]): string {
+const REPORT_COLUMN_DEFINITIONS: Record<string, { label: string; align: 'left' | 'right' }> = {
+  date: { label: 'Vencimento', align: 'left' },
+  description: { label: 'Descrição', align: 'left' },
+  docNumber: { label: 'Nº Documento', align: 'left' },
+  value: { label: 'Valor', align: 'right' },
+  bank: { label: 'Banco', align: 'left' },
+  category: { label: 'Categoria', align: 'left' },
+  costCenter: { label: 'Centro de Custo', align: 'left' },
+  participant: { label: 'Participante', align: 'left' },
+};
+
+const DEFAULT_REPORT_COLUMNS = ['date', 'description', 'value'];
+
+type ReportLookups = {
+  banks: Record<string, string>;
+  categories: Record<string, string>;
+  costCenters: Record<string, string>;
+  participants: Record<string, string>;
+};
+
+function getReportCellValue(column: string, t: any, lookups: ReportLookups): string {
+  switch (column) {
+    case 'date': return formatDateBR(t.date);
+    case 'description': return t.description || '';
+    case 'docNumber': return t.doc_number || '';
+    case 'value': return formatCurrencyBRL(t.value);
+    case 'bank': return lookups.banks[t.bank_id] || '';
+    case 'category': return lookups.categories[t.category_id] || '';
+    case 'costCenter': return lookups.costCenters[t.cost_center_id] || '';
+    case 'participant': return lookups.participants[t.participant_id] || '';
+    default: return '';
+  }
+}
+
+function buildContasAPagarEmailHtml(orgName: string, transactions: any[], columns: string[], lookups: ReportLookups, customMessage?: string): string {
+  const activeColumns = columns.length > 0 ? columns : DEFAULT_REPORT_COLUMNS;
   const total = transactions.reduce((sum, t) => sum + (Number(t.value) || 0), 0);
-  const rows = transactions.map(t => `
-    <tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:#334155;">${formatDateBR(t.date)}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:#334155;">${t.description || ''}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:#334155;text-align:right;">${formatCurrencyBRL(t.value)}</td>
-    </tr>
-  `).join('');
+
+  const headerCells = activeColumns.map(col => {
+    const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const };
+    return `<th style="text-align:${def.align};padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;">${def.label}</th>`;
+  }).join('');
+
+  const rows = transactions.map(t => {
+    const cells = activeColumns.map(col => {
+      const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const };
+      return `<td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:#334155;text-align:${def.align};">${getReportCellValue(col, t, lookups)}</td>`;
+    }).join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
 
   return `
     <div style="font-family: sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
@@ -1960,27 +2001,126 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[]): strin
         <h1 style="color: #2563eb; margin: 0; font-size: 24px; font-weight: 800;">FinControl</h1>
       </div>
       <h2 style="color: #1e293b; font-size: 20px; font-weight: 700; margin-bottom: 8px;">Contas a Pagar — ${orgName}</h2>
-      <p style="font-size: 14px; color: #64748b; margin-bottom: 20px;">Relatório automático gerado em ${new Date().toLocaleString('pt-BR')}.</p>
+      ${customMessage ? `<p style="font-size: 14px; color: #334155; margin-bottom: 20px; white-space: pre-line;">${customMessage}</p>` : ''}
+      <p style="font-size: 14px; color: #64748b; margin-bottom: 20px;">Relatório gerado em ${new Date().toLocaleString('pt-BR')}.</p>
       ${transactions.length === 0 ? `
-        <p style="font-size:14px;color:#64748b;">Nenhuma conta pendente no momento.</p>
+        <p style="font-size:14px;color:#64748b;">Nenhuma conta encontrada para os filtros selecionados.</p>
       ` : `
         <table style="width:100%;border-collapse:collapse;">
-          <thead>
-            <tr>
-              <th style="text-align:left;padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;">Vencimento</th>
-              <th style="text-align:left;padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;">Descrição</th>
-              <th style="text-align:right;padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;">Valor</th>
-            </tr>
-          </thead>
+          <thead><tr>${headerCells}</tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div style="text-align:right;margin-top:16px;padding-top:12px;border-top:2px solid #e2e8f0;">
-          <span style="font-size:14px;color:#64748b;">Total pendente: </span>
+          <span style="font-size:14px;color:#64748b;">Total: </span>
           <span style="font-size:18px;font-weight:800;color:#1e293b;">${formatCurrencyBRL(total)}</span>
         </div>
       `}
     </div>
   `;
+}
+
+// Envia um relatório de Contas a Pagar (agendamento salvo ou objeto avulso, sem id) —
+// reaproveitado pelo cron diário e pela rota de envio manual.
+async function sendScheduledReport(admin: any, schedule: any): Promise<{ success: boolean; error?: string }> {
+  const { data: org } = await admin
+    .from('organizations')
+    .select('id, name, owner_id')
+    .eq('id', schedule.organization_id)
+    .maybeSingle();
+
+  if (!org?.owner_id) {
+    return { success: false, error: 'Organização não encontrada' };
+  }
+
+  const { data: smtpConfig } = await admin
+    .from('smtp_settings')
+    .select('*')
+    .eq('user_id', org.owner_id)
+    .maybeSingle();
+
+  if (!smtpConfig) {
+    return { success: false, error: `SMTP não configurado para a organização "${org.name}"` };
+  }
+
+  let pass = smtpConfig.pass;
+  const encryptionKey = process.env.SMTP_ENCRYPTION_KEY;
+  if (encryptionKey && pass) {
+    try {
+      pass = decrypt(pass, encryptionKey);
+    } catch (decError: any) {
+      console.error('[Relatórios] Erro ao decriptografar senha SMTP:', decError.message);
+    }
+  }
+
+  const recipients = String(schedule.recipients || '')
+    .split(/[,;]/)
+    .map((e: string) => e.trim())
+    .filter(Boolean);
+
+  if (recipients.length === 0) {
+    return { success: false, error: 'Sem destinatários' };
+  }
+
+  const filters = schedule.filters || {};
+  const columns: string[] = (schedule.columns && schedule.columns.length > 0) ? schedule.columns : DEFAULT_REPORT_COLUMNS;
+
+  let query = admin
+    .from('transactions')
+    .select('*')
+    .eq('organization_id', schedule.organization_id)
+    .eq('type', 'DEBIT');
+
+  const status = filters.status || 'PENDING';
+  if (status !== 'ALL') query = query.eq('status', status);
+  if (filters.bankId) query = query.eq('bank_id', filters.bankId);
+  if (filters.walletId) query = query.eq('wallet_id', filters.walletId);
+  if (filters.categoryId) query = query.eq('category_id', filters.categoryId);
+  if (filters.costCenterId) query = query.eq('cost_center_id', filters.costCenterId);
+
+  const { data: transactions, error: txError } = await query.order('date', { ascending: true });
+  if (txError) return { success: false, error: txError.message };
+
+  const lookups: ReportLookups = { banks: {}, categories: {}, costCenters: {}, participants: {} };
+  const lookupSpecs: Array<{ column: string; table: string; key: keyof ReportLookups }> = [
+    { column: 'bank', table: 'banks', key: 'banks' },
+    { column: 'category', table: 'categories', key: 'categories' },
+    { column: 'costCenter', table: 'cost_centers', key: 'costCenters' },
+    { column: 'participant', table: 'participants', key: 'participants' },
+  ];
+
+  for (const spec of lookupSpecs) {
+    if (!columns.includes(spec.column)) continue;
+    const { data: rows } = await admin
+      .from(spec.table)
+      .select('id, name')
+      .eq('organization_id', schedule.organization_id);
+    for (const row of rows || []) {
+      lookups[spec.key][row.id] = row.name;
+    }
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpConfig.host,
+    port: parseInt(String(smtpConfig.port)),
+    secure: String(smtpConfig.port) === "465",
+    auth: { user: smtpConfig.user, pass },
+  });
+
+  await transporter.sendMail({
+    from: `"${smtpConfig.from_name}" <${smtpConfig.from_email}>`,
+    to: recipients.join(', '),
+    subject: schedule.subject || `Contas a Pagar — ${org.name}`,
+    html: buildContasAPagarEmailHtml(org.name, transactions || [], columns, lookups, schedule.message),
+  });
+
+  if (schedule.id) {
+    await admin
+      .from('report_schedules')
+      .update({ last_sent_at: new Date().toISOString() })
+      .eq('id', schedule.id);
+  }
+
+  return { success: true };
 }
 
 app.post("/api/cron/send-reports", async (req: any, res: any) => {
@@ -2041,78 +2181,12 @@ app.post("/api/cron/send-reports", async (req: any, res: any) => {
           continue;
         }
 
-        const { data: org } = await admin
-          .from('organizations')
-          .select('id, name, owner_id')
-          .eq('id', schedule.organization_id)
-          .maybeSingle();
-
-        if (!org?.owner_id) {
-          summary.errors.push(`Agendamento ${schedule.id}: organização não encontrada`);
-          continue;
+        const result = await sendScheduledReport(admin, schedule);
+        if (result.success) {
+          summary.sent++;
+        } else {
+          summary.errors.push(`Agendamento ${schedule.id}: ${result.error}`);
         }
-
-        const { data: smtpConfig } = await admin
-          .from('smtp_settings')
-          .select('*')
-          .eq('user_id', org.owner_id)
-          .maybeSingle();
-
-        if (!smtpConfig) {
-          summary.errors.push(`Agendamento ${schedule.id}: SMTP não configurado para a organização "${org.name}"`);
-          continue;
-        }
-
-        let pass = smtpConfig.pass;
-        const encryptionKey = process.env.SMTP_ENCRYPTION_KEY;
-        if (encryptionKey && pass) {
-          try {
-            pass = decrypt(pass, encryptionKey);
-          } catch (decError: any) {
-            console.error('[CRON] Erro ao decriptografar senha SMTP:', decError.message);
-          }
-        }
-
-        const { data: transactions, error: txError } = await admin
-          .from('transactions')
-          .select('*')
-          .eq('organization_id', schedule.organization_id)
-          .eq('status', 'PENDING')
-          .eq('type', 'DEBIT')
-          .order('date', { ascending: true });
-
-        if (txError) throw txError;
-
-        const recipients = String(schedule.recipients || '')
-          .split(/[,;]/)
-          .map((e: string) => e.trim())
-          .filter(Boolean);
-
-        if (recipients.length === 0) {
-          summary.errors.push(`Agendamento ${schedule.id}: sem destinatários`);
-          continue;
-        }
-
-        const transporter = nodemailer.createTransport({
-          host: smtpConfig.host,
-          port: parseInt(String(smtpConfig.port)),
-          secure: String(smtpConfig.port) === "465",
-          auth: { user: smtpConfig.user, pass },
-        });
-
-        await transporter.sendMail({
-          from: `"${smtpConfig.from_name}" <${smtpConfig.from_email}>`,
-          to: recipients.join(', '),
-          subject: `Contas a Pagar — ${org.name}`,
-          html: buildContasAPagarEmailHtml(org.name, transactions || []),
-        });
-
-        await admin
-          .from('report_schedules')
-          .update({ last_sent_at: new Date().toISOString() })
-          .eq('id', schedule.id);
-
-        summary.sent++;
       } catch (itemError: any) {
         summary.errors.push(`Agendamento ${schedule.id}: ${itemError.message}`);
       }
@@ -2122,6 +2196,52 @@ app.post("/api/cron/send-reports", async (req: any, res: any) => {
   } catch (error: any) {
     console.error("[CRON] Erro ao processar relatórios agendados:", error);
     return res.status(500).json({ error: "Falha ao processar relatórios agendados", details: error.message, ...summary });
+  }
+});
+
+// Envio manual — usado pelo botão "Enviar Agora" da tela de Relatórios Agendados.
+// Aceita { scheduleId } para reenviar um agendamento salvo, ou os dados completos
+// do formulário (sem scheduleId) para um envio avulso, sem persistir nada.
+app.post("/api/report-schedules/send-now", requireAuth, async (req: any, res: any) => {
+  try {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !serviceKey) {
+      return res.status(500).json({ error: "Configuração do Supabase (service role) ausente" });
+    }
+
+    const admin = createClient(supabaseUrl, serviceKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
+    let schedule: any;
+
+    if (req.body?.scheduleId) {
+      const { data, error } = await admin
+        .from('report_schedules')
+        .select('*')
+        .eq('id', req.body.scheduleId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) return res.status(404).json({ error: "Agendamento não encontrado" });
+      schedule = data;
+    } else {
+      const { organization_id, recipients, subject, message, filters, columns, report_type } = req.body || {};
+      if (!organization_id || !recipients) {
+        return res.status(400).json({ error: "organization_id e recipients são obrigatórios" });
+      }
+      schedule = { organization_id, recipients, subject, message, filters, columns, report_type: report_type || 'contas_a_pagar' };
+    }
+
+    const result = await sendScheduledReport(admin, schedule);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || "Falha ao enviar relatório" });
+    }
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error("[Relatórios] Erro no envio manual:", error);
+    return res.status(500).json({ error: "Falha ao enviar relatório", details: error.message });
   }
 });
 

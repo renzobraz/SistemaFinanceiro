@@ -3388,7 +3388,7 @@ export const financeService = {
     return data || [];
   },
 
-  async saveReportSchedule(schedule: ReportSchedule): Promise<void> {
+  async saveReportSchedule(schedule: ReportSchedule): Promise<string> {
     if (!this.activeOrganizationId) throw new Error("Nenhuma organização ativa selecionada");
     const supabase = getSupabase();
     if (!supabase) throw new Error("Supabase não configurado");
@@ -3400,15 +3400,21 @@ export const financeService = {
       day_of_week: schedule.frequency === 'weekly' ? schedule.day_of_week : null,
       day_of_month: schedule.frequency === 'monthly' ? schedule.day_of_month : null,
       recipients: schedule.recipients,
+      subject: schedule.subject || null,
+      message: schedule.message || null,
+      filters: schedule.filters || {},
+      columns: schedule.columns || [],
       active: schedule.active,
     };
 
     if (schedule.id) {
       const { error } = await supabase.from('report_schedules').update(payload).eq('id', schedule.id);
       if (error) throw error;
+      return schedule.id;
     } else {
-      const { error } = await supabase.from('report_schedules').insert(payload);
+      const { data, error } = await supabase.from('report_schedules').insert(payload).select('id').single();
       if (error) throw error;
+      return data.id;
     }
   },
 
@@ -3418,5 +3424,32 @@ export const financeService = {
 
     const { error } = await supabase.from('report_schedules').delete().eq('id', id);
     if (error) throw error;
+  },
+
+  async sendReportNow(payload: { scheduleId?: string } & Partial<ReportSchedule> & { organization_id?: string }): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const { data } = await supabase.auth.getSession();
+    const session = data?.session;
+    if (!session?.user) throw new Error("Usuário não autenticado");
+
+    const body = payload.scheduleId
+      ? { scheduleId: payload.scheduleId }
+      : { ...payload, organization_id: payload.organization_id || this.activeOrganizationId };
+
+    const response = await fetch('/api/report-schedules/send-now', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `Erro do servidor (${response.status}) ao enviar relatório.`);
+    }
   },
 };

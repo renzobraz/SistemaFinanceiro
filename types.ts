@@ -148,6 +148,16 @@ export interface UserPermission {
 
 export type ReportFrequency = 'daily' | 'weekly' | 'monthly';
 
+export type ReportColumnKey = 'date' | 'description' | 'docNumber' | 'value' | 'bank' | 'category' | 'costCenter' | 'participant';
+
+export interface ReportFilters {
+  status?: 'ALL' | 'PENDING' | 'PAID';
+  bankId?: string;
+  walletId?: string;
+  categoryId?: string;
+  costCenterId?: string;
+}
+
 export interface ReportSchedule {
   id?: string;
   organization_id?: string;
@@ -156,6 +166,10 @@ export interface ReportSchedule {
   day_of_week?: number | null;  // 0=domingo..6=sábado, usado quando frequency='weekly'
   day_of_month?: number | null; // 1-31, usado quando frequency='monthly'
   recipients: string; // e-mails separados por vírgula
+  subject?: string;
+  message?: string;
+  filters?: ReportFilters;
+  columns?: ReportColumnKey[];
   active: boolean;
   last_sent_at?: string | null;
   created_at?: string;
