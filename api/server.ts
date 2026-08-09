@@ -1957,6 +1957,13 @@ const REPORT_COLUMN_DEFINITIONS: Record<string, { label: string; align: 'left' |
 
 const DEFAULT_REPORT_COLUMNS = ['date', 'description', 'value'];
 
+// Mesma ordem usada nas telas do sistema (Data, Banco, Categoria, Participante, Centro de Custo, Descrição, Valor)
+const REPORT_COLUMN_ORDER = ['date', 'bank', 'category', 'participant', 'costCenter', 'description', 'value', 'docNumber'];
+
+function sortReportColumns(columns: string[]): string[] {
+  return [...columns].sort((a, b) => REPORT_COLUMN_ORDER.indexOf(a) - REPORT_COLUMN_ORDER.indexOf(b));
+}
+
 type ReportLookups = {
   banks: Record<string, string>;
   categories: Record<string, string>;
@@ -1979,7 +1986,7 @@ function getReportCellValue(column: string, t: any, lookups: ReportLookups): str
 }
 
 function buildContasAPagarEmailHtml(orgName: string, transactions: any[], columns: string[], lookups: ReportLookups, customMessage?: string): string {
-  const activeColumns = columns.length > 0 ? columns : DEFAULT_REPORT_COLUMNS;
+  const activeColumns = sortReportColumns(columns.length > 0 ? columns : DEFAULT_REPORT_COLUMNS);
   const total = transactions.reduce((sum, t) => sum + (Number(t.value) || 0), 0);
 
   const headerCells = activeColumns.map(col => {
@@ -2090,10 +2097,14 @@ async function sendScheduledReport(admin: any, schedule: any): Promise<{ success
 
   for (const spec of lookupSpecs) {
     if (!columns.includes(spec.column)) continue;
-    const { data: rows } = await admin
+    const { data: rows, error: lookupError } = await admin
       .from(spec.table)
       .select('id, name')
       .eq('organization_id', schedule.organization_id);
+    if (lookupError) {
+      console.error(`[Relatórios] Erro ao buscar "${spec.table}" para o relatório:`, lookupError.message);
+      continue;
+    }
     for (const row of rows || []) {
       lookups[spec.key][row.id] = row.name;
     }

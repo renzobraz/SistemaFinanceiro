@@ -19,15 +19,16 @@ import {
 
 const WEEKDAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
+// Mesma ordem usada nas telas do sistema (Data, Banco, Categoria, Participante, Centro de Custo, Descrição, Valor)
 const COLUMN_OPTIONS: { key: ReportColumnKey; label: string }[] = [
   { key: 'date', label: 'Vencimento' },
-  { key: 'description', label: 'Descrição' },
-  { key: 'docNumber', label: 'Nº Documento' },
-  { key: 'value', label: 'Valor' },
   { key: 'bank', label: 'Banco' },
   { key: 'category', label: 'Categoria' },
-  { key: 'costCenter', label: 'Centro de Custo' },
   { key: 'participant', label: 'Participante' },
+  { key: 'costCenter', label: 'Centro de Custo' },
+  { key: 'description', label: 'Descrição' },
+  { key: 'value', label: 'Valor' },
+  { key: 'docNumber', label: 'Nº Documento' },
 ];
 
 const DEFAULT_COLUMNS: ReportColumnKey[] = ['date', 'description', 'value'];
