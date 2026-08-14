@@ -136,7 +136,15 @@ export const AcceptInvite: React.FC<AcceptInviteProps> = ({ inviteToken, inviteR
       onSuccess(activeUser);
     } catch (err: any) {
       console.error('[AcceptInvite] Erro ao aceitar convite:', err);
-      setError(err.message || 'Erro inesperado ao definir senha do convite.');
+      let message = err.message || 'Erro inesperado ao definir senha do convite.';
+
+      if (/known to be weak|easy to guess|pwned/i.test(message)) {
+        message = 'Essa senha já apareceu em vazamentos de dados conhecidos na internet, por isso foi recusada por segurança. Escolha uma senha diferente e menos óbvia — evite palavras comuns seguidas de número (ex: "Nome123"), e combine letras maiúsculas, minúsculas, números e símbolos de forma menos previsível.';
+      } else if (/password should|at least \d+ character/i.test(message)) {
+        message = 'Senha muito curta ou simples. Use ao menos 8 caracteres, combinando letras maiúsculas, minúsculas, números e símbolos.';
+      }
+
+      setError(message);
     } finally {
       setLoading(false);
     }

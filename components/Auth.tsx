@@ -44,6 +44,8 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
 
       if (message.includes('Email not confirmed')) {
         message = 'Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada e clique no link de confirmação.';
+      } else if (/known to be weak|easy to guess|pwned/i.test(message)) {
+        message = 'Essa senha já apareceu em vazamentos de dados conhecidos na internet, por isso foi recusada por segurança. Escolha uma senha diferente e menos óbvia — evite palavras comuns seguidas de número (ex: "Nome123"), e combine letras maiúsculas, minúsculas, números e símbolos de forma menos previsível.';
       } else if (message.includes('Password should') || message.includes('Password is too weak') || message.includes('at least') || message.includes('password')) {
         message = 'Senha muito fraca. Use ao menos 8 caracteres, combinando letras maiúsculas, minúsculas, números e símbolos.';
       } else if (message.includes('Invalid login credentials') || message.includes('invalid_credentials')) {
