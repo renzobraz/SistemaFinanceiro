@@ -895,39 +895,9 @@ const App: FC = () => {
     }
   }, [activeTab]);
 
-  const globalBalanceMap = useMemo(() => {
-    let relevant = transactions.filter(t => t.status === 'PAID');
-    
-    // Ordena cronologicamente para calcular o saldo corrente
-    relevant.sort((a, b) => {
-      const da = new Date(a.date).getTime();
-      const db = new Date(b.date).getTime();
-      if (da !== db) return da - db;
-
-      // Secondary sort: createdAt se ambos tiverem (mais antigo primeiro)
-      if (a.createdAt && b.createdAt) {
-        const diff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-        if (diff !== 0) return diff;
-      }
-
-      // Terceiro critério: ID em ordem DECRESCENTE para coincidir com o display padrão (desc)
-      return (b.id || '').localeCompare(a.id || '');
-    });
-
-    const map: Record<string, number> = {};
-    
-    // O saldo corrente começa com o Saldo Anterior (Histórico)
-    // Se o filtro de banco estiver ativo, pegamos o saldo anterior específico do banco, senão o total
-    let running = selectedBankId && previousBalances.byBank[selectedBankId] !== undefined 
-        ? previousBalances.byBank[selectedBankId] 
-        : previousBalances.total;
-
-    relevant.forEach(t => {
-      running += (t.type === 'CREDIT' ? t.value : -t.value);
-      map[t.id] = running;
-    });
-    return map;
-  }, [transactions, previousBalances, selectedBankId]);
+  // Saldo acumulado (coluna "Saldo" do Extrato) e calculado dentro do proprio TransactionList,
+  // que tem acesso aos filtros locais de Banco/Carteira da tela e busca o saldo anterior
+  // especifico dessa combinacao — ver useEffect de scopedBaseline em TransactionList.tsx.
 
   const handleSaveTransaction = async (t: Transaction | Transaction[]) => {
     const previousTransactions = [...transactions];
@@ -2015,9 +1985,10 @@ const App: FC = () => {
                     onUpdateStatus={handleUpdateTransactionsStatus}
                     onUpdateDate={handleUpdateTransactionsDate}
                     onUpdateValue={handleUpdateTransactionsValue}
-                    onImport={() => {}} 
-                    variant="full" 
-                    externalBalanceMap={globalBalanceMap} 
+                    onImport={() => {}}
+                    variant="full"
+                    startDate={startDate}
+                    previousBalances={previousBalances}
                     initialSortByStatus={statusFilter === 'ALL' ? undefined : statusFilter as any}
                     totalInDatabase={transactions.length}
                     userModulePermissions={userModulePermissions}

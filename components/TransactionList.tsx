@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet } from '../types';
 import { ConfirmModal } from './ConfirmModal';
+import { financeService } from '../services/financeService';
 
 interface TransactionListProps {
   transactions: Transaction[];
@@ -39,7 +40,8 @@ interface TransactionListProps {
   onUpdateValue?: (ids: string[], value: number) => void;
   onImport: (importedData: any[]) => void;
   variant?: 'card' | 'full';
-  externalBalanceMap?: Record<string, number>;
+  startDate?: string;
+  previousBalances?: { total: number; byBank: Record<string, number> };
   initialSortByStatus?: 'PAID' | 'PENDING' | 'ALL';
   totalInDatabase?: number;
   userModulePermissions?: Record<string, any>;
@@ -77,7 +79,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   onUpdateDate,
   onUpdateValue,
   variant = 'card',
-  externalBalanceMap,
+  startDate,
+  previousBalances,
   initialSortByStatus = 'ALL',
   totalInDatabase = 0,
   userModulePermissions = {},
@@ -93,6 +96,25 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const [isBulkValueModalOpen, setIsBulkValueModalOpen] = useState(false);
   const [bulkDate, setBulkDate] = useState(new Date().toISOString().split('T')[0]);
   const [bulkValue, setBulkValue] = useState<string>('');
+  const [scopedBaseline, setScopedBaseline] = useState<number | null>(null);
+
+  // Saldo anterior corrente. Se Banco ou Carteira estiverem filtrados nesta tela,
+  // busca o saldo anterior especifico dessa combinacao em vez de usar o total geral.
+  useEffect(() => {
+    if (!columnFilters.bankId && !columnFilters.walletId) {
+      setScopedBaseline(null);
+      return;
+    }
+    if (!startDate) {
+      setScopedBaseline(0);
+      return;
+    }
+    let cancelled = false;
+    financeService.getBalancesBefore(startDate, columnFilters.bankId || undefined, columnFilters.walletId || undefined)
+      .then(bal => { if (!cancelled) setScopedBaseline(bal.total); })
+      .catch(() => { if (!cancelled) setScopedBaseline(0); });
+    return () => { cancelled = true; };
+  }, [columnFilters.bankId, columnFilters.walletId, startDate]);
 
   const hasEditPermission = useMemo(() => {
     return (
@@ -225,23 +247,29 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
     let bMap: Record<string, number> = {};
 
-    if (externalBalanceMap) {
-        bMap = externalBalanceMap;
-    } else {
-        const chronoSorted = [...data].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        let runningBalance = 0;
-        chronoSorted.forEach(t => {
-            if (t.type === 'CREDIT') {
-                runningBalance += t.value;
-            } else {
-                runningBalance -= t.value;
-            }
-            bMap[t.id] = runningBalance;
-        });
-    }
+    // Saldo anterior: usa o saldo especifico do Banco/Carteira filtrados nesta tela
+    // quando houver; senao, usa o saldo geral ja calculado no App.
+    const baseline = (columnFilters.bankId || columnFilters.walletId)
+        ? (scopedBaseline ?? 0)
+        : (previousBalances?.total ?? 0);
+
+    // Soma apenas as transacoes PAGAS (saldo bancario so reflete dinheiro que ja se moveu de fato)
+    // dentro do MESMO conjunto ja filtrado (data) por Banco/Carteira/Participante/Categoria/Centro de Custo.
+    const chronoSorted = data
+        .filter(t => t.status === 'PAID')
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    let runningBalance = baseline;
+    chronoSorted.forEach(t => {
+        if (t.type === 'CREDIT') {
+            runningBalance += t.value;
+        } else {
+            runningBalance -= t.value;
+        }
+        bMap[t.id] = runningBalance;
+    });
 
     return { filteredTransactions: data, balanceMap: bMap };
-  }, [transactions, deferredSearchTerm, columnFilters, sortConfig, registries, externalBalanceMap, showLast5]);
+  }, [transactions, deferredSearchTerm, columnFilters, sortConfig, registries, previousBalances, scopedBaseline, showLast5]);
 
   const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
