@@ -1,5 +1,5 @@
 import React from 'react';
-import { Transaction, Bank, Category } from '../../../types';
+import { Transaction, Bank, Category, Participant } from '../../../types';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Search, ArrowUpDown } from 'lucide-react';
@@ -9,26 +9,23 @@ interface ExpenseDetailsTableProps {
   registries: {
     banks: Bank[];
     categories: Category[];
+    participants: Participant[];
   };
 }
 
 export const ExpenseDetailsTable: React.FC<ExpenseDetailsTableProps> = ({ transactions, registries }) => {
   const [searchTerm, setSearchTerm] = React.useState('');
-  const [sortConfig, setSortConfig] = React.useState<{ key: keyof Transaction | 'bankName' | 'categoryName', direction: 'asc' | 'desc' }>({
+  const [sortConfig, setSortConfig] = React.useState<{ key: keyof Transaction | 'bankName' | 'categoryName' | 'participantName', direction: 'asc' | 'desc' }>({
     key: 'date',
     direction: 'desc'
   });
 
-  // Filtra apenas despesas (DEBIT)
-  const expenses = React.useMemo(() => {
-    return transactions.filter(t => t.type === 'DEBIT');
-  }, [transactions]);
-
-  const sortedAndFilteredExpenses = React.useMemo(() => {
-    let result = expenses.filter(t => {
+  const sortedAndFilteredTransactions = React.useMemo(() => {
+    let result = transactions.filter(t => {
       const category = registries.categories.find(c => c.id === t.categoryId)?.name || '';
       const bank = registries.banks.find(b => b.id === t.bankId)?.name || '';
-      const searchStr = `${t.description} ${category} ${bank}`.toLowerCase();
+      const participant = registries.participants.find(p => p.id === t.participantId)?.name || '';
+      const searchStr = `${t.description} ${category} ${bank} ${participant}`.toLowerCase();
       return searchStr.includes(searchTerm.toLowerCase());
     });
 
@@ -42,6 +39,9 @@ export const ExpenseDetailsTable: React.FC<ExpenseDetailsTableProps> = ({ transa
       } else if (sortConfig.key === 'categoryName') {
         valA = registries.categories.find(c => c.id === a.categoryId)?.name || '';
         valB = registries.categories.find(c => c.id === b.categoryId)?.name || '';
+      } else if (sortConfig.key === 'participantName') {
+        valA = registries.participants.find(p => p.id === a.participantId)?.name || '';
+        valB = registries.participants.find(p => p.id === b.participantId)?.name || '';
       } else {
         valA = a[sortConfig.key as keyof Transaction] || '';
         valB = b[sortConfig.key as keyof Transaction] || '';
@@ -53,9 +53,9 @@ export const ExpenseDetailsTable: React.FC<ExpenseDetailsTableProps> = ({ transa
     });
 
     return result;
-  }, [expenses, searchTerm, sortConfig, registries]);
+  }, [transactions, searchTerm, sortConfig, registries]);
 
-  const handleSort = (key: keyof Transaction | 'bankName' | 'categoryName') => {
+  const handleSort = (key: keyof Transaction | 'bankName' | 'categoryName' | 'participantName') => {
     setSortConfig(prev => ({
       key,
       direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
@@ -70,7 +70,7 @@ export const ExpenseDetailsTable: React.FC<ExpenseDetailsTableProps> = ({ transa
     <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm mt-8">
       <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Detalhamento de Despesas</h3>
+          <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Detalhamento de Lançamentos</h3>
           <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Registros individuais filtrados</p>
         </div>
 
@@ -78,7 +78,7 @@ export const ExpenseDetailsTable: React.FC<ExpenseDetailsTableProps> = ({ transa
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Buscar despesa..."
+            placeholder="Buscar lançamento..."
             className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none w-full md:w-64 transition-all"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -99,6 +99,9 @@ export const ExpenseDetailsTable: React.FC<ExpenseDetailsTableProps> = ({ transa
               <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-slate-600 transition-colors" onClick={() => handleSort('categoryName')}>
                 <div className="flex items-center gap-1">Categoria <ArrowUpDown className="w-3 h-3" /></div>
               </th>
+              <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-slate-600 transition-colors" onClick={() => handleSort('participantName')}>
+                <div className="flex items-center gap-1">Participante <ArrowUpDown className="w-3 h-3" /></div>
+              </th>
               <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-wider cursor-pointer hover:text-slate-600 transition-colors" onClick={() => handleSort('bankName')}>
                 <div className="flex items-center gap-1">Banco <ArrowUpDown className="w-3 h-3" /></div>
               </th>
@@ -108,9 +111,11 @@ export const ExpenseDetailsTable: React.FC<ExpenseDetailsTableProps> = ({ transa
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {sortedAndFilteredExpenses.map((t) => {
+            {sortedAndFilteredTransactions.map((t) => {
               const category = registries.categories.find(c => c.id === t.categoryId);
               const bank = registries.banks.find(b => b.id === t.bankId);
+              const participant = registries.participants.find(p => p.id === t.participantId);
+              const isCredit = t.type === 'CREDIT';
 
               return (
                 <tr key={t.id} className="hover:bg-slate-50/50 transition-colors group">
@@ -129,10 +134,13 @@ export const ExpenseDetailsTable: React.FC<ExpenseDetailsTableProps> = ({ transa
                     </span>
                   </td>
                   <td className="p-4 text-xs font-bold text-slate-500">
+                    {participant?.name || '-'}
+                  </td>
+                  <td className="p-4 text-xs font-bold text-slate-500">
                     {bank?.name || '-'}
                   </td>
-                  <td className="p-4 text-right text-xs font-black text-red-600 font-mono">
-                    {formatCurrency(t.value)}
+                  <td className={`p-4 text-right text-xs font-black font-mono ${isCredit ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {isCredit ? '+ ' : '- '}{formatCurrency(t.value)}
                   </td>
                 </tr>
               );
@@ -141,15 +149,17 @@ export const ExpenseDetailsTable: React.FC<ExpenseDetailsTableProps> = ({ transa
         </table>
       </div>
 
-      {sortedAndFilteredExpenses.length === 0 && (
+      {sortedAndFilteredTransactions.length === 0 && (
         <div className="p-12 text-center">
-          <p className="text-sm font-bold text-slate-400">Nenhuma despesa encontrada para os filtros atuais.</p>
+          <p className="text-sm font-bold text-slate-400">Nenhum lançamento encontrado para os filtros atuais.</p>
         </div>
       )}
 
       <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-        <span>Mostrando {sortedAndFilteredExpenses.length} despesas</span>
-        <span className="text-slate-600">Total: {formatCurrency(sortedAndFilteredExpenses.reduce((acc, t) => acc + t.value, 0))}</span>
+        <span>Mostrando {sortedAndFilteredTransactions.length} lançamentos</span>
+        <span className="text-slate-600">
+          Saldo: {formatCurrency(sortedAndFilteredTransactions.reduce((acc, t) => acc + (t.type === 'CREDIT' ? t.value : -t.value), 0))}
+        </span>
       </div>
     </div>
   );
