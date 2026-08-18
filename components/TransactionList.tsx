@@ -268,7 +268,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
             if (a.createdAt && b.createdAt) {
                 return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
             }
-            return (b.id || '').localeCompare(a.id || '');
+            // Sem createdAt (comum em lancamentos antigos/importados): a listagem padrao
+            // (data desc) mostra o ID maior primeiro, entao aqui — ordem ascendente — o ID
+            // maior precisa ser processado por ultimo, para ficar com o saldo final do dia
+            // e continuar coincidindo com a linha exibida no topo do grupo.
+            return (a.id || '').localeCompare(b.id || '');
         });
     let runningBalance = baseline;
     chronoSorted.forEach(t => {
