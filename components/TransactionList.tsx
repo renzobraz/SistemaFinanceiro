@@ -257,7 +257,19 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     // dentro do MESMO conjunto ja filtrado (data) por Banco/Carteira/Participante/Categoria/Centro de Custo.
     const chronoSorted = data
         .filter(t => t.status === 'PAID')
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        .sort((a, b) => {
+            const da = new Date(a.date).getTime();
+            const db = new Date(b.date).getTime();
+            if (da !== db) return da - db;
+
+            // Mesma data: usa o mesmo criterio de desempate da ordenacao padrao da tabela
+            // (data desc), soh que invertido, para o saldo de cada linha bater com a
+            // ordem em que ela aparece na tela por padrao.
+            if (a.createdAt && b.createdAt) {
+                return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+            }
+            return (b.id || '').localeCompare(a.id || '');
+        });
     let runningBalance = baseline;
     chronoSorted.forEach(t => {
         if (t.type === 'CREDIT') {
