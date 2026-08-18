@@ -1220,6 +1220,22 @@ export const geminiService = {
 
     // Se saiu do loop, significa que todas as tentativas falharam
     const formattedErrors = attemptErrors.map(err => `- ${err}`).join("\n");
-    throw new Error(`Falha no processamento inteligente. Relatório de erros por IA:\n${formattedErrors}\n\nTente enviar o arquivo novamente ou use a digitação manual de notas.`);
+
+    // DEBUG TEMPORÁRIO: revela um trecho do texto extraído do PDF perto da 1ª negociação
+    // (ou o início do texto, se o padrão nem aparecer) para diagnosticar por que o parser
+    // regex não encontrou nenhuma linha "B3 RV LISTADO...". Remover depois de confirmado.
+    let debugSnippet = "";
+    if (extractedText) {
+      const idx = extractedText.search(/B3\s*RV\s*LISTADO/i);
+      if (idx !== -1) {
+        debugSnippet = `\n\n[DEBUG] Texto extraído perto da 1a negociação (tamanho total: ${extractedText.length}):\n"${extractedText.substring(idx, idx + 200).replace(/\n/g, "\\n")}"`;
+      } else {
+        debugSnippet = `\n\n[DEBUG] Padrão "B3 RV LISTADO" não encontrado no texto extraído (tamanho total: ${extractedText.length}). Início do texto:\n"${extractedText.substring(0, 300).replace(/\n/g, "\\n")}"`;
+      }
+    } else {
+      debugSnippet = `\n\n[DEBUG] Nenhum texto foi extraído do PDF (extractedText vazio).`;
+    }
+
+    throw new Error(`Falha no processamento inteligente. Relatório de erros por IA:\n${formattedErrors}\n\nTente enviar o arquivo novamente ou use a digitação manual de notas.${debugSnippet}`);
   }
 };
