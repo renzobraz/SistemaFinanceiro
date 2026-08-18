@@ -233,9 +233,12 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         if (sortConfig.key === 'date') {
             const dir = sortConfig.direction === 'asc' ? 1 : -1;
             
-            // Prefer createdAt for secondary sort if available
+            // Prefer createdAt for secondary sort if available (e substancialmente diferente —
+            // lotes de importacao/migracao em massa podem gravar o MESMO createdAt em
+            // milhares de linhas historicas, o que exige cair no desempate por ID abaixo)
             if (a.createdAt && b.createdAt) {
-                return (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) * dir;
+                const createdDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+                if (createdDiff !== 0) return createdDiff * dir;
             }
             // Fallback to ID
             return (a.id || '').localeCompare(b.id || '') * dir;
@@ -266,10 +269,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
             // (data desc), soh que invertido, para o saldo de cada linha bater com a
             // ordem em que ela aparece na tela por padrao.
             if (a.createdAt && b.createdAt) {
-                return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+                const createdDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+                // Lotes de importacao/migracao em massa podem gravar o MESMO createdAt em
+                // milhares de linhas historicas — nesse caso cai no desempate por ID abaixo.
+                if (createdDiff !== 0) return createdDiff;
             }
-            // Sem createdAt (comum em lancamentos antigos/importados): a listagem padrao
-            // (data desc) mostra o ID maior primeiro, entao aqui — ordem ascendente — o ID
+            // Sem createdAt, ou createdAt identico (comum em lancamentos antigos/importados):
+            // a listagem padrao (data desc) mostra o ID maior primeiro, entao aqui — ordem
+            // ascendente — o ID
             // maior precisa ser processado por ultimo, para ficar com o saldo final do dia
             // e continuar coincidindo com a linha exibida no topo do grupo.
             return (a.id || '').localeCompare(b.id || '');
