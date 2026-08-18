@@ -449,8 +449,10 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
     let cvFlag = "", marketType = "", specRaw = "", qty = 0, price = 0, total = 0, dcFlag = "";
     let matched = false;
 
-    // Formato 1: espaços entre campos (formato legado com espaços preservados)
-    const spaceMatch = lineClean.match(/B3\s+RV\s+LISTADO([CV])\s+(FRACIONARIO|VISTA)\s+(.+?)\s+(?:[@#D*][@ #D*]*)?\s*(\d+)\s+(?:R\$\s*)?([\d.]+,\d{2})\s+(?:R\$\s*)?([\d.]+,\d{2})\s+([DC])/i);
+    // Formato 1: espaços entre campos (formato legado com espaços preservados).
+    // "LISTADO\s*([CV])" tolera tanto "LISTADOC" (Itaú nativo, colado) quanto
+    // "LISTADO C" (exportação via ION, com espaço antes da letra C/V).
+    const spaceMatch = lineClean.match(/B3\s+RV\s+LISTADO\s*([CV])\s+(FRACIONARIO|VISTA)\s+(.+?)\s+(?:[@#D*][@ #D*]*)?\s*(\d+)\s+(?:R\$\s*)?([\d.]+,\d{2})\s+(?:R\$\s*)?([\d.]+,\d{2})\s+([DC])/i);
     if (spaceMatch) {
       cvFlag = spaceMatch[1].toUpperCase();
       dcFlag = spaceMatch[7].toUpperCase();
@@ -465,7 +467,7 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
       // Exemplo: B3 RV LISTADOCVISTABBSEGURIDADE ON      NM@30037,9011.370,00D
       // Estratégia: separar pelo char de obs (@#*), depois decompor os números de trás pra frente:
       // total (tem ponto de milhar) → preço (termina em ,dd) → quantidade (o que sobra)
-      const compactMatch = lineClean.match(/^B3\s+RV\s+LISTADO([CV])(FRACIONARIO|VISTA)(.+?)[@#*](\d[\d,.]+[DC])$/i);
+      const compactMatch = lineClean.match(/^B3\s+RV\s+LISTADO\s*([CV])\s*(FRACIONARIO|VISTA)(.+?)[@#*](\d[\d,.]+[DC])$/i);
       if (compactMatch) {
         cvFlag = compactMatch[1].toUpperCase();
         marketType = compactMatch[2].toUpperCase();
