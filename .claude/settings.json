@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs -0 ls -lt)",
+      "Bash(git stash *)",
+      "Bash(node -e \"const { Sheet } = require\\('lucide-react'\\); console.log\\(Sheet ? 'OK' : 'NOT FOUND'\\)\")",
+      "Bash(npx tsc *)",
+      "Bash(xargs grep -l \"nota\\\\|corretagem\\\\|brokerage\")",
+      "Bash(xargs grep -l \"parse.*pdf\\\\|extract.*pdf\")",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" status)",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" diff --stat)",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" log --oneline -5)",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" diff services/geminiService.ts components/BrokerageImport.tsx)",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" add components/BrokerageImport.tsx)",
+      "Bash(git -C c:/GitHub/SistemaFinanceiro commit -m ' *)",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" add services/geminiService.ts)",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" push origin main)",
+      "Bash(grep -n \"^          \\)$\\\\|^          }\\\\\\)$\" \"c:/GitHub/SistemaFinanceiro/components/BrokerageImport.tsx\")",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" diff components/BrokerageImport.tsx)",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" add api/server.ts)",
+      "Bash(git -C \"c:/GitHub/SistemaFinanceiro\" log --oneline -3)",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('hex'\\)\\)\")"
+    ]
+  }
+}
