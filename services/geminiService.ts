@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { financeService } from "./financeService";
-import { Participant } from "../types";
+import { Participant, FEE_CATEGORIES, FeeCategoryKey } from "../types";
 
 let aiInstance: any = null;
 
@@ -353,6 +353,36 @@ function findParticipant(
   return null;
 }
 
+const FEE_LABEL_PATTERNS: Record<FeeCategoryKey, RegExp> = {
+  liquidacao: /Taxa\s+de\s+Liquida[çc][ãa]o\s*\/?\s*CCP/i,
+  registro: /Taxa\s+de\s+Registro/i,
+  termoOpcoes: /Taxa\s+de\s+[Tt]ermo\s*\/?\s*[Oo]p[çc][õo]es/i,
+  emolumentos: /Emolumentos/i,
+  transferencia: /Taxa\s+de\s+Transfer[êe]ncias?\s+de\s+[Aa]tivos/i,
+  corretagem: /Corretagem(?!\s*\/)/i,
+  iss: /\bISS\b(?:\s*\([^)]*\))?/i,
+  irrf: /I\.?R\.?R\.?F\.?/i,
+  outras: /\bOutras\b/i,
+};
+
+// Extrai os valores individuais do "Resumo Financeiro" da nota (Taxa de Liquidação/CCP,
+// Registro, Termo/Opções, Emolumentos, Transferência, Corretagem, ISS, IRRF, Outras).
+// Cada linha da nota tem o formato "<label> ... <valor>,dd D|C" — como o flag D/C precisa
+// vir logo após o valor capturado, isso descarta com segurança números auxiliares que
+// aparecem antes na mesma linha (ex.: a base de cálculo do IRRF).
+function extractFeeBreakdown(normText: string): Partial<Record<FeeCategoryKey, number>> {
+  const result: Partial<Record<FeeCategoryKey, number>> = {};
+  for (const { key } of FEE_CATEGORIES) {
+    const labelPattern = FEE_LABEL_PATTERNS[key];
+    const lineRegex = new RegExp(`${labelPattern.source}[^\\n]*?([\\d.,]+,\\d{2})\\s+([DC])`, "i");
+    const match = normText.match(lineRegex);
+    if (match) {
+      result[key] = parsePtBrFloat(match[1]);
+    }
+  }
+  return result;
+}
+
 async function parseItauNoteWithRegex(text: string): Promise<any> {
   const participants = await financeService.getRegistry<Participant>('participants').catch(() => []);
   const sinacorMap = new Map<string, Participant>();
@@ -618,6 +648,35 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
   if (calculatedCosts < 0) calculatedCosts = 0;
   calculatedCosts = Number(calculatedCosts.toFixed(2));
 
+  const feeBreakdown = extractFeeBreakdown(normText);
+  const breakdownKeys = Object.keys(feeBreakdown) as FeeCategoryKey[];
+  let costsResult: { total: number; details: string; breakdown?: Partial<Record<FeeCategoryKey, number>> };
+
+  if (breakdownKeys.length > 0) {
+    const breakdownSum = Number(
+      breakdownKeys.reduce((sum, k) => sum + (feeBreakdown[k] || 0), 0).toFixed(2)
+    );
+    if (Math.abs(breakdownSum - calculatedCosts) <= 0.02) {
+      costsResult = {
+        total: breakdownSum,
+        details: "Taxas extraídas do Resumo Financeiro da nota",
+        breakdown: feeBreakdown
+      };
+    } else {
+      // A soma das taxas identificadas não bate com o saldo da nota — não há confiança
+      // suficiente para exibir o detalhamento, então mantém o comportamento anterior.
+      costsResult = {
+        total: calculatedCosts,
+        details: "Emolumentos e taxas de liquidação calculados por balanceamento de saldo"
+      };
+    }
+  } else {
+    costsResult = {
+      total: calculatedCosts,
+      details: "Emolumentos e taxas de liquidação calculados por balanceamento de saldo"
+    };
+  }
+
   return {
     metadata: {
       date: tradeDate,
@@ -637,10 +696,7 @@ async function parseItauNoteWithRegex(text: string): Promise<any> {
       otherCosts: calculatedCosts
     },
     trades: consolidatedTrades,
-    costs: {
-      total: calculatedCosts,
-      details: "Emolumentos e taxas de liquidação calculados por balanceamento de saldo"
-    }
+    costs: costsResult
   };
 }
 
@@ -963,7 +1019,21 @@ export const geminiService = {
          "total": number, 
          "assetName": "string" 
        }],
-      "costs": { "total": number, "details": "string" }
+      "costs": {
+        "total": number,
+        "details": "string",
+        "breakdown": {
+          "liquidacao": number,
+          "registro": number,
+          "termoOpcoes": number,
+          "emolumentos": number,
+          "transferencia": number,
+          "corretagem": number,
+          "iss": number,
+          "irrf": number,
+          "outras": number
+        }
+      }
     }
 
     INSTRUÇÕES EXTRAÇÃO DE TICKERS (CRÍTICO):
@@ -985,6 +1055,10 @@ export const geminiService = {
     - "totalSales" é a soma de todos os itens com 'V' (Venda) ou 'C' (Crédito).
     - "totalPurchases" é a soma de todos os itens com 'C' (Compra) ou 'D' (Débito) referentes a compras de ativos.
     - "costs.total" deve ser a soma de TODAS as taxas (Liquidação, Registro, Emolumentos, Corretagem, ISS, IRRF).
+    - "costs.breakdown" deve trazer o valor de cada taxa lida individualmente na seção "Resumo Financeiro" da nota
+      (Taxa de Liquidação/CCP, Taxa de Registro, Taxa de Termo/Opções, Emolumentos, Taxa de Transferência de Ativos,
+      Corretagem, ISS, IRRF). Use 0 para qualquer categoria que não aparecer na nota. Qualquer taxa que não se encaixe
+      nessas categorias vai em "outras". A soma de "costs.breakdown" DEVE ser igual a "costs.total".
     - No campo "assetName", use o nome descritivo completo lido na nota (ex: "FII RBRP PAX CI").
     
     REGRAS DE VALINAÇÂO:
@@ -1057,9 +1131,24 @@ export const geminiService = {
                     type: Type.OBJECT,
                     properties: {
                       total: { type: Type.NUMBER },
-                      details: { type: Type.STRING }
+                      details: { type: Type.STRING },
+                      breakdown: {
+                        type: Type.OBJECT,
+                        properties: {
+                          liquidacao: { type: Type.NUMBER },
+                          registro: { type: Type.NUMBER },
+                          termoOpcoes: { type: Type.NUMBER },
+                          emolumentos: { type: Type.NUMBER },
+                          transferencia: { type: Type.NUMBER },
+                          corretagem: { type: Type.NUMBER },
+                          iss: { type: Type.NUMBER },
+                          irrf: { type: Type.NUMBER },
+                          outras: { type: Type.NUMBER }
+                        },
+                        required: ["liquidacao", "registro", "termoOpcoes", "emolumentos", "transferencia", "corretagem", "iss", "irrf", "outras"]
+                      }
                     },
-                    required: ["total", "details"]
+                    required: ["total", "details", "breakdown"]
                   }
                 },
                 required: ["metadata", "summary", "trades", "costs"]

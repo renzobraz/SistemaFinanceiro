@@ -21,16 +21,18 @@ import {
 } from 'lucide-react';
 import { geminiService } from '../services/geminiService';
 import { financeService } from '../services/financeService';
-import { 
-  BrokerageNote, 
-  BrokerageTrade, 
-  Bank, 
-  Participant, 
-  Category, 
-  Wallet, 
+import {
+  BrokerageNote,
+  BrokerageTrade,
+  Bank,
+  Participant,
+  Category,
+  Wallet,
   CostCenter,
   Transaction,
-  Currency
+  Currency,
+  FEE_CATEGORIES,
+  FeeCategoryKey
 } from '../types';
 
 interface BrokerageImportProps {
@@ -354,6 +356,23 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     });
   };
 
+  const handleUpdateCostBreakdown = (key: FeeCategoryKey, newValueStr: string) => {
+    if (!parsedNote) return;
+    const cleanVal = parseFloat(newValueStr.replace(',', '.')) || 0;
+    const newBreakdown = { ...(parsedNote.costs?.breakdown || {}), [key]: cleanVal };
+    const newTotal = Number(
+      Object.values(newBreakdown).reduce((sum: number, v) => sum + (v || 0), 0).toFixed(2)
+    );
+    setParsedNote({
+      ...parsedNote,
+      costs: {
+        ...(parsedNote.costs || { details: "" }),
+        total: newTotal,
+        breakdown: newBreakdown
+      }
+    });
+  };
+
   const handleUpdateLiquidValue = (newValueStr: string) => {
     if (!parsedNote) return;
     const cleanVal = parseFloat(newValueStr.replace(',', '.')) || 0;
@@ -524,10 +543,13 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       newQty: number; newPrice: number; newTotal: number;
     }[] = [];
 
-    // Separate trades from tax emoluments transactions
+    const feeParticipantNames = new Set(FEE_CATEGORIES.map(f => f.participantName));
+    feeParticipantNames.add('Taxas Corretagem');
+
+    // Separate trades from tax/fee transactions
     const existingTrades = existingTransactions.filter(t => {
       const participant = participants.find(p => p.id === t.participantId);
-      return participant && participant.name !== 'Taxas Corretagem' && !!participant.ticker;
+      return participant && !feeParticipantNames.has(participant.name) && !!participant.ticker;
     });
 
     const parsedTrades = parsedNote.trades || [];
@@ -586,21 +608,72 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       }
     });
 
-    const existingFeesTx = existingTransactions.find(t => {
-      const participant = participants.find(p => p.id === t.participantId);
-      return participant?.name === 'Taxas Corretagem';
-    });
-    const parsedFee = parsedNote.costs?.total || 0;
-    const existingFeeVal = existingFeesTx?.value || 0;
-    const feeModified = Math.abs(parsedFee - existingFeeVal) > 0.01;
+    // Taxas: cada categoria pode já existir como transação própria, ou - para notas
+    // importadas antes desta funcionalidade - como um único lançamento legado
+    // "Taxas Corretagem".
+    let feeModified = false;
+    let oldFee = 0;
+    let newFee = 0;
+    let removeLegacyFeeTx: Transaction | undefined;
+    const feeChanges: { label: string; participantName: string; oldValue: number; newValue: number }[] = [];
+
+    if (parsedNote.costs?.breakdown) {
+      const breakdown = parsedNote.costs.breakdown;
+      const legacyFeeTx = existingTransactions.find(t => {
+        const p = participants.find(part => part.id === t.participantId);
+        return p?.name === 'Taxas Corretagem';
+      });
+      const hasPerCategoryExisting = FEE_CATEGORIES.some(({ participantName }) =>
+        existingTransactions.some(t => {
+          const p = participants.find(part => part.id === t.participantId);
+          return p?.name === participantName;
+        })
+      );
+
+      if (legacyFeeTx && !hasPerCategoryExisting) {
+        removeLegacyFeeTx = legacyFeeTx;
+      }
+
+      FEE_CATEGORIES.forEach(({ key, label, participantName }) => {
+        const existingTx = removeLegacyFeeTx ? undefined : existingTransactions.find(t => {
+          const p = participants.find(part => part.id === t.participantId);
+          return p?.name === participantName;
+        });
+        const oldValue = existingTx?.value || 0;
+        const newValue = breakdown[key] || 0;
+        oldFee += oldValue;
+        newFee += newValue;
+        if (Math.abs(oldValue - newValue) > 0.01) {
+          feeChanges.push({ label, participantName, oldValue, newValue });
+        }
+      });
+
+      if (removeLegacyFeeTx) {
+        oldFee += removeLegacyFeeTx.value || 0;
+      }
+
+      feeModified = feeChanges.length > 0 || !!removeLegacyFeeTx;
+    } else {
+      const existingFeesTx = existingTransactions.find(t => {
+        const participant = participants.find(p => p.id === t.participantId);
+        return participant?.name === 'Taxas Corretagem';
+      });
+      const parsedFee = parsedNote.costs?.total || 0;
+      const existingFeeVal = existingFeesTx?.value || 0;
+      oldFee = existingFeeVal;
+      newFee = parsedFee;
+      feeModified = Math.abs(parsedFee - existingFeeVal) > 0.01;
+    }
 
     return {
       added,
       removed,
       modified,
       feeModified,
-      oldFee: existingFeeVal,
-      newFee: parsedFee,
+      feeChanges,
+      removeLegacyFeeTx,
+      oldFee,
+      newFee,
       hasChanges: added.length > 0 || removed.length > 0 || modified.length > 0 || feeModified
     };
   }, [parsedNote, existingTransactions, participants]);
@@ -759,19 +832,50 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
       await financeService.saveTransaction(transaction);
     }
 
-    // Lança as taxas separadamente como solicitado para bater com o banco
-    if (parsedNote.costs?.total > 0) {
-      const feeCat = categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('despesa')) || categories[0];
-      
-      // Garante participante "Taxas Corretagem"
-      let feeParticipant = updatedParticipants.find(p => p.name === 'Taxas Corretagem');
-      if (!feeParticipant) {
-         feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
-           id: '',
-           name: 'Taxas Corretagem',
-         });
-      }
+    // Lança as taxas separadamente como solicitado para bater com o banco.
+    // Quando a nota foi detalhada (breakdown), cada categoria de taxa vira uma
+    // transação própria, para permitir relatórios por tipo de custo. Quando não
+    // há detalhamento (formato de nota não reconhecido), mantém o lançamento
+    // único de sempre, sem regressão.
+    const feeCat = categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('despesa')) || categories[0];
 
+    const ensureFeeParticipant = async (name: string): Promise<Participant> => {
+      let feeParticipant = updatedParticipants.find(p => p.name === name);
+      if (!feeParticipant) {
+        feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
+          id: '',
+          name,
+        });
+        updatedParticipants.push(feeParticipant);
+      }
+      return feeParticipant;
+    };
+
+    if (parsedNote.costs?.breakdown) {
+      for (const { key, label, participantName } of FEE_CATEGORIES) {
+        const value = parsedNote.costs.breakdown[key] || 0;
+        if (value <= 0) continue;
+
+        const feeParticipant = await ensureFeeParticipant(participantName);
+        const feesTransaction: Transaction = {
+          id: "",
+          date: finalSettlementDate,
+          description: `Taxas/Emolumentos NC ${finalNoteNumber} - ${label}`,
+          docNumber: finalNoteNumber,
+          value,
+          type: 'DEBIT',
+          status: 'PAID',
+          bankId: selectedBankId,
+          categoryId: feeCat.id,
+          participantId: feeParticipant.id,
+          costCenterId: selectedCostCenterId,
+          walletId: selectedWalletId
+        };
+
+        await financeService.saveTransaction(feesTransaction);
+      }
+    } else if (parsedNote.costs?.total > 0) {
+      const feeParticipant = await ensureFeeParticipant('Taxas Corretagem');
       const feesTransaction: Transaction = {
         id: "",
         date: finalSettlementDate,
@@ -782,11 +886,11 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
         status: 'PAID',
         bankId: selectedBankId,
         categoryId: feeCat.id,
-        participantId: feeParticipant.id, 
+        participantId: feeParticipant.id,
         costCenterId: selectedCostCenterId,
         walletId: selectedWalletId
       };
-      
+
       await financeService.saveTransaction(feesTransaction);
     }
 
@@ -983,50 +1087,105 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
 
       // 4. Update fees if modified
       if (differences.feeModified) {
-        const existingFeesTx = existingTransactions.find(t => {
-          const participant = participants.find(p => p.id === t.participantId);
-          return participant?.name === 'Taxas Corretagem';
-        });
+        // Se a nota anterior só tinha o lançamento único legado, remove-o antes de
+        // recriar como taxas individuais (evita duplicar o valor das taxas).
+        if (differences.removeLegacyFeeTx) {
+          await financeService.deleteTransactions([differences.removeLegacyFeeTx.id]);
+        }
 
-        if (differences.newFee > 0) {
-          if (existingFeesTx) {
-            const updatedFeeTx: Transaction = {
-              ...existingFeesTx,
-              value: differences.newFee,
-              date: finalSettlementDate,
-              bankId: selectedBankId,
-              walletId: selectedWalletId,
-              costCenterId: selectedCostCenterId
-            };
-            await financeService.saveTransaction(updatedFeeTx);
-          } else {
-            let feeParticipant = updatedParticipants.find(p => p.name === 'Taxas Corretagem');
-            if (!feeParticipant) {
-               feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
-                 id: '',
-                 name: 'Taxas Corretagem',
-               });
-            }
-            const feeCat = categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('despesa')) || categories[0];
+        const feeCat = categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('despesa')) || categories[0];
 
-            const feesTransaction: Transaction = {
-              id: "",
-              date: finalSettlementDate,
-              description: `Taxas/Emolumentos NC ${finalNoteNumber}`,
-              docNumber: finalNoteNumber,
-              value: differences.newFee,
-              type: 'DEBIT',
-              status: 'PAID',
-              bankId: selectedBankId,
-              categoryId: feeCat.id,
-              participantId: feeParticipant.id, 
-              costCenterId: selectedCostCenterId,
-              walletId: selectedWalletId
-            };
-            await financeService.saveTransaction(feesTransaction);
+        const ensureFeeParticipant = async (name: string): Promise<Participant> => {
+          let feeParticipant = updatedParticipants.find(p => p.name === name);
+          if (!feeParticipant) {
+            feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
+              id: '',
+              name,
+            });
+            updatedParticipants.push(feeParticipant);
           }
-        } else if (existingFeesTx) {
-          await financeService.deleteTransactions([existingFeesTx.id]);
+          return feeParticipant;
+        };
+
+        if (parsedNote.costs?.breakdown) {
+          for (const { key, label, participantName } of FEE_CATEGORIES) {
+            const newValue = parsedNote.costs.breakdown[key] || 0;
+            const existingTx = differences.removeLegacyFeeTx ? undefined : existingTransactions.find(t => {
+              const p = participants.find(part => part.id === t.participantId);
+              return p?.name === participantName;
+            });
+
+            if (newValue > 0) {
+              if (existingTx) {
+                const updatedFeeTx: Transaction = {
+                  ...existingTx,
+                  value: newValue,
+                  date: finalSettlementDate,
+                  bankId: selectedBankId,
+                  walletId: selectedWalletId,
+                  costCenterId: selectedCostCenterId
+                };
+                await financeService.saveTransaction(updatedFeeTx);
+              } else {
+                const feeParticipant = await ensureFeeParticipant(participantName);
+                const feesTransaction: Transaction = {
+                  id: "",
+                  date: finalSettlementDate,
+                  description: `Taxas/Emolumentos NC ${finalNoteNumber} - ${label}`,
+                  docNumber: finalNoteNumber,
+                  value: newValue,
+                  type: 'DEBIT',
+                  status: 'PAID',
+                  bankId: selectedBankId,
+                  categoryId: feeCat.id,
+                  participantId: feeParticipant.id,
+                  costCenterId: selectedCostCenterId,
+                  walletId: selectedWalletId
+                };
+                await financeService.saveTransaction(feesTransaction);
+              }
+            } else if (existingTx) {
+              await financeService.deleteTransactions([existingTx.id]);
+            }
+          }
+        } else {
+          const existingFeesTx = existingTransactions.find(t => {
+            const participant = participants.find(p => p.id === t.participantId);
+            return participant?.name === 'Taxas Corretagem';
+          });
+
+          if (differences.newFee > 0) {
+            if (existingFeesTx) {
+              const updatedFeeTx: Transaction = {
+                ...existingFeesTx,
+                value: differences.newFee,
+                date: finalSettlementDate,
+                bankId: selectedBankId,
+                walletId: selectedWalletId,
+                costCenterId: selectedCostCenterId
+              };
+              await financeService.saveTransaction(updatedFeeTx);
+            } else {
+              const feeParticipant = await ensureFeeParticipant('Taxas Corretagem');
+              const feesTransaction: Transaction = {
+                id: "",
+                date: finalSettlementDate,
+                description: `Taxas/Emolumentos NC ${finalNoteNumber}`,
+                docNumber: finalNoteNumber,
+                value: differences.newFee,
+                type: 'DEBIT',
+                status: 'PAID',
+                bankId: selectedBankId,
+                categoryId: feeCat.id,
+                participantId: feeParticipant.id,
+                costCenterId: selectedCostCenterId,
+                walletId: selectedWalletId
+              };
+              await financeService.saveTransaction(feesTransaction);
+            }
+          } else if (existingFeesTx) {
+            await financeService.deleteTransactions([existingFeesTx.id]);
+          }
         }
       }
 
@@ -1672,22 +1831,51 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                             </tr>
                           );
                         })}
-                        <tr className="bg-slate-50/50">
-                          <td colSpan={5} className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Taxas / Emolumentos / IRRF</td>
-                          <td className="px-6 py-4 text-right">
-                            <div className="inline-flex items-center gap-1">
-                              <span className="text-[10px] text-rose-400">R$</span>
-                              <input
-                                type="number"
-                                step="any"
-                                value={parsedNote.costs?.total || 0}
-                                onChange={(e) => handleUpdateCosts(e.target.value)}
-                                className="w-24 bg-white border border-rose-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:ring-1 focus:ring-blue-500 shadow-sm text-rose-600"
-                                placeholder="Taxas"
-                              />
-                            </div>
-                          </td>
-                        </tr>
+                        {parsedNote.costs?.breakdown ? (
+                          <>
+                            {FEE_CATEGORIES.filter(({ key }) => !!parsedNote.costs?.breakdown?.[key]).map(({ key, label }) => (
+                              <tr key={key} className="bg-slate-50/50">
+                                <td colSpan={5} className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</td>
+                                <td className="px-6 py-4 text-right">
+                                  <div className="inline-flex items-center gap-1">
+                                    <span className="text-[10px] text-rose-400">R$</span>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      value={parsedNote.costs?.breakdown?.[key] || 0}
+                                      onChange={(e) => handleUpdateCostBreakdown(key, e.target.value)}
+                                      className="w-24 bg-white border border-rose-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:ring-1 focus:ring-blue-500 shadow-sm text-rose-600"
+                                      placeholder={label}
+                                    />
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                            <tr className="bg-slate-100/70">
+                              <td colSpan={5} className="px-6 py-3 text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Taxas</td>
+                              <td className="px-6 py-3 text-right text-xs font-black text-rose-600">
+                                R$ {(parsedNote.costs?.total || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          </>
+                        ) : (
+                          <tr className="bg-slate-50/50">
+                            <td colSpan={5} className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Taxas / Emolumentos / IRRF</td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="inline-flex items-center gap-1">
+                                <span className="text-[10px] text-rose-400">R$</span>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={parsedNote.costs?.total || 0}
+                                  onChange={(e) => handleUpdateCosts(e.target.value)}
+                                  className="w-24 bg-white border border-rose-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:ring-1 focus:ring-blue-500 shadow-sm text-rose-600"
+                                  placeholder="Taxas"
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1960,10 +2148,26 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                   {differences.feeModified && (
                     <div className="space-y-1 bg-slate-50 border border-slate-200 p-4 rounded-2xl text-xs text-slate-600 font-bold">
                       <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider">Diferença de Taxas/Emolumentos</h4>
-                      <div className="flex justify-between py-1">
-                        <span className="text-slate-500 font-bold">Valor Salvo: R$ {differences.oldFee.toFixed(2)}</span>
-                        <span className="text-blue-700 font-black">Novo Valor: R$ {differences.newFee.toFixed(2)}</span>
-                      </div>
+                      {differences.feeChanges.length > 0 ? (
+                        <>
+                          {differences.removeLegacyFeeTx && (
+                            <div className="py-1 text-amber-600">
+                              Lançamento único anterior (R$ {differences.removeLegacyFeeTx.value.toFixed(2)}) será substituído pelas taxas detalhadas abaixo.
+                            </div>
+                          )}
+                          {differences.feeChanges.map(fc => (
+                            <div key={fc.participantName} className="flex justify-between py-1">
+                              <span className="text-slate-500 font-bold">{fc.label}: R$ {fc.oldValue.toFixed(2)}</span>
+                              <span className="text-blue-700 font-black">Novo Valor: R$ {fc.newValue.toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </>
+                      ) : (
+                        <div className="flex justify-between py-1">
+                          <span className="text-slate-500 font-bold">Valor Salvo: R$ {differences.oldFee.toFixed(2)}</span>
+                          <span className="text-blue-700 font-black">Novo Valor: R$ {differences.newFee.toFixed(2)}</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -197,6 +197,37 @@ export interface BrokerageTrade {
   managedPortfolioId?: string;
 }
 
+// Categorias de taxa do "Resumo Financeiro" da nota de corretagem (padrão B3/Sinacor),
+// na mesma ordem em que aparecem na nota.
+export type FeeCategoryKey =
+  | 'liquidacao'
+  | 'registro'
+  | 'termoOpcoes'
+  | 'emolumentos'
+  | 'transferencia'
+  | 'corretagem'
+  | 'iss'
+  | 'irrf'
+  | 'outras';
+
+export interface FeeCategoryDef {
+  key: FeeCategoryKey;
+  label: string;
+  participantName: string;
+}
+
+export const FEE_CATEGORIES: FeeCategoryDef[] = [
+  { key: 'liquidacao', label: 'Taxa de Liquidação/CCP', participantName: 'Taxa de Liquidação/CCP' },
+  { key: 'registro', label: 'Taxa de Registro', participantName: 'Taxa de Registro' },
+  { key: 'termoOpcoes', label: 'Taxa de Termo/Opções', participantName: 'Taxa de Termo/Opções' },
+  { key: 'emolumentos', label: 'Emolumentos', participantName: 'Emolumentos' },
+  { key: 'transferencia', label: 'Taxa de Transferência de Ativos', participantName: 'Taxa de Transferência de Ativos' },
+  { key: 'corretagem', label: 'Corretagem', participantName: 'Corretagem' },
+  { key: 'iss', label: 'ISS', participantName: 'ISS' },
+  { key: 'irrf', label: 'I.R.R.F.', participantName: 'IRRF' },
+  { key: 'outras', label: 'Outras', participantName: 'Outras Taxas (Corretagem)' },
+];
+
 export interface BrokerageNote {
   metadata: {
     date: string;
@@ -219,6 +250,7 @@ export interface BrokerageNote {
   costs: {
     total: number;
     details: string;
+    breakdown?: Partial<Record<FeeCategoryKey, number>>;
   };
 }
 
