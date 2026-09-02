@@ -1,18 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { ParticipantAutocomplete } from './ParticipantAutocomplete';
 import { motion } from 'motion/react';
-import { 
-  FileUp, 
-  Loader2, 
-  X, 
-  CheckCircle2, 
-  AlertCircle, 
-  ChevronDown, 
-  ChevronUp, 
-  AlertTriangle 
+import {
+  FileUp,
+  Loader2,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle
 } from 'lucide-react';
 import { financeService } from '../services/financeService';
-import { extractStatementAnchors, extractStatementWithAI, extractStatementWithGemini, reconcileStatement } from '../services/cardStatementService';
+import { extractStatementAnchors, extractStatementWithAI, extractStatementWithGemini, reconcileStatement, parseFaturaXlsxRows } from '../services/cardStatementService';
 import { reconcileStatementWithPayables } from '../services/reconciliationService';
 import type { CardStatement, CardStatementItem, ReconciliationResult, MerchantAlias, Bank, Category, CostCenter, Wallet, Transaction, Participant } from '../types';
 
@@ -138,14 +139,17 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     NEW: true,
   });
 
+  const isSupportedStatementFile = (f: File) =>
+    f.type === 'application/pdf' || f.name.endsWith('.csv') || f.name.endsWith('.xlsx');
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
-      if (selectedFile.type === 'application/pdf' || selectedFile.name.endsWith('.csv')) {
+      if (isSupportedStatementFile(selectedFile)) {
         setFile(selectedFile);
         setError(null);
       } else {
-        setError('Por favor, selecione apenas arquivos PDF.');
+        setError('Por favor, selecione apenas arquivos PDF, CSV ou XLSX.');
       }
     }
   };
@@ -158,11 +162,11 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const selectedFile = e.dataTransfer.files[0];
-      if (selectedFile.type === 'application/pdf' || selectedFile.name.endsWith('.csv')) {
+      if (isSupportedStatementFile(selectedFile)) {
         setFile(selectedFile);
         setError(null);
       } else {
-        setError('Por favor, selecione apenas arquivos PDF.');
+        setError('Por favor, selecione apenas arquivos PDF, CSV ou XLSX.');
       }
     }
   };
@@ -171,6 +175,86 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     bypassDuplicateCheck.current = true;
     setDuplicateWarning(null);
     handleProcess();
+  };
+
+  // Concilia o extrato já parseado com Contas a Pagar e monta o estado inicial da
+  // revisão. Compartilhado pelas três vias de importação (PDF, CSV e XLSX).
+  const finishParsing = async (parsedStatement: CardStatement) => {
+    setProgressMsg('Conciliando com Contas a Pagar...');
+    const aliases: MerchantAlias[] = await financeService.getMerchantAliases();
+    const reconResult = await reconcileStatementWithPayables(
+      parsedStatement,
+      selectedBankId,
+      aliases,
+      (bankId) => financeService.getTransactions({ bankId, status: 'PENDING' })
+    );
+
+    setStatement(parsedStatement);
+    setReconciliation(reconResult);
+
+    const initialMatchedCandidates: Record<number, string> = {};
+    const initialCandidates: Record<number, string> = {};
+    const initialNews: Record<number, boolean> = {};
+    const initialCats: Record<number, string> = {};
+    const initialCCs: Record<number, string> = {};
+    const initialParts: Record<number, string> = {};
+    const initialGenerateFuture: Record<number, boolean> = {};
+
+    reconResult.items.forEach((item, index) => {
+      if (item.status === 'MATCHED') {
+        initialMatchedCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
+      } else if (item.status === 'UNCERTAIN') {
+        const installNum = item.statementItem.installmentNumber;
+        const installTotal = item.statementItem.installmentTotal;
+        let bestCandidate = item.candidates?.[0]?.transaction?.id || 'NEW';
+        if (installNum && installTotal && item.candidates) {
+          const matchingCandidate = item.candidates.find(c => {
+            const desc = c.transaction?.description || '';
+            return desc.includes('(' + installNum + '/' + installTotal + ')') ||
+                   desc.includes(installNum + '/' + installTotal);
+          });
+          if (matchingCandidate) bestCandidate = matchingCandidate.transaction?.id || 'NEW';
+        }
+        initialCandidates[index] = bestCandidate;
+      } else if (item.status === 'NEW') {
+        initialNews[index] = true;
+        const hasRemainingInstallments =
+          item.statementItem.installmentNumber !== undefined &&
+          item.statementItem.installmentTotal !== undefined &&
+          item.statementItem.installmentTotal > item.statementItem.installmentNumber;
+        if (hasRemainingInstallments) {
+          initialGenerateFuture[index] = true;
+        }
+      }
+
+      const lowerDesc = item.statementItem.rawDescription.toLowerCase();
+      const matchedAlias = aliases.find(alias => {
+        if (!alias.rawPattern) return false;
+        const escaped = alias.rawPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        try {
+          const regex = new RegExp(escaped, 'i');
+          return regex.test(lowerDesc);
+        } catch {
+          return lowerDesc.includes(alias.rawPattern.toLowerCase());
+        }
+      });
+
+      if (matchedAlias) {
+        if (matchedAlias.defaultCategoryId) initialCats[index] = matchedAlias.defaultCategoryId;
+        if (matchedAlias.defaultCostCenterId) initialCCs[index] = matchedAlias.defaultCostCenterId;
+        if (matchedAlias.defaultParticipantId) initialParts[index] = matchedAlias.defaultParticipantId;
+      }
+    });
+
+    setSelectedMatchedCandidates(initialMatchedCandidates);
+    setSelectedCandidates(initialCandidates);
+    setCreatedNews(initialNews);
+    setItemCategories(initialCats);
+    setItemCostCenters(initialCCs);
+    setItemParticipants(initialParts);
+    setGenerateFutureInstallments(initialGenerateFuture);
+
+    setStep('review');
   };
 
   const handleProcess = async () => {
@@ -245,71 +329,43 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           };
 
           // Pular direto para conciliação
-          setProgressMsg('Conciliando com Contas a Pagar...');
-          const aliases: MerchantAlias[] = await financeService.getMerchantAliases();
-          const reconResult = await reconcileStatementWithPayables(
-            parsedStatement,
-            selectedBankId,
-            aliases,
-            (bankId) => financeService.getTransactions({ bankId, status: 'PENDING' })
-          );
-          setStatement(parsedStatement);
-          setReconciliation(reconResult);
-          const initialMatchedCandidates: Record<number, string> = {};
-          const initialCandidates: Record<number, string> = {};
-          const initialNews: Record<number, boolean> = {};
-          const initialCats: Record<number, string> = {};
-          const initialCCs: Record<number, string> = {};
-          const initialParts: Record<number, string> = {};
-          const initialGenerateFuture: Record<number, boolean> = {};
-          reconResult.items.forEach((item, index) => {
-            if (item.status === 'MATCHED') {
-              initialMatchedCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
-            } else if (item.status === 'UNCERTAIN') {
-              const installNum = item.statementItem.installmentNumber;
-              const installTotal = item.statementItem.installmentTotal;
-              let bestCandidate = item.candidates?.[0]?.transaction?.id || 'NEW';
-              if (installNum && installTotal && item.candidates) {
-                const matchingCandidate = item.candidates.find(c => {
-                  const desc = c.transaction?.description || '';
-                  return desc.includes('(' + installNum + '/' + installTotal + ')') ||
-                         desc.includes(installNum + '/' + installTotal);
-                });
-                if (matchingCandidate) bestCandidate = matchingCandidate.transaction?.id || 'NEW';
-              }
-              initialCandidates[index] = bestCandidate;
-            } else if (item.status === 'NEW') {
-              initialNews[index] = true;
-              if (item.statementItem.installmentTotal !== undefined && item.statementItem.installmentNumber !== undefined && item.statementItem.installmentTotal > item.statementItem.installmentNumber) {
-                initialGenerateFuture[index] = true;
-              }
-            }
-            const lowerDesc = item.statementItem.rawDescription.toLowerCase();
-            const matchedAlias = aliases.find(alias => {
-              if (!alias.rawPattern) return false;
-              const escaped = alias.rawPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              try { return new RegExp(escaped, 'i').test(lowerDesc); }
-              catch { return lowerDesc.includes(alias.rawPattern.toLowerCase()); }
-            });
-            if (matchedAlias) {
-              if (matchedAlias.defaultCategoryId) initialCats[index] = matchedAlias.defaultCategoryId;
-              if (matchedAlias.defaultCostCenterId) initialCCs[index] = matchedAlias.defaultCostCenterId;
-              if (matchedAlias.defaultParticipantId) initialParts[index] = matchedAlias.defaultParticipantId;
-            }
-          });
-          setSelectedMatchedCandidates(initialMatchedCandidates);
-          setSelectedCandidates(initialCandidates);
-          setCreatedNews(initialNews);
-          setItemCategories(initialCats);
-          setItemCostCenters(initialCCs);
-          setItemParticipants(initialParts);
-          setGenerateFutureInstallments(initialGenerateFuture);
-          setStep('review');
+          await finishParsing(parsedStatement);
           return;
         } else {
           const errData = await regexRes.json().catch(() => ({}));
           throw new Error(errData.error || 'Erro ao processar CSV');
         }
+      }
+
+      // Se for XLSX, ler a planilha já estruturada e pular direto para a
+      // conciliação, sem precisar de OCR/IA (mesmo espírito do caminho CSV).
+      if (file.name.endsWith('.xlsx')) {
+        const base64 = await fileToBase64(file);
+
+        if (!bypassDuplicateCheck.current) {
+          const fileHash = hashCsv(base64);
+          const storedHashes: Array<{ hash: string; fileName: string; importedAt: string }> =
+            JSON.parse(localStorage.getItem('imported_csv_hashes') || '[]');
+          const existing = storedHashes.find(h => h.hash === fileHash);
+          if (existing) {
+            setDuplicateWarning(existing);
+            return;
+          }
+          setCurrentCsvHash(fileHash);
+        }
+        bypassDuplicateCheck.current = false;
+
+        setStep('processing');
+        setProgressMsg('Lendo planilha...');
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+
+        const parsedStatement = parseFaturaXlsxRows(rows);
+
+        await finishParsing(parsedStatement);
+        return;
       }
 
       setStep('processing');
@@ -426,82 +482,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       }
 
       // 5. Conciliando com Contas a Pagar
-      setProgressMsg('Conciliando com Contas a Pagar...');
-      const aliases: MerchantAlias[] = await financeService.getMerchantAliases();
-      const reconResult = await reconcileStatementWithPayables(
-        parsedStatement,
-        selectedBankId,
-        aliases,
-        (bankId) => financeService.getTransactions({ bankId, status: 'PENDING' })
-      );
-
-      setStatement(parsedStatement);
-      setReconciliation(reconResult);
-
-      const initialMatchedCandidates: Record<number, string> = {};
-      const initialCandidates: Record<number, string> = {};
-      const initialNews: Record<number, boolean> = {};
-      const initialCats: Record<number, string> = {};
-      const initialCCs: Record<number, string> = {};
-      const initialParts: Record<number, string> = {};
-      const initialGenerateFuture: Record<number, boolean> = {};
-
-      reconResult.items.forEach((item, index) => {
-        if (item.status === 'MATCHED') {
-          const topCandidate = item.candidates?.[0]?.transaction?.id || 'NEW';
-          initialMatchedCandidates[index] = topCandidate;
-        } else if (item.status === 'UNCERTAIN') {
-          const installNum = item.statementItem.installmentNumber;
-          const installTotal = item.statementItem.installmentTotal;
-          let bestCandidate = item.candidates?.[0]?.transaction?.id || 'NEW';
-          if (installNum && installTotal && item.candidates) {
-            const matchingCandidate = item.candidates.find(c => {
-              const desc = c.transaction?.description || '';
-              return desc.includes('(' + installNum + '/' + installTotal + ')') ||
-                     desc.includes(installNum + '/' + installTotal);
-            });
-            if (matchingCandidate) bestCandidate = matchingCandidate.transaction?.id || 'NEW';
-          }
-          initialCandidates[index] = bestCandidate;
-        } else if (item.status === 'NEW') {
-          initialNews[index] = true;
-          const hasRemainingInstallments =
-            item.statementItem.installmentNumber !== undefined &&
-            item.statementItem.installmentTotal !== undefined &&
-            item.statementItem.installmentTotal > item.statementItem.installmentNumber;
-          if (hasRemainingInstallments) {
-            initialGenerateFuture[index] = true;
-          }
-        }
-
-        const lowerDesc = item.statementItem.rawDescription.toLowerCase();
-        const matchedAlias = aliases.find(alias => {
-          if (!alias.rawPattern) return false;
-          const escaped = alias.rawPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          try {
-            const regex = new RegExp(escaped, 'i');
-            return regex.test(lowerDesc);
-          } catch {
-            return lowerDesc.includes(alias.rawPattern.toLowerCase());
-          }
-        });
-
-        if (matchedAlias) {
-          if (matchedAlias.defaultCategoryId) initialCats[index] = matchedAlias.defaultCategoryId;
-          if (matchedAlias.defaultCostCenterId) initialCCs[index] = matchedAlias.defaultCostCenterId;
-          if (matchedAlias.defaultParticipantId) initialParts[index] = matchedAlias.defaultParticipantId;
-        }
-      });
-
-      setSelectedMatchedCandidates(initialMatchedCandidates);
-      setSelectedCandidates(initialCandidates);
-      setCreatedNews(initialNews);
-      setItemCategories(initialCats);
-      setItemCostCenters(initialCCs);
-      setItemParticipants(initialParts);
-      setGenerateFutureInstallments(initialGenerateFuture);
-
-      setStep('review');
+      await finishParsing(parsedStatement);
     } catch (err: any) {
       console.error(err);
       const msg = typeof err === 'string' ? err
@@ -744,9 +725,9 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 onDrop={handleDrop}
                 className="border-2 border-dashed border-slate-200 rounded-3xl p-10 text-center hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer group relative"
               >
-                <input 
-                  type="file" 
-                  accept="application/pdf,.csv" 
+                <input
+                  type="file"
+                  accept="application/pdf,.csv,.xlsx"
                   onChange={handleFileChange}
                   className="absolute inset-0 opacity-0 cursor-pointer"
                 />
@@ -756,7 +737,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   </div>
                   <div>
                     <p className="text-lg font-bold text-slate-700">Arraste a fatura PDF aqui ou clique para selecionar</p>
-                    <p className="text-sm text-slate-400">PDF original ou CSV exportado do app Itaú</p>
+                    <p className="text-sm text-slate-400">PDF original, CSV ou XLSX exportado do app Itaú</p>
                   </div>
                 </div>
               </div>

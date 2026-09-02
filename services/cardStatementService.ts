@@ -216,3 +216,101 @@ export function reconcileStatement(aiData: any, anchors: StatementAnchors): Card
     grandTotalsMatch
   };
 }
+
+/**
+ * 4a. Converte um valor no formato "americano" usado na exportação XLSX do app
+ * Itaú (vírgula = milhar, ponto = decimal), ex.: "R$ 40,080.04" -> 40080.04,
+ * "R$ -43,731.45" -> -43731.45.
+ */
+export function parseUsStyleReais(str: string): number {
+  if (!str) return 0;
+  const cleaned = String(str).replace(/[^\d.,-]/g, "").replace(/,/g, "");
+  return parseFloat(cleaned) || 0;
+}
+
+/**
+ * 4b. Constrói um CardStatement a partir das linhas já lidas de uma fatura
+ * exportada em XLSX pelo app Itaú (funciona tanto para "Fatura Paga" quanto
+ * "Fatura Aberta" — o layout de colunas é o mesmo, só muda o texto do banner).
+ * Diferente do PDF/CSV, os dados já vêm estruturados por coluna, então não há
+ * necessidade de regex de texto livre nem de fallback por IA.
+ */
+export function parseFaturaXlsxRows(rows: any[][]): CardStatement {
+  const norm = (v: any) => (v === undefined || v === null ? "" : String(v).trim());
+
+  let dueDate = "";
+  let statementTotal = 0;
+
+  const cardHeaderIndex = rows.findIndex(r => norm(r[1]) === "Cartão");
+  if (cardHeaderIndex !== -1) {
+    const dataRow = rows.slice(cardHeaderIndex + 1).find(r => norm(r[1]) !== "");
+    if (dataRow) {
+      statementTotal = parseUsStyleReais(norm(dataRow[6]));
+      dueDate = parseDateToIso(norm(dataRow[8]));
+    }
+  }
+
+  const tableHeaderIndex = rows.findIndex(r => norm(r[1]) === "Data" && norm(r[2]) === "Lançamento");
+  const cardMap = new Map<string, CardStatementItem[]>();
+  const holderNames = new Map<string, string>();
+
+  if (tableHeaderIndex !== -1) {
+    for (let i = tableHeaderIndex + 1; i < rows.length; i++) {
+      const row = rows[i];
+      const dataStr = norm(row[1]);
+      if (!dataStr || dataStr.toLowerCase() === "subtotal") break;
+
+      const rawDescription = norm(row[2]);
+      // "Pagamento Efetuado" é a quitação da fatura ANTERIOR, não uma cobrança
+      // desta fatura — o próprio total impresso pelo Itaú já exclui essa linha
+      // (confirmado batendo o total contra duas faturas reais).
+      if (rawDescription.toLowerCase() === "pagamento efetuado") continue;
+
+      const valor = parseUsStyleReais(norm(row[4]));
+      const cardLast4 = norm(row[9]).replace(/\D/g, "");
+      const holderName = norm(row[7]);
+
+      const installmentMatch = norm(row[3]).match(/Parcela\s+(\d+)\s+de\s+(\d+)/i);
+
+      const item: CardStatementItem = {
+        rawDescription,
+        purchaseDate: parseDateToIso(dataStr),
+        value: Math.abs(valor),
+        isRefund: valor < 0,
+        installmentNumber: installmentMatch ? Number(installmentMatch[1]) : undefined,
+        installmentTotal: installmentMatch ? Number(installmentMatch[2]) : undefined,
+      };
+
+      if (!cardMap.has(cardLast4)) cardMap.set(cardLast4, []);
+      cardMap.get(cardLast4)!.push(item);
+      if (holderName) holderNames.set(cardLast4, holderName);
+    }
+  }
+
+  const cards: CardSection[] = Array.from(cardMap.entries()).map(([cardLast4, items]) => {
+    const parsedTotal = Math.round(
+      items.reduce((acc, i) => (i.isRefund ? acc - i.value : acc + i.value), 0) * 100
+    ) / 100;
+    return {
+      cardLast4,
+      holderName: holderNames.get(cardLast4) || "",
+      printedTotal: parsedTotal,
+      anchorTotal: undefined,
+      parsedTotal,
+      totalsMatch: true,
+      items,
+    };
+  });
+
+  const grandParsedTotal = Math.round(cards.reduce((acc, c) => acc + c.parsedTotal, 0) * 100) / 100;
+  const grandAnchorTotal = statementTotal || grandParsedTotal;
+
+  return {
+    issuer: "Itau",
+    metadata: { dueDate, closingDate: "", statementTotal: grandAnchorTotal },
+    cards,
+    grandParsedTotal,
+    grandAnchorTotal,
+    grandTotalsMatch: Math.abs(grandParsedTotal - grandAnchorTotal) <= 0.02,
+  };
+}
