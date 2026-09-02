@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { Plus, Trash2, Edit2, Save, X, Upload, Download, Search, Tag, Loader2, Wand2, Sparkles, ChevronUp, ChevronDown, ArrowUpDown, Archive, ArchiveRestore, Eye, EyeOff, Users } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Upload, Download, Search, Tag, Loader2, Wand2, Sparkles, ChevronUp, ChevronDown, ArrowUpDown, Archive, ArchiveRestore, Eye, EyeOff, Users, Wallet } from 'lucide-react';
 import { BaseEntity, Currency, WalletType } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -19,6 +19,9 @@ interface RegistryManagerProps {
   onGetIgnored?: () => Promise<Array<{ id: string, name1: string, name2: string, pairId: string }>>;
   onRemoveIgnored?: (pairId: string) => Promise<void>;
   onAutoFillTickers?: () => Promise<number>;
+  onFindWalletMismatches?: () => Promise<Array<{ participant: BaseEntity & { [key: string]: any }, actualWalletIds: string[] }>>;
+  onFixParticipantWallet?: (participant: BaseEntity & { [key: string]: any }, newWalletId: string | undefined) => Promise<void>;
+  wallets?: BaseEntity[];
   foreignItems?: BaseEntity[];
   foreignLabel?: string;
   foreignKey?: string;
@@ -43,6 +46,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   onGetIgnored,
   onRemoveIgnored,
   onAutoFillTickers,
+  onFindWalletMismatches,
+  onFixParticipantWallet,
+  wallets,
   foreignItems,
   foreignLabel,
   foreignKey,
@@ -73,6 +79,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [ignoredUnifications, setIgnoredUnifications] = useState<Array<{ id: string, name1: string, name2: string, pairId: string }>>([]);
   const [isShowingIgnored, setIsShowingIgnored] = useState(false);
   const [isSearchingSimilar, setIsSearchingSimilar] = useState(false);
+  const [walletMismatches, setWalletMismatches] = useState<Array<{ participant: any, actualWalletIds: string[] }>>([]);
+  const [isSearchingWalletMismatches, setIsSearchingWalletMismatches] = useState(false);
+  const [fixingParticipantId, setFixingParticipantId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'ARCHIVED'>('ACTIVE');
   const [isAutoFilling, setIsAutoFilling] = useState(false);
   const [nameFilter, setNameFilter] = useState('');
@@ -454,6 +463,36 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
     }
   };
 
+  const handleFindWalletMismatches = async () => {
+    if (onFindWalletMismatches) {
+      setIsSearchingWalletMismatches(true);
+      try {
+        const results = await onFindWalletMismatches();
+        setWalletMismatches(results);
+        if (results.length === 0) {
+          alert('Nenhuma divergência de carteira encontrada.');
+        }
+      } catch (error: any) {
+        alert('Erro ao verificar carteiras: ' + error.message);
+      } finally {
+        setIsSearchingWalletMismatches(false);
+      }
+    }
+  };
+
+  const handleFixParticipantWallet = async (participant: any, newWalletId: string | undefined) => {
+    if (!onFixParticipantWallet) return;
+    setFixingParticipantId(participant.id);
+    try {
+      await onFixParticipantWallet(participant, newWalletId);
+      setWalletMismatches(prev => prev.filter(m => m.participant.id !== participant.id));
+    } catch (error: any) {
+      alert('Erro ao corrigir carteira: ' + error.message);
+    } finally {
+      setFixingParticipantId(null);
+    }
+  };
+
   const handleMerge = async (masterId: string, duplicateIds: string[]) => {
     if (onMerge) {
       setIsSaving(true);
@@ -684,13 +723,23 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                 </button>
               )}
               {hasEditPermission && onFindSimilar && (
-                <button 
+                <button
                   onClick={handleFindSimilar}
                   disabled={isSearchingSimilar}
-                  className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors disabled:opacity-50" 
+                  className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors disabled:opacity-50"
                   title="Sugerir Unificação (Nomes Parecidos)"
                 >
                   {isSearchingSimilar ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+                </button>
+              )}
+              {hasEditPermission && isAssetRegistry && onFindWalletMismatches && (
+                <button
+                  onClick={handleFindWalletMismatches}
+                  disabled={isSearchingWalletMismatches}
+                  className="p-2 text-teal-600 bg-teal-50 hover:bg-teal-100 rounded-lg transition-colors disabled:opacity-50"
+                  title="Verificar Carteiras (participantes com carteira divergente das movimentações)"
+                >
+                  {isSearchingWalletMismatches ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wallet className="w-5 h-5" />}
                 </button>
               )}
               {hasCreatePermission && (
@@ -1466,6 +1515,82 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
             <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end">
               <button 
                 onClick={() => setSimilarGroups([])}
+                className="px-6 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-bold hover:bg-slate-100 transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Divergências de Carteira */}
+      {walletMismatches.length > 0 && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden transform transition-all">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">Divergências de Carteira</h3>
+                <p className="text-sm text-slate-500">
+                  Participantes cuja carteira cadastrada não bate com as carteiras onde eles têm movimentações reais.
+                </p>
+              </div>
+              <button onClick={() => setWalletMismatches([])} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                <X className="w-6 h-6 text-slate-400" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {walletMismatches.map(({ participant, actualWalletIds }) => {
+                const registeredWalletName = participant.walletId
+                  ? (wallets?.find(w => w.id === participant.walletId)?.name || 'carteira desconhecida')
+                  : 'Nenhuma (global)';
+                const actualWalletNames = actualWalletIds.map(id => wallets?.find(w => w.id === id)?.name || id);
+                const isFixing = fixingParticipantId === participant.id;
+                const singleOtherWallet = actualWalletIds.length === 1 && actualWalletIds[0] !== participant.walletId
+                  ? actualWalletIds[0]
+                  : null;
+
+                return (
+                  <div key={participant.id} className="bg-slate-50 rounded-xl p-4 border border-slate-200 shadow-sm">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="font-bold text-sm text-slate-800">{participant.name}</div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          Cadastrado em: <span className="font-semibold">{registeredWalletName}</span>
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          Movimentações reais em: <span className="font-semibold">{actualWalletNames.join(', ')}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {singleOtherWallet && (
+                          <button
+                            onClick={() => handleFixParticipantWallet(participant, singleOtherWallet)}
+                            disabled={isFixing}
+                            className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                          >
+                            Corrigir para "{wallets?.find(w => w.id === singleOtherWallet)?.name || singleOtherWallet}"
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleFixParticipantWallet(participant, undefined)}
+                          disabled={isFixing}
+                          className="px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-100 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                        >
+                          {isFixing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                          Tornar Global
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+              <button
+                onClick={() => setWalletMismatches([])}
                 className="px-6 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-bold hover:bg-slate-100 transition-colors"
               >
                 Fechar

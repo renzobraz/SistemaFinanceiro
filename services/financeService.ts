@@ -3034,6 +3034,44 @@ export const financeService = {
     cache.balances = {};
   },
 
+  /**
+   * Compara, para cada participante, a carteira cadastrada (walletId) contra as
+   * carteiras onde ele realmente tem lançamentos, e retorna os que divergem —
+   * seja porque têm movimentação em mais de uma carteira, seja porque a carteira
+   * cadastrada não é nenhuma daquelas onde ele de fato aparece.
+   */
+  async findParticipantWalletMismatches(): Promise<Array<{ participant: Participant, actualWalletIds: string[] }>> {
+    const [participants, transactions] = await Promise.all([
+      this.getRegistry('participants', true, 'ALL') as Promise<Participant[]>,
+      this.getTransactions({}),
+    ]);
+
+    const walletsByParticipant = new Map<string, Set<string>>();
+    for (const t of transactions) {
+      if (!t.participantId || !t.walletId) continue;
+      if (!walletsByParticipant.has(t.participantId)) walletsByParticipant.set(t.participantId, new Set());
+      walletsByParticipant.get(t.participantId)!.add(t.walletId);
+    }
+
+    const mismatches: Array<{ participant: Participant, actualWalletIds: string[] }> = [];
+    for (const p of participants) {
+      const actual = Array.from(walletsByParticipant.get(p.id) || []);
+      if (actual.length === 0) continue;
+      const isMismatch = actual.length > 1 || (!!p.walletId && !actual.includes(p.walletId));
+      if (isMismatch) mismatches.push({ participant: p, actualWalletIds: actual });
+    }
+    return mismatches;
+  },
+
+  /**
+   * Corrige a carteira de um participante (undefined torna o cadastro global,
+   * visível em qualquer carteira). Passa todos os campos do participante porque
+   * saveRegistryItem faz upsert do payload inteiro.
+   */
+  async fixParticipantWallet(participant: Participant, newWalletId: string | undefined): Promise<Participant> {
+    return this.saveRegistryItem('participants', { ...participant, walletId: newWalletId }) as Promise<Participant>;
+  },
+
   async syncAuxiliaryRegistries(): Promise<{ types: number, sectors: number, tickers: number }> {
     const supabase = getSupabase();
     if (supabase && !this.activeOrganizationId) {

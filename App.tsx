@@ -2034,7 +2034,13 @@ const App: FC = () => {
                         onAdd={(name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id:'', name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(true, selectedWalletId))}
                         onDelete={(id) => financeService.deleteRegistryItem(activeRegistryTab, id).then(() => loadRegistries(true, selectedWalletId))}
                         // @ts-ignore
-                        onEdit={(id, name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id, name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(true, selectedWalletId))}
+                        onEdit={(id, name, extra) => {
+                            // Preserva a carteira que o item já tinha em vez de sobrescrever com o
+                            // filtro de carteira atualmente selecionado na tela (bug: fazia o item
+                            // "sumir" de outras carteiras onde ele tem movimentações reais).
+                            const existing = (registries[activeRegistryTab as keyof typeof registries] as any[])?.find(x => x.id === id);
+                            return financeService.saveRegistryItem(activeRegistryTab, {id, name, walletId: existing?.walletId, ...extra}).then(() => loadRegistries(true, selectedWalletId));
+                        }}
                         onToggleActive={(id, active) => financeService.toggleRegistryItemActive(activeRegistryTab, id, active).then(() => loadRegistries(true, selectedWalletId))}
                         onImport={async (data) => {
                             try {
@@ -2065,9 +2071,12 @@ const App: FC = () => {
                                     // Busca se já existe um item com o mesmo nome para atualizar em vez de duplicar
                                     const existing = existingItems.find(x => x.name.toLowerCase() === name.toLowerCase());
                                     const idToUse = existing ? existing.id : '';
+                                    // Ao atualizar um item existente, preserva a carteira que ele já tinha
+                                    // (mesmo motivo do onEdit); só um item novo herda o filtro atual.
+                                    const walletIdToUse = existing ? existing.walletId : (selectedWalletId === 'ALL' ? undefined : selectedWalletId);
 
                                     // @ts-ignore
-                                    const newItem = await financeService.saveRegistryItem(activeRegistryTab, { id: idToUse, name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra });
+                                    const newItem = await financeService.saveRegistryItem(activeRegistryTab, { id: idToUse, name, walletId: walletIdToUse, ...extra });
                                     newItems.push(newItem);
                                 }
                                 await loadRegistries(true, selectedWalletId);
@@ -2096,6 +2105,12 @@ const App: FC = () => {
                             await loadRegistries(true, selectedWalletId);
                             return count;
                         } : undefined}
+                        onFindWalletMismatches={activeRegistryTab === 'participants' ? () => financeService.findParticipantWalletMismatches() : undefined}
+                        onFixParticipantWallet={activeRegistryTab === 'participants' ? async (participant, newWalletId) => {
+                            await financeService.fixParticipantWallet(participant as any, newWalletId);
+                            await loadRegistries(true, selectedWalletId);
+                        } : undefined}
+                        wallets={registries.wallets}
                         foreignItems={activeRegistryTab === 'wallets' ? registries.banks : undefined}
                         foreignLabel={activeRegistryTab === 'wallets' ? 'Selecionar Banco' : undefined}
                         foreignKey={activeRegistryTab === 'wallets' ? 'bankId' : undefined}
