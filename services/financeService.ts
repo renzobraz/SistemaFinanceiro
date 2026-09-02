@@ -3057,7 +3057,10 @@ export const financeService = {
     for (const p of participants) {
       const actual = Array.from(walletsByParticipant.get(p.id) || []);
       if (actual.length === 0) continue;
-      const isMismatch = actual.length > 1 || (!!p.walletId && !actual.includes(p.walletId));
+      // Participantes não são mais compartilhados entre carteiras: qualquer um
+      // sem carteira cadastrada (global), com mais de uma carteira real, ou com
+      // a carteira cadastrada errada, é uma divergência.
+      const isMismatch = actual.length > 1 || !p.walletId || !actual.includes(p.walletId);
       if (isMismatch) mismatches.push({ participant: p, actualWalletIds: actual });
     }
     return mismatches;
@@ -3070,6 +3073,86 @@ export const financeService = {
    */
   async fixParticipantWallet(participant: Participant, newWalletId: string | undefined): Promise<Participant> {
     return this.saveRegistryItem('participants', { ...participant, walletId: newWalletId }) as Promise<Participant>;
+  },
+
+  /**
+   * Divide um participante que tem lançamentos em mais de uma carteira: mantém
+   * o cadastro original (só corrige o walletId) para a primeira carteira da
+   * lista, e cria uma cópia (mesmos campos) para cada carteira adicional,
+   * reatribuindo só as transações daquele participante que pertencem a cada
+   * carteira adicional para o novo cadastro.
+   */
+  async splitParticipantByWallet(participant: Participant, walletIds: string[]): Promise<{ newParticipantsCreated: number, transactionsRepointed: number }> {
+    if (walletIds.length === 0) return { newParticipantsCreated: 0, transactionsRepointed: 0 };
+    const supabase = getSupabase();
+    const [firstWalletId, ...restWalletIds] = walletIds;
+
+    await this.fixParticipantWallet(participant, firstWalletId);
+
+    let newParticipantsCreated = 0;
+    let transactionsRepointed = 0;
+
+    for (const walletId of restWalletIds) {
+      const newParticipant = await this.saveRegistryItem('participants', {
+        ...participant,
+        id: '',
+        walletId,
+      }) as Participant;
+      newParticipantsCreated++;
+
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('transactions')
+          .update({ participant_id: newParticipant.id })
+          .eq('participant_id', participant.id)
+          .eq('wallet_id', walletId)
+          .select('id');
+        if (error) throw new Error(formatSupabaseError(error));
+        transactionsRepointed += (data || []).length;
+      } else {
+        const transactions = getEntityLocal<any>(KEYS.TRANSACTIONS, []);
+        let movedHere = 0;
+        const updated = transactions.map((t: any) => {
+          if (t.participantId === participant.id && t.walletId === walletId) {
+            movedHere++;
+            return { ...t, participantId: newParticipant.id };
+          }
+          return t;
+        });
+        saveEntityLocal(KEYS.TRANSACTIONS, updated);
+        transactionsRepointed += movedHere;
+      }
+    }
+
+    cache.registries = {};
+    cache.balances = {};
+
+    return { newParticipantsCreated, transactionsRepointed };
+  },
+
+  /**
+   * Roda a migração de uma vez para todos os participantes globais/multi-carteira
+   * encontrados por findParticipantWalletMismatches: os que têm lançamento em
+   * uma única carteira só têm o walletId corrigido; os que têm lançamento em
+   * mais de uma são divididos em cadastros separados por carteira.
+   */
+  async migrateParticipantsToWallets(): Promise<{ reassigned: number, split: number, newParticipantsCreated: number, transactionsRepointed: number }> {
+    const mismatches = await this.findParticipantWalletMismatches();
+    let reassigned = 0, split = 0, newParticipantsCreated = 0, transactionsRepointed = 0;
+
+    for (const { participant, actualWalletIds } of mismatches) {
+      if (actualWalletIds.length === 1) {
+        await this.fixParticipantWallet(participant, actualWalletIds[0]);
+        reassigned++;
+      } else if (actualWalletIds.length > 1) {
+        const result = await this.splitParticipantByWallet(participant, actualWalletIds);
+        split++;
+        newParticipantsCreated += result.newParticipantsCreated;
+        transactionsRepointed += result.transactionsRepointed;
+      }
+    }
+
+    return { reassigned, split, newParticipantsCreated, transactionsRepointed };
   },
 
   async syncAuxiliaryRegistries(): Promise<{ types: number, sectors: number, tickers: number }> {

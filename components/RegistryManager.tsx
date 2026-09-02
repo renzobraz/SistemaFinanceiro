@@ -21,7 +21,11 @@ interface RegistryManagerProps {
   onAutoFillTickers?: () => Promise<number>;
   onFindWalletMismatches?: () => Promise<Array<{ participant: BaseEntity & { [key: string]: any }, actualWalletIds: string[] }>>;
   onFixParticipantWallet?: (participant: BaseEntity & { [key: string]: any }, newWalletId: string | undefined) => Promise<void>;
+  onSplitParticipantByWallet?: (participant: BaseEntity & { [key: string]: any }, walletIds: string[]) => Promise<void>;
+  onMigrateParticipantWallets?: () => Promise<{ reassigned: number, split: number, newParticipantsCreated: number, transactionsRepointed: number }>;
   wallets?: BaseEntity[];
+  disableAdd?: boolean;
+  disableAddReason?: string;
   foreignItems?: BaseEntity[];
   foreignLabel?: string;
   foreignKey?: string;
@@ -48,7 +52,11 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   onAutoFillTickers,
   onFindWalletMismatches,
   onFixParticipantWallet,
+  onSplitParticipantByWallet,
+  onMigrateParticipantWallets,
   wallets,
+  disableAdd,
+  disableAddReason,
   foreignItems,
   foreignLabel,
   foreignKey,
@@ -289,6 +297,8 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         setTempCurrentPrice(0);
         setTempForeignKey('');
         setIsAdding(false);
+      } catch (error: any) {
+        alert(error.message || 'Erro ao cadastrar.');
       } finally {
         setIsSaving(false);
       }
@@ -490,6 +500,41 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
       alert('Erro ao corrigir carteira: ' + error.message);
     } finally {
       setFixingParticipantId(null);
+    }
+  };
+
+  const handleSplitParticipantByWallet = async (participant: any, walletIds: string[]) => {
+    if (!onSplitParticipantByWallet) return;
+    setFixingParticipantId(participant.id);
+    try {
+      await onSplitParticipantByWallet(participant, walletIds);
+      setWalletMismatches(prev => prev.filter(m => m.participant.id !== participant.id));
+    } catch (error: any) {
+      alert('Erro ao separar por carteira: ' + error.message);
+    } finally {
+      setFixingParticipantId(null);
+    }
+  };
+
+  const handleMigrateAllWalletMismatches = async () => {
+    if (!onMigrateParticipantWallets) return;
+    const toSplit = walletMismatches.filter(m => m.actualWalletIds.length > 1).length;
+    const summary = `Isso vai corrigir a carteira de ${walletMismatches.length} participante(s)` +
+      (toSplit > 0 ? `, sendo ${toSplit} deles divididos em cadastros separados por carteira (um para cada carteira onde têm movimentação).` : '.') +
+      ' Deseja continuar?';
+    if (!window.confirm(summary)) return;
+
+    setIsSearchingWalletMismatches(true);
+    try {
+      const result = await onMigrateParticipantWallets();
+      setWalletMismatches([]);
+      alert(
+        `Migração concluída: ${result.reassigned} participante(s) corrigido(s), ${result.split} dividido(s) em ${result.newParticipantsCreated} novo(s) cadastro(s), ${result.transactionsRepointed} lançamento(s) reatribuído(s).`
+      );
+    } catch (error: any) {
+      alert('Erro ao migrar: ' + error.message);
+    } finally {
+      setIsSearchingWalletMismatches(false);
     }
   };
 
@@ -753,10 +798,15 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               <button onClick={handleExportCSV} className="p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Exportar para Excel (CSV)">
                 <Download className="w-5 h-5" />
               </button>
-              {hasCreatePermission && (
+              {hasCreatePermission && !disableAdd && (
                 <button onClick={handleStartAdd} disabled={isAdding || isSaving} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm shadow-blue-100" title="Novo">
                   <Plus className="w-5 h-5" />
                 </button>
+              )}
+              {hasCreatePermission && disableAdd && (
+                <span className="p-2 text-slate-300" title={disableAddReason || 'Selecione uma carteira específica para cadastrar.'}>
+                  <Plus className="w-5 h-5" />
+                </span>
               )}
             </div>
           </div>
@@ -1535,9 +1585,21 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                   Participantes cuja carteira cadastrada não bate com as carteiras onde eles têm movimentações reais.
                 </p>
               </div>
-              <button onClick={() => setWalletMismatches([])} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                <X className="w-6 h-6 text-slate-400" />
-              </button>
+              <div className="flex items-center gap-2">
+                {onMigrateParticipantWallets && (
+                  <button
+                    onClick={handleMigrateAllWalletMismatches}
+                    disabled={isSearchingWalletMismatches}
+                    className="px-3 py-2 bg-teal-600 text-white rounded-lg text-xs font-bold hover:bg-teal-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {isSearchingWalletMismatches ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    Migrar Tudo Automaticamente
+                  </button>
+                )}
+                <button onClick={() => setWalletMismatches([])} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                  <X className="w-6 h-6 text-slate-400" />
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -1564,23 +1626,25 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {singleOtherWallet && (
+                        {singleOtherWallet ? (
                           <button
                             onClick={() => handleFixParticipantWallet(participant, singleOtherWallet)}
                             disabled={isFixing}
-                            className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                            className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                           >
+                            {isFixing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                             Corrigir para "{wallets?.find(w => w.id === singleOtherWallet)?.name || singleOtherWallet}"
                           </button>
+                        ) : (
+                          <button
+                            onClick={() => handleSplitParticipantByWallet(participant, actualWalletIds)}
+                            disabled={isFixing}
+                            className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                          >
+                            {isFixing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                            Separar por Carteira
+                          </button>
                         )}
-                        <button
-                          onClick={() => handleFixParticipantWallet(participant, undefined)}
-                          disabled={isFixing}
-                          className="px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-100 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                        >
-                          {isFixing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                          Tornar Global
-                        </button>
                       </div>
                     </div>
                   </div>

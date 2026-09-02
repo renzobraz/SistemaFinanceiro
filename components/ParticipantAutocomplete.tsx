@@ -53,19 +53,30 @@ export function ParticipantAutocomplete({
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  const filtered = useMemo(() => {
-    const q = deferredSearch.toLowerCase().trim();
-    return participants.filter(p => {
+  // Participantes visíveis nesta carteira (ativos e sem conflito de walletId),
+  // antes de aplicar o texto de busca — usada tanto na lista quanto na
+  // checagem de "já existe" abaixo, para não misturar participantes de outras
+  // carteiras.
+  const walletScoped = useMemo(() =>
+    participants.filter(p => {
       if (!p.active) return false;
       if (walletId && p.walletId && p.walletId !== walletId) return false;
+      return true;
+    }),
+    [participants, walletId]
+  );
+
+  const filtered = useMemo(() => {
+    const q = deferredSearch.toLowerCase().trim();
+    return walletScoped.filter(p => {
       if (!q) return true;
       return p.name.toLowerCase().includes(q) || (p.ticker || '').toLowerCase().includes(q);
     });
-  }, [participants, deferredSearch, walletId]);
+  }, [walletScoped, deferredSearch]);
 
   const exactMatch = useMemo(() =>
-    participants.some(p => p.name.toLowerCase() === deferredSearch.toLowerCase().trim()),
-    [participants, deferredSearch]
+    walletScoped.some(p => p.name.toLowerCase() === deferredSearch.toLowerCase().trim()),
+    [walletScoped, deferredSearch]
   );
 
   const handleAdd = async () => {

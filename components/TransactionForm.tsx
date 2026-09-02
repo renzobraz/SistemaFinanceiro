@@ -26,7 +26,7 @@ interface TransactionFormProps {
   onClose: () => void;
   onSave: (transaction: Transaction | Transaction[]) => Promise<void>;
   onDelete?: (ids: string[]) => Promise<void>;
-  onAddParticipant: (name: string) => Promise<Participant>;
+  onAddParticipant: (name: string, walletId?: string) => Promise<Participant>;
   initialData?: Transaction | null;
   partnerData?: Transaction | null;
   defaultStatus?: TransactionStatus;
@@ -270,58 +270,66 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     [registries.wallets, formData.walletId, targetWalletId],
   );
 
+  // Participantes visíveis nesta carteira (a do lançamento sendo editado, não a
+  // da tela principal) — usada tanto na lista quanto nas checagens de
+  // "já existe"/"parecido" abaixo, para não misturar participantes de outras
+  // carteiras.
+  const walletScopedParticipants = useMemo(() =>
+    registries.participants
+      .filter(p => p.active !== false || p.id === formData.participantId)
+      .filter(p => !formData.walletId || !p.walletId || p.walletId === formData.walletId),
+    [registries.participants, formData.walletId, formData.participantId]
+  );
+
   const filteredParticipants = useMemo(() => {
     const search = (deferredParticipantSearch || "").toLowerCase();
     const searchTerms = search
       .split(" ")
       .filter((t) => t.trim() !== "");
 
-    return registries.participants
-      .filter(p => p.active !== false || p.id === formData.participantId)
-      .filter(p => !formData.walletId || !p.walletId || p.walletId === formData.walletId)
-      .filter((p) => {
+    return walletScopedParticipants.filter((p) => {
       if (!p || !p.name) return false;
       if (searchTerms.length === 0) return true;
-      
+
       const nameLower = p.name.toLowerCase();
       const tickerLower = (p.ticker || "").toLowerCase();
-      
-      return searchTerms.every((term) => 
+
+      return searchTerms.every((term) =>
         nameLower.includes(term) || tickerLower.includes(term)
       );
     });
-  }, [registries.participants, deferredParticipantSearch, formData.walletId, formData.participantId]);
+  }, [walletScopedParticipants, deferredParticipantSearch]);
 
   const exactMatchExists = useMemo(() => {
     const search = (deferredParticipantSearch || "").trim().toLowerCase();
     if (!search) return false;
-    return registries.participants.some(
-      (p) => 
+    return walletScopedParticipants.some(
+      (p) =>
         (p && p.name && p.name.toLowerCase() === search) ||
         (p && p.ticker && p.ticker.toLowerCase() === search)
     );
-  }, [registries.participants, deferredParticipantSearch]);
+  }, [walletScopedParticipants, deferredParticipantSearch]);
 
   const similarParticipant = useMemo(() => {
     const search = (deferredParticipantSearch || "").trim().toLowerCase();
     if (exactMatchExists || search.length < 3) return null;
     let closest = null;
     let minDistance = Infinity;
-    for (const p of registries.participants) {
+    for (const p of walletScopedParticipants) {
       if (!p || !p.name) continue;
-      
+
       const nameDist = getLevenshteinDistance(p.name.toLowerCase(), search);
       const tickerDist = p.ticker ? getLevenshteinDistance(p.ticker.toLowerCase(), search) : Infinity;
-      
+
       const dist = Math.min(nameDist, tickerDist);
-      
+
       if (dist < minDistance && dist <= 2) {
         minDistance = dist;
         closest = p;
       }
     }
     return closest;
-  }, [registries.participants, deferredParticipantSearch, exactMatchExists]);
+  }, [walletScopedParticipants, deferredParticipantSearch, exactMatchExists]);
 
   useEffect(() => {
     setFocusedIndex(-1);
@@ -544,7 +552,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     if (!participantSearch.trim() || isAddingParticipant) return;
     setIsAddingParticipant(true);
     try {
-      const newP = await onAddParticipant(participantSearch.trim());
+      const newP = await onAddParticipant(participantSearch.trim(), formData.walletId);
       setFormData((prev) => ({ ...prev, participantId: newP.id }));
       setParticipantSearch(newP.name);
       setIsParticipantDropdownOpen(false);

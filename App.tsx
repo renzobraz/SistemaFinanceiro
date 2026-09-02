@@ -1004,8 +1004,12 @@ const App: FC = () => {
     }
   };
 
-  const handleQuickAddParticipant = async (name: string): Promise<Participant> => {
-      const newP = await financeService.saveRegistryItem('participants', { id: '', name, walletId: selectedWalletId });
+  const handleQuickAddParticipant = async (name: string, walletId?: string): Promise<Participant> => {
+      const targetWalletId = walletId || (selectedWalletId !== 'ALL' ? selectedWalletId : undefined);
+      if (!targetWalletId) {
+          throw new Error('Selecione uma carteira específica antes de cadastrar um novo participante.');
+      }
+      const newP = await financeService.saveRegistryItem('participants', { id: '', name, walletId: targetWalletId });
       setRegistries(prev => ({ ...prev, participants: [...prev.participants, newP] }));
       return newP;
   };
@@ -2031,7 +2035,12 @@ const App: FC = () => {
                         userModulePermissions={userModulePermissions}
                         userRole={userRole}
                         // @ts-ignore
-                        onAdd={(name, extra) => financeService.saveRegistryItem(activeRegistryTab, {id:'', name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(true, selectedWalletId))}
+                        onAdd={(name, extra) => {
+                            if (activeRegistryTab === 'participants' && selectedWalletId === 'ALL') {
+                                return Promise.reject(new Error('Selecione uma carteira específica antes de cadastrar um novo participante.'));
+                            }
+                            return financeService.saveRegistryItem(activeRegistryTab, {id:'', name, walletId: selectedWalletId === 'ALL' ? undefined : selectedWalletId, ...extra}).then(() => loadRegistries(true, selectedWalletId));
+                        }}
                         onDelete={(id) => financeService.deleteRegistryItem(activeRegistryTab, id).then(() => loadRegistries(true, selectedWalletId))}
                         // @ts-ignore
                         onEdit={(id, name, extra) => {
@@ -2110,7 +2119,18 @@ const App: FC = () => {
                             await financeService.fixParticipantWallet(participant as any, newWalletId);
                             await loadRegistries(true, selectedWalletId);
                         } : undefined}
+                        onSplitParticipantByWallet={activeRegistryTab === 'participants' ? async (participant, walletIds) => {
+                            await financeService.splitParticipantByWallet(participant as any, walletIds);
+                            await loadRegistries(true, selectedWalletId);
+                        } : undefined}
+                        onMigrateParticipantWallets={activeRegistryTab === 'participants' ? async () => {
+                            const result = await financeService.migrateParticipantsToWallets();
+                            await loadRegistries(true, selectedWalletId);
+                            return result;
+                        } : undefined}
                         wallets={registries.wallets}
+                        disableAdd={activeRegistryTab === 'participants' && selectedWalletId === 'ALL'}
+                        disableAddReason={'Selecione uma carteira específica (não "Todas") para cadastrar um novo participante.'}
                         foreignItems={activeRegistryTab === 'wallets' ? registries.banks : undefined}
                         foreignLabel={activeRegistryTab === 'wallets' ? 'Selecionar Banco' : undefined}
                         foreignKey={activeRegistryTab === 'wallets' ? 'bankId' : undefined}
@@ -2165,7 +2185,7 @@ const App: FC = () => {
           onSuccess={() => {
             setIsImportOpen(false);
             loadTransactions();
-            loadRegistries(true);
+            loadRegistries(true, selectedWalletId);
           }}
           banks={registries.banks}
           wallets={registries.wallets}

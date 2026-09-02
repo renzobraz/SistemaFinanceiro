@@ -200,7 +200,38 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     const initialParts: Record<number, string> = {};
     const initialGenerateFuture: Record<number, boolean> = {};
 
-    reconResult.items.forEach((item, index) => {
+    // Participantes não são mais compartilhados entre carteiras: o Merchant Alias
+    // pode ter sido ensinado em outra carteira, então a sugestão de participante
+    // é resolvida pelo NOME dele dentro da carteira sendo importada agora (criando
+    // o cadastro aqui se ainda não existir), em vez de reusar o id de origem.
+    const allParticipants = await financeService.getRegistry('participants', false, 'ALL') as Participant[];
+    const resolvedParticipantCache = new Map<string, string>();
+    const resolveAliasParticipant = async (participantId: string): Promise<string | undefined> => {
+      const referenced = allParticipants.find(p => p.id === participantId);
+      if (!referenced) return undefined;
+      if (referenced.walletId === selectedWalletId) return referenced.id;
+
+      const cached = resolvedParticipantCache.get(referenced.name);
+      if (cached) return cached;
+
+      let sameNameHere = allParticipants.find(p => p.name === referenced.name && p.walletId === selectedWalletId);
+      if (!sameNameHere) {
+        sameNameHere = await financeService.saveRegistryItem<Participant>('participants', {
+          id: '',
+          name: referenced.name,
+          walletId: selectedWalletId,
+          category: referenced.category,
+          sector: referenced.sector,
+          ticker: referenced.ticker,
+          currency: referenced.currency,
+        });
+        allParticipants.push(sameNameHere);
+      }
+      resolvedParticipantCache.set(referenced.name, sameNameHere.id);
+      return sameNameHere.id;
+    };
+
+    for (const [index, item] of reconResult.items.entries()) {
       if (item.status === 'MATCHED') {
         initialMatchedCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
       } else if (item.status === 'UNCERTAIN') {
@@ -242,9 +273,12 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       if (matchedAlias) {
         if (matchedAlias.defaultCategoryId) initialCats[index] = matchedAlias.defaultCategoryId;
         if (matchedAlias.defaultCostCenterId) initialCCs[index] = matchedAlias.defaultCostCenterId;
-        if (matchedAlias.defaultParticipantId) initialParts[index] = matchedAlias.defaultParticipantId;
+        if (matchedAlias.defaultParticipantId) {
+          const resolvedId = await resolveAliasParticipant(matchedAlias.defaultParticipantId);
+          if (resolvedId) initialParts[index] = resolvedId;
+        }
       }
-    });
+    }
 
     setSelectedMatchedCandidates(initialMatchedCandidates);
     setSelectedCandidates(initialCandidates);

@@ -840,11 +840,12 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
     const feeCat = categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('despesa')) || categories[0];
 
     const ensureFeeParticipant = async (name: string): Promise<Participant> => {
-      let feeParticipant = updatedParticipants.find(p => p.name === name);
+      let feeParticipant = updatedParticipants.find(p => p.name === name && p.walletId === selectedWalletId);
       if (!feeParticipant) {
         feeParticipant = await financeService.saveRegistryItem<Participant>('participants', {
           id: '',
           name,
+          walletId: selectedWalletId,
         });
         updatedParticipants.push(feeParticipant);
       }
