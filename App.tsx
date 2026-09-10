@@ -1597,7 +1597,7 @@ const App: FC = () => {
                       </div>
                     )}
 
-                    <button onClick={() => loadTransactions()} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-gray-200 h-[34px]" title="Sincronizar">
+                    <button onClick={() => { loadTransactions(); loadRegistries(true, activeTab === 'investments' ? performanceWalletId : selectedWalletId); }} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-gray-200 h-[34px]" title="Sincronizar">
                       <RefreshCcw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-blue-500' : ''}`} />
                     </button>
 
@@ -1652,7 +1652,7 @@ const App: FC = () => {
                       </div>
                     )}
 
-                    <button onClick={() => loadTransactions()} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg border border-gray-200 h-[34px]" title="Sincronizar">
+                    <button onClick={() => { loadTransactions(); loadRegistries(true, activeTab === 'investments' ? performanceWalletId : selectedWalletId); }} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg border border-gray-200 h-[34px]" title="Sincronizar">
                       <RefreshCcw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-blue-500' : ''}`} />
                     </button>
 
@@ -2204,6 +2204,7 @@ const App: FC = () => {
           onSuccess={() => {
             setIsCreditCardImportOpen(false);
             loadTransactions();
+            loadRegistries(true, selectedWalletId);
           }}
           banks={registries.banks}
           categories={registries.categories}
@@ -2219,6 +2220,7 @@ const App: FC = () => {
           onSuccess={() => {
             setIsSpreadsheetImportOpen(false);
             loadTransactions();
+            loadRegistries(true, selectedWalletId);
           }}
           banks={registries.banks}
           categories={registries.categories}

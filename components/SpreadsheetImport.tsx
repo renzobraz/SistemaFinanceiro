@@ -66,33 +66,48 @@ function parseNumber(s: string): number {
   return isNaN(n) ? 0 : Math.abs(n);
 }
 
-function splitLine(line: string, sep: string): string[] {
-  const result: string[] = [];
+// Tokeniza o texto inteiro (não linha a linha) para que campos entre aspas com
+// quebra de linha ou separador embutidos não corrompam a linha — e trata ""
+// dentro de um campo entre aspas como aspas literais (escape padrão de CSV).
+function parseDelimited(text: string, sep: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
   let field = '';
   let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') { inQuotes = !inQuotes; }
-    else if (ch === sep && !inQuotes) { result.push(field.trim()); field = ''; }
-    else { field += ch; }
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += ch; i++; continue;
+    }
+    if (ch === '"') { inQuotes = true; i++; continue; }
+    if (ch === sep) { row.push(field.trim()); field = ''; i++; continue; }
+    if (ch === '\r') { i++; continue; }
+    if (ch === '\n') { row.push(field.trim()); rows.push(row); row = []; field = ''; i++; continue; }
+    field += ch; i++;
   }
-  result.push(field.trim());
-  return result;
+  if (field.length > 0 || row.length > 0) { row.push(field.trim()); rows.push(row); }
+  return rows.filter(r => r.some(f => f !== ''));
 }
 
 function parseCsv(text: string): { headers: string[]; rows: string[][] } {
   // Remove UTF-8 BOM (﻿)
   const clean = text.replace(/^﻿/, '');
-  const lines = clean.split(/\r?\n/).map(l => l.trimEnd()).filter(l => l.trim());
-  if (lines.length < 2) return { headers: [], rows: [] };
+  const firstLine = (clean.split(/\r?\n/)[0] || '');
+  // Detecta o separador pela primeira linha (cabeçalho raramente tem aspas/quebras)
+  const scCount = (firstLine.match(/;/g) || []).length;
+  const coCount = (firstLine.match(/,/g) || []).length;
+  const sep = scCount >= coCount ? ';' : ',';
 
-  // Try semicolon then comma — pick the one that gives more columns
-  const sc = splitLine(lines[0], ';');
-  const co = splitLine(lines[0], ',');
-  const sep = sc.length >= co.length ? ';' : ',';
+  const allRows = parseDelimited(clean, sep);
+  if (allRows.length < 2) return { headers: [], rows: [] };
 
-  const headers = splitLine(lines[0], sep);
-  const rows = lines.slice(1).map(l => splitLine(l, sep));
+  const headers = allRows[0];
+  const rows = allRows.slice(1);
   return { headers, rows };
 }
 
@@ -119,7 +134,7 @@ function guessMapping(headers: string[]): ColumnMapping {
     emissionDate:    findCol(headers, 'Data Emissão', 'Data Emissao', 'Emissão', 'Emissao'),
     dueDate:         findCol(headers, 'Data Vencimento', 'Vencimento', 'Data Venc'),
     docNumber:       findCol(headers, 'NF Laura', 'NF', 'Nota Fiscal', 'Num Doc', 'Numero'),
-    bankName:        findCol(headers, 'Conta'),
+    bankName:        findCol(headers, 'Conta', 'Banco'),
     participantName: findCol(headers, 'Fornecedor', 'Participante', 'Cliente'),
     categoryName:    findCol(headers, 'Categoria'),
     description:     findCol(headers, 'Observacao', 'Observação', 'Descricao', 'Descrição'),
