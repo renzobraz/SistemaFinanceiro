@@ -82,6 +82,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [dedupProgress, setDedupProgress] = useState<{current: number, total: number} | null>(null);
   const [similarGroups, setSimilarGroups] = useState<Array<{ master: any, duplicates: any[] }>>([]);
+  const [showMergeMasterPicker, setShowMergeMasterPicker] = useState(false);
+  const [mergeMasterId, setMergeMasterId] = useState('');
+  const [isMergingSelected, setIsMergingSelected] = useState(false);
   const [editingItemInModal, setEditingItemInModal] = useState<{groupIdx: number, itemId: string} | null>(null);
   const [tempModalName, setTempModalName] = useState('');
   const [ignoredUnifications, setIgnoredUnifications] = useState<Array<{ id: string, name1: string, name2: string, pairId: string }>>([]);
@@ -414,16 +417,22 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
       } else if (confirmModal.type === 'BULK_DELETE') {
           const ids: string[] = confirmModal.data;
           const errors: string[] = [];
+          const failedIds = new Set<string>();
           for (const id of ids) {
               try {
                   await onDelete(id);
               } catch (error: any) {
                   errors.push(error.message);
+                  failedIds.add(id);
               }
           }
-          setSelectedIds(new Set());
+          // Mantém selecionados só os que falharam (ex.: bloqueados por lançamentos
+          // vinculados), para o usuário poder usar "Unificar Selecionados" em seguida
+          // sem precisar marcar tudo de novo.
+          setSelectedIds(prev => new Set(Array.from(prev).filter(id => failedIds.has(id))));
           if (errors.length > 0) {
-              alert(`${ids.length - errors.length} excluído(s). ${errors.length} não puderam ser excluídos:\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}`);
+              const hint = onMerge ? '\n\nDica: se o motivo foi "lançamentos vinculados", use o botão "Unificar Selecionados" (os itens que falharam continuam marcados) para mover tudo para o registro correto antes de excluir.' : '';
+              alert(`${ids.length - errors.length} excluído(s). ${errors.length} não puderam ser excluídos:\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}${hint}`);
           }
       } else if (confirmModal.type === 'IMPORT') {
           await onImport(confirmModal.data);
@@ -454,6 +463,28 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               setIsAutoFilling(false);
           }
       }
+  };
+
+  const handleMergeSelected = async () => {
+    if (!onMerge || !mergeMasterId) return;
+    const duplicateIds = Array.from(selectedIds).filter(id => id !== mergeMasterId);
+    if (duplicateIds.length === 0) {
+      alert('Selecione ao menos um registro além do escolhido como correto.');
+      return;
+    }
+    setIsMergingSelected(true);
+    try {
+      await onMerge(mergeMasterId, duplicateIds);
+      const masterName = items.find(i => i.id === mergeMasterId)?.name || '';
+      setSelectedIds(new Set());
+      setShowMergeMasterPicker(false);
+      setMergeMasterId('');
+      alert(`${duplicateIds.length} registro(s) unificado(s) em "${masterName}" com sucesso.`);
+    } catch (error: any) {
+      alert('Erro ao unificar: ' + error.message);
+    } finally {
+      setIsMergingSelected(false);
+    }
   };
 
   const handleFindSimilar = async () => {
@@ -725,6 +756,16 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                 >
                   <Trash2 className="w-4 h-4" />
                   Excluir {selectedIds.size}
+                </button>
+              )}
+              {hasEditPermission && onMerge && selectedIds.size > 1 && (
+                <button
+                  onClick={() => { setMergeMasterId(''); setShowMergeMasterPicker(true); }}
+                  title="Útil quando a exclusão em massa é bloqueada por lançamentos vinculados: em vez de apagar, move tudo para um registro correto e apaga os demais."
+                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-bold shadow-sm"
+                >
+                  <Wand2 className="w-4 h-4" />
+                  Unificar {selectedIds.size}
                 </button>
               )}
               {hasEditPermission && onGetIgnored && (
@@ -1725,7 +1766,56 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         </div>
       )}
 
-      <ConfirmModal 
+      {/* Modal de Unificar Selecionados (merge manual, independente de sugestão por nome parecido) */}
+      {showMergeMasterPicker && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+              <h3 className="text-lg font-bold text-slate-800">Unificar {selectedIds.size} Selecionados</h3>
+              <p className="text-sm text-slate-500 mt-1">
+                Escolha qual registro está correto e deve ser mantido. Os outros {selectedIds.size - (mergeMasterId ? 1 : 0)} serão
+                unificados nele (lançamentos vinculados são movidos automaticamente) e apagados.
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Registro correto (mestre)</label>
+                <select
+                  value={mergeMasterId}
+                  onChange={e => setMergeMasterId(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="">— selecione —</option>
+                  {[...items].sort((a, b) => a.name.localeCompare(b.name)).map(item => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}{selectedIds.has(item.id) ? '' : ' (fora da seleção)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-2">
+              <button
+                onClick={() => { setShowMergeMasterPicker(false); setMergeMasterId(''); }}
+                disabled={isMergingSelected}
+                className="px-4 py-2 text-slate-600 text-sm font-bold hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleMergeSelected}
+                disabled={!mergeMasterId || isMergingSelected}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isMergingSelected ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                Unificar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal
         isOpen={confirmModal.isOpen}
         onClose={() => setConfirmModal(prev => ({...prev, isOpen: false}))}
         onConfirm={handleConfirmAction}
