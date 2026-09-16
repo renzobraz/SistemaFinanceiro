@@ -425,6 +425,26 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     }
   }, [formData.participantId, id, transactions]);
 
+  // Ao trocar a categoria, sugere o Tipo (Débito/Crédito) mais usado historicamente
+  // com essa categoria (ex.: "Salários" pode ser despesa em uma carteira e receita em
+  // outra — segue o que já foi lançado, não uma regra fixa por nome). Só sugere no modo
+  // padrão (na Transferência o tipo de cada perna já é fixo) e continua totalmente
+  // editável depois — é só um ponto de partida.
+  const handleCategoryChange = (categoryId: string) => {
+    let nextType = formData.type;
+    if (mode === "DEFAULT" && categoryId) {
+      const sameCategory = transactions.filter(t => t.categoryId === categoryId);
+      if (sameCategory.length > 0) {
+        const creditCount = sameCategory.filter(t => t.type === "CREDIT").length;
+        const debitCount = sameCategory.length - creditCount;
+        if (creditCount !== debitCount) {
+          nextType = creditCount > debitCount ? "CREDIT" : "DEBIT";
+        }
+      }
+    }
+    setFormData(prev => ({ ...prev, categoryId, type: nextType }));
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     setIsSaving(false);
@@ -1272,9 +1292,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 required
                 disabled={isSaving}
                 value={formData.categoryId}
-                onChange={(e) =>
-                  setFormData({ ...formData, categoryId: e.target.value })
-                }
+                onChange={(e) => handleCategoryChange(e.target.value)}
                 className={`${inputClass} border-blue-100 bg-blue-50/10`}
               >
                 <option value="">Selecione...</option>
