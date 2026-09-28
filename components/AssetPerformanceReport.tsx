@@ -207,6 +207,54 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
     const cat = asset.category.toUpperCase();
     return cat.includes('RENDA FIXA') || cat.includes('PREV') || cat.includes('PENS') || asset.name.toUpperCase().includes('PREVID');
   };
+
+  // Classifica uma transação de ativo (Compra/Venda/Aplicação/Resgate/Dividendo/Taxa) —
+  // usado tanto na lista de transações do detalhe quanto na exportação para Excel.
+  const getOperationInfo = (t: Transaction, asset: AssetPerformance): { label: string; color: string } => {
+    const category = registries.categories.find(c => String(c.id) === String(t.categoryId));
+    const categoryName = category?.name.toLowerCase() || '';
+    const description = t.description.toLowerCase();
+    const isBalance = isBalanceBased(asset);
+
+    const isProvento =
+      categoryName.includes('provento') ||
+      categoryName.includes('divid') ||
+      categoryName.includes('jcp') ||
+      categoryName.includes('rendimento') ||
+      description.includes('divid') ||
+      description.includes('jcp') ||
+      description.includes('rendimento') ||
+      description.includes('aluguel') ||
+      description.includes('yield');
+
+    const isTaxOrFee =
+      categoryName.includes('imposto') ||
+      categoryName.includes('taxa') ||
+      categoryName.includes('tarifa') ||
+      categoryName.includes('tax') ||
+      categoryName.includes('fee') ||
+      description.includes('tax') ||
+      description.includes('fee') ||
+      description.includes('iof') ||
+      description.includes('irrf') ||
+      description.includes('imposto') ||
+      description.includes('wht') ||
+      description.includes('withholding');
+
+    if (isProvento) {
+      return {
+        label: t.type === 'DEBIT' ? 'Imposto s/ Prov.' : 'Dividendo/JCP',
+        color: t.type === 'DEBIT' ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600',
+      };
+    }
+    if (isTaxOrFee) {
+      return { label: 'Taxa/Ajuste', color: 'bg-slate-100 text-slate-500' };
+    }
+    return {
+      label: t.type === 'DEBIT' ? (isBalance ? 'Aplicação' : 'Compra') : (isBalance ? 'Resgate' : 'Venda'),
+      color: t.type === 'DEBIT' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600',
+    };
+  };
   
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
   const [tempTargetPrice, setTempTargetPrice] = useState<string>('');
@@ -958,9 +1006,32 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
       };
     });
 
+    // Aba 2: uma linha por operação (data de compra/venda, quantidade e preço daquele
+    // lote específico), já que a aba "Performance" acima é só o resumo consolidado por ativo.
+    const operationsData = filteredData.flatMap(asset =>
+      [...asset.transactions]
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map(t => {
+          const bank = registries.banks.find(b => String(b.id) === String(t.bankId));
+          const { label: operationLabel } = getOperationInfo(t, asset);
+          return {
+            'Ticker': asset.ticker,
+            'Nome': asset.name,
+            'Data': t.date.split('-').reverse().join('/'),
+            'Operação': operationLabel,
+            'Banco/Corretora': bank?.name || '',
+            'Quantidade': t.quantity || '',
+            [`Preço Unit. (${asset.currency})`]: t.unitPrice || (t.quantity ? t.value / t.quantity : ''),
+            [`Valor Total (${asset.currency})`]: t.value,
+          };
+        })
+    );
+
     const ws = XLSX.utils.json_to_sheet(data);
+    const wsOperations = XLSX.utils.json_to_sheet(operationsData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Performance");
+    XLSX.utils.book_append_sheet(wb, wsOperations, "Operações");
     XLSX.writeFile(wb, `Performance_Ativos_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
@@ -3227,47 +3298,9 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
                       })
                       .map((t) => {
                         const bank = registries.banks.find(b => String(b.id) === String(t.bankId));
-                        const category = registries.categories.find(c => String(c.id) === String(t.categoryId));
-                        const categoryName = category?.name.toLowerCase() || '';
-                        const description = t.description.toLowerCase();
+                        const { label: typeLabel, color: typeColor } = getOperationInfo(t, detailAsset);
                         const isBalance = isBalanceBased(detailAsset);
-                        
-                        const isProvento = 
-                          categoryName.includes('provento') || 
-                          categoryName.includes('divid') || 
-                          categoryName.includes('jcp') || 
-                          categoryName.includes('rendimento') ||
-                          description.includes('divid') || 
-                          description.includes('jcp') || 
-                          description.includes('rendimento') ||
-                          description.includes('aluguel') ||
-                          description.includes('yield');
-                        
-                        const isTaxOrFee = 
-                          categoryName.includes('imposto') || 
-                          categoryName.includes('taxa') || 
-                          categoryName.includes('tarifa') ||
-                          categoryName.includes('tax') || 
-                          categoryName.includes('fee') ||
-                          description.includes('tax') || 
-                          description.includes('fee') || 
-                          description.includes('iof') || 
-                          description.includes('irrf') ||
-                          description.includes('imposto') ||
-                          description.includes('wht') ||
-                          description.includes('withholding');
 
-                        let typeLabel = t.type === 'DEBIT' ? (isBalance ? 'Aplicação' : 'Compra') : (isBalance ? 'Resgate' : 'Venda');
-                        let typeColor = t.type === 'DEBIT' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600';
-
-                        if (isProvento) {
-                          typeLabel = t.type === 'DEBIT' ? 'Imposto s/ Prov.' : 'Dividendo/JCP';
-                          typeColor = t.type === 'DEBIT' ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600';
-                        } else if (isTaxOrFee) {
-                          typeLabel = 'Taxa/Ajuste';
-                          typeColor = 'bg-slate-100 text-slate-500';
-                        }
-                        
                         return (
                           <tr key={t.id} className="hover:bg-slate-50 transition-colors">
                             <td className="py-4 text-sm text-slate-600 font-mono">
