@@ -164,15 +164,34 @@ export function findCandidates(
 }
 
 /**
- * 2d. Orquestra a conciliação de toda a fatura com o Contas a Pagar.
+ * 2d-bis. Acha, entre transações já PAGAS do banco, uma que bata exatamente com o item
+ * do extrato (mesmo tipo, valor e data) — sinal de que aquele lançamento já foi
+ * registrado diretamente como pago (sem passar por Contas a Pagar), para não duplicar.
+ */
+function findPaidMatch(item: CardStatementItem, paidTxs: Transaction[]): Transaction | undefined {
+  const expectedType = item.isRefund ? "CREDIT" : "DEBIT";
+  return paidTxs.find(tx =>
+    tx.type === expectedType &&
+    Math.abs(tx.value - item.value) <= 0.01 &&
+    tx.date === item.purchaseDate
+  );
+}
+
+/**
+ * 2d. Orquestra a conciliação de toda a fatura com o Contas a Pagar. Opcionalmente
+ * (fetchPaidTxs), também checa se o item já foi lançado diretamente como pago — útil
+ * para extrato de conta, onde o usuário muitas vezes lança direto como pago em vez de
+ * passar por um lançamento pendente primeiro.
  */
 export async function reconcileStatementWithPayables(
   statement: CardStatement,
   bankId: string,
   aliases: MerchantAlias[],
-  fetchPendingTxs: (bankId: string) => Promise<Transaction[]>
+  fetchPendingTxs: (bankId: string) => Promise<Transaction[]>,
+  fetchPaidTxs?: (bankId: string) => Promise<Transaction[]>
 ): Promise<ReconciliationResult> {
   const pendingTxs = await fetchPendingTxs(bankId);
+  const paidTxs = fetchPaidTxs ? await fetchPaidTxs(bankId) : [];
   const items: ReconciliationItem[] = [];
 
   let matchedCount = 0;
@@ -182,19 +201,33 @@ export async function reconcileStatementWithPayables(
   for (const card of statement.cards) {
     const cardLast4 = card.cardLast4;
     for (const statementItem of card.items) {
-      const candidates = findCandidates(statementItem, pendingTxs, aliases, statement.metadata.dueDate);
+      let candidates = findCandidates(statementItem, pendingTxs, aliases, statement.metadata.dueDate);
 
       let status: "MATCHED" | "UNCERTAIN" | "NEW" = "NEW";
       if (candidates.some(c => c.confidence === "HIGH")) {
         status = "MATCHED";
-        matchedCount++;
       } else if (candidates.some(c => c.confidence === "LOW")) {
         status = "UNCERTAIN";
-        uncertainCount++;
       } else {
         status = "NEW";
-        newCount++;
       }
+
+      if (status === "NEW" && paidTxs.length > 0) {
+        const paidMatch = findPaidMatch(statementItem, paidTxs);
+        if (paidMatch) {
+          candidates = [{
+            transaction: paidMatch,
+            confidence: "HIGH",
+            reason: `Já lançado como pago em ${paidMatch.date} (mesmo valor e tipo)`,
+            similarityScore: 1,
+          }];
+          status = "MATCHED";
+        }
+      }
+
+      if (status === "MATCHED") matchedCount++;
+      else if (status === "UNCERTAIN") uncertainCount++;
+      else newCount++;
 
       items.push({
         statementItem,

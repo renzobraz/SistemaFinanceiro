@@ -164,11 +164,21 @@ export const BankStatementImport: React.FC<BankStatementImportProps> = ({
   const finishParsing = async (parsedStatement: CardStatement) => {
     setProgressMsg('Conciliando com os lançamentos pendentes...');
     const aliases: MerchantAlias[] = await financeService.getMerchantAliases();
+
+    // Restringe a busca de pagos ao período do próprio extrato, para não trazer o
+    // histórico inteiro do banco só para checar duplicidade de ~dezenas de itens.
+    const itemDates = parsedStatement.cards[0]?.items.map(i => i.purchaseDate).filter(Boolean).sort() || [];
+    const periodStart = itemDates[0];
+    const periodEnd = itemDates[itemDates.length - 1];
+
     const reconResult = await reconcileStatementWithPayables(
       parsedStatement,
       selectedBankId,
       aliases,
-      (bankId) => financeService.getTransactions({ bankId, status: 'PENDING' })
+      (bankId) => financeService.getTransactions({ bankId, status: 'PENDING' }),
+      // Extrato de conta costuma ser lançado direto como pago (sem passar por Contas a
+      // Pagar) — checa também contra o que já está pago para não duplicar.
+      (bankId) => financeService.getTransactions({ bankId, status: 'PAID', startDate: periodStart, endDate: periodEnd })
     );
 
     setStatement(parsedStatement);
