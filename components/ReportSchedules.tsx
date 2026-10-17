@@ -66,6 +66,16 @@ function describeSchedule(s: ReportSchedule): string {
   return `Todo dia ${s.day_of_month} do mês`;
 }
 
+function describePeriod(filters?: ReportFilters): string | null {
+  const type = filters?.periodType;
+  if (!type || type === 'ALL') return null;
+  if (type === 'CURRENT_MONTH') return 'Mês atual';
+  if (type === 'PREVIOUS_MONTH') return 'Mês anterior';
+  if (type === 'LAST_N_DAYS') return `Últimos ${filters?.periodDays ?? 30} dias`;
+  if (type === 'CUSTOM') return `${filters?.periodStart || '?'} a ${filters?.periodEnd || '?'}`;
+  return null;
+}
+
 interface ReportSchedulesProps {
   registries: {
     banks: Bank[];
@@ -319,6 +329,60 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
                 </h3>
 
                 <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1.5">Período</label>
+                  <select
+                    value={form.filters.periodType || 'ALL'}
+                    onChange={(e) => setForm({ ...form, filters: { ...form.filters, periodType: e.target.value as any } })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                  >
+                    <option value="ALL">Todo o período (sem filtro de data)</option>
+                    <option value="CURRENT_MONTH">Mês atual</option>
+                    <option value="PREVIOUS_MONTH">Mês anterior</option>
+                    <option value="LAST_N_DAYS">Últimos N dias</option>
+                    <option value="CUSTOM">Intervalo customizado</option>
+                  </select>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Recalculado a cada envio — "Mês anterior" sempre significa o mês anterior à data do disparo.
+                  </p>
+                </div>
+
+                {form.filters.periodType === 'LAST_N_DAYS' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1.5">Quantidade de dias</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={form.filters.periodDays ?? 30}
+                      onChange={(e) => setForm({ ...form, filters: { ...form.filters, periodDays: parseInt(e.target.value) || 30 } })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                    />
+                  </div>
+                )}
+
+                {form.filters.periodType === 'CUSTOM' && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1.5">De</label>
+                      <input
+                        type="date"
+                        value={form.filters.periodStart || ''}
+                        onChange={(e) => setForm({ ...form, filters: { ...form.filters, periodStart: e.target.value } })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1.5">Até</label>
+                      <input
+                        type="date"
+                        value={form.filters.periodEnd || ''}
+                        onChange={(e) => setForm({ ...form, filters: { ...form.filters, periodEnd: e.target.value } })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1.5">Status</label>
                   <select
                     value={form.filters.status || 'PENDING'}
@@ -527,6 +591,9 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
               <div key={s.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
                   <span className="font-bold text-slate-800">{s.subject || 'Contas a Pagar e a Receber'} — {describeSchedule(s)}</span>
+                  {describePeriod(s.filters) && (
+                    <span className="text-xs text-blue-600 font-bold">Período: {describePeriod(s.filters)}</span>
+                  )}
                   <span className="text-xs text-slate-500">{s.recipients}</span>
                   {s.last_sent_at && (
                     <span className="text-xs text-slate-400">Último envio: {new Date(s.last_sent_at).toLocaleString('pt-BR')}</span>

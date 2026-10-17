@@ -1990,7 +1990,43 @@ function getTypeColor(type: string): string {
   return type === 'CREDIT' ? '#16a34a' : '#dc2626';
 }
 
-function buildContasAPagarEmailHtml(orgName: string, transactions: any[], columns: string[], lookups: ReportLookups, customMessage?: string): string {
+// Calcula o intervalo de datas (YYYY-MM-DD) a aplicar no relatório, recalculado a cada
+// envio a partir da data de hoje (fuso São Paulo) — "Mês anterior" sempre quer dizer o
+// mês anterior à data do disparo, não uma data fixa gravada no agendamento.
+function computeReportPeriodRange(filters: any, todayIso: string): { from?: string; to?: string } {
+  const periodType = filters?.periodType || 'ALL';
+  const [year, month] = todayIso.split('-').map(Number);
+
+  if (periodType === 'CURRENT_MONTH') {
+    return { from: `${year}-${String(month).padStart(2, '0')}-01`, to: todayIso };
+  }
+
+  if (periodType === 'PREVIOUS_MONTH') {
+    const prevMonthFirstDay = new Date(year, month - 2, 1);
+    const prevYear = prevMonthFirstDay.getFullYear();
+    const prevMonth = prevMonthFirstDay.getMonth() + 1;
+    const lastDayOfPrevMonth = new Date(prevYear, prevMonth, 0).getDate();
+    return {
+      from: `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`,
+      to: `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(lastDayOfPrevMonth).padStart(2, '0')}`,
+    };
+  }
+
+  if (periodType === 'LAST_N_DAYS') {
+    const days = Number(filters?.periodDays) || 30;
+    const fromDate = new Date(`${todayIso}T12:00:00`);
+    fromDate.setDate(fromDate.getDate() - (days - 1));
+    return { from: fromDate.toISOString().split('T')[0], to: todayIso };
+  }
+
+  if (periodType === 'CUSTOM') {
+    return { from: filters?.periodStart || undefined, to: filters?.periodEnd || undefined };
+  }
+
+  return {}; // 'ALL' (ou ausente, agendamentos antigos) — sem filtro de data, igual antes
+}
+
+function buildContasAPagarEmailHtml(orgName: string, transactions: any[], columns: string[], lookups: ReportLookups, customMessage?: string, periodLabel?: string): string {
   const activeColumns = sortReportColumns(columns.length > 0 ? columns : DEFAULT_REPORT_COLUMNS);
   const totalPagar = transactions.filter(t => t.type === 'DEBIT').reduce((sum, t) => sum + (Number(t.value) || 0), 0);
   const totalReceber = transactions.filter(t => t.type === 'CREDIT').reduce((sum, t) => sum + (Number(t.value) || 0), 0);
@@ -2017,7 +2053,8 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
       </div>
       <h2 style="color: #1e293b; font-size: 20px; font-weight: 700; margin-bottom: 8px;">Contas a Pagar e a Receber — ${orgName}</h2>
       ${customMessage ? `<p style="font-size: 14px; color: #334155; margin-bottom: 20px; white-space: pre-line;">${customMessage}</p>` : ''}
-      <p style="font-size: 14px; color: #64748b; margin-bottom: 20px;">Relatório gerado em ${new Date().toLocaleString('pt-BR')}.</p>
+      <p style="font-size: 14px; color: #64748b; margin-bottom: 4px;">Relatório gerado em ${new Date().toLocaleString('pt-BR')}.</p>
+      ${periodLabel ? `<p style="font-size: 14px; color: #64748b; margin-bottom: 20px;">Período: <strong>${periodLabel}</strong></p>` : '<div style="margin-bottom:16px;"></div>'}
       ${transactions.length === 0 ? `
         <p style="font-size:14px;color:#64748b;">Nenhuma conta encontrada para os filtros selecionados.</p>
       ` : `
@@ -2119,6 +2156,17 @@ async function sendScheduledReport(admin: any, schedule: any): Promise<{ success
   if (filters.categoryId) query = query.eq('category_id', filters.categoryId);
   if (filters.costCenterId) query = query.eq('cost_center_id', filters.costCenterId);
 
+  const todayInSaoPaulo = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const { from: periodFrom, to: periodTo } = computeReportPeriodRange(filters, todayInSaoPaulo);
+  if (periodFrom) query = query.gte('date', periodFrom);
+  if (periodTo) query = query.lte('date', periodTo);
+
+  let periodLabel: string | undefined;
+  if (periodFrom || periodTo) {
+    const toBr = (iso?: string) => iso ? iso.split('-').reverse().join('/') : '?';
+    periodLabel = `${toBr(periodFrom)} a ${toBr(periodTo)}`;
+  }
+
   const { data: transactions, error: txError } = await query.order('date', { ascending: true });
   if (txError) return { success: false, error: txError.message };
 
@@ -2149,7 +2197,7 @@ async function sendScheduledReport(admin: any, schedule: any): Promise<{ success
     from: `"${smtpConfig.from_name}" <${smtpConfig.from_email}>`,
     to: recipients.join(', '),
     subject: schedule.subject || `Contas a Pagar e a Receber — ${org.name}`,
-    html: buildContasAPagarEmailHtml(org.name, transactions || [], columns, lookups, schedule.message),
+    html: buildContasAPagarEmailHtml(org.name, transactions || [], columns, lookups, schedule.message, periodLabel),
   });
 
   if (schedule.id) {

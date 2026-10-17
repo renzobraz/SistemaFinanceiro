@@ -150,12 +150,21 @@ export type ReportFrequency = 'daily' | 'weekly' | 'monthly';
 
 export type ReportColumnKey = 'date' | 'description' | 'docNumber' | 'value' | 'bank' | 'category' | 'costCenter' | 'participant';
 
+export type ReportPeriodType = 'ALL' | 'CURRENT_MONTH' | 'PREVIOUS_MONTH' | 'LAST_N_DAYS' | 'CUSTOM';
+
 export interface ReportFilters {
   status?: 'ALL' | 'PENDING' | 'PAID';
   bankId?: string;
   walletId?: string;
   categoryId?: string;
   costCenterId?: string;
+  // Período coberto pelo relatório — calculado de novo a cada envio (ex.: "mês
+  // anterior" é sempre o mês anterior à data do envio, não uma data fixa). Ausente
+  // ou 'ALL' preserva o comportamento antigo (sem filtro de data).
+  periodType?: ReportPeriodType;
+  periodDays?: number;   // usado quando periodType = 'LAST_N_DAYS'
+  periodStart?: string;  // ISO, usado quando periodType = 'CUSTOM'
+  periodEnd?: string;    // ISO, usado quando periodType = 'CUSTOM'
 }
 
 export interface ReportSchedule {
