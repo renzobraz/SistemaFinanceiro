@@ -1944,15 +1944,18 @@ function formatDateBR(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
-const REPORT_COLUMN_DEFINITIONS: Record<string, { label: string; align: 'left' | 'right' }> = {
-  date: { label: 'Vencimento', align: 'left' },
-  description: { label: 'Descrição', align: 'left' },
-  docNumber: { label: 'Nº Documento', align: 'left' },
-  value: { label: 'Valor', align: 'right' },
-  bank: { label: 'Banco', align: 'left' },
-  category: { label: 'Categoria', align: 'left' },
-  costCenter: { label: 'Centro de Custo', align: 'left' },
-  participant: { label: 'Participante', align: 'left' },
+// "width" é um peso relativo (não precisa somar 100 — é normalizado por coluna ativa em
+// buildContasAPagarEmailHtml) usado para que a tabela do e-mail nunca ultrapasse a
+// largura do quadro que a envolve, mesmo com muitas colunas selecionadas.
+const REPORT_COLUMN_DEFINITIONS: Record<string, { label: string; align: 'left' | 'right'; width: number }> = {
+  date: { label: 'Vencimento', align: 'left', width: 10 },
+  description: { label: 'Descrição', align: 'left', width: 20 },
+  docNumber: { label: 'Nº Documento', align: 'left', width: 10 },
+  value: { label: 'Valor', align: 'right', width: 10 },
+  bank: { label: 'Banco', align: 'left', width: 12 },
+  category: { label: 'Categoria', align: 'left', width: 14 },
+  costCenter: { label: 'Centro de Custo', align: 'left', width: 14 },
+  participant: { label: 'Participante', align: 'left', width: 16 },
 };
 
 const DEFAULT_REPORT_COLUMNS = ['date', 'description', 'value'];
@@ -2031,17 +2034,25 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
   const totalPagar = transactions.filter(t => t.type === 'DEBIT').reduce((sum, t) => sum + (Number(t.value) || 0), 0);
   const totalReceber = transactions.filter(t => t.type === 'CREDIT').reduce((sum, t) => sum + (Number(t.value) || 0), 0);
 
+  // table-layout:fixed exige que a 1ª linha (os <th>) defina a largura de cada coluna em
+  // %, senão o e-mail deixa a tabela crescer além do quadro (ex.: Nº Documento vazio
+  // "espremendo" para a direita e saindo da borda). O peso de cada coluna vem de
+  // REPORT_COLUMN_DEFINITIONS e é normalizado só entre as colunas realmente selecionadas.
+  const totalWeight = activeColumns.reduce((sum, col) => sum + (REPORT_COLUMN_DEFINITIONS[col]?.width || 12), 0);
+  const widthFor = (col: string) => `${(((REPORT_COLUMN_DEFINITIONS[col]?.width || 12) / totalWeight) * 100).toFixed(2)}%`;
+  const wordBreak = 'word-break:break-word;overflow-wrap:break-word;';
+
   const headerCells = activeColumns.map(col => {
-    const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const };
-    return `<th style="text-align:${def.align};padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;">${def.label}</th>`;
+    const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const, width: 12 };
+    return `<th style="width:${widthFor(col)};text-align:${def.align};padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;${wordBreak}">${def.label}</th>`;
   }).join('');
 
   const rows = transactions.map(t => {
     const color = getTypeColor(t.type);
     const cells = activeColumns.map(col => {
-      const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const };
+      const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const, width: 12 };
       const cellColor = col === 'value' ? color : '#334155';
-      return `<td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:${cellColor};text-align:${def.align};font-weight:${col === 'value' ? 700 : 400};">${getReportCellValue(col, t, lookups)}</td>`;
+      return `<td style="width:${widthFor(col)};padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:${cellColor};text-align:${def.align};font-weight:${col === 'value' ? 700 : 400};${wordBreak}">${getReportCellValue(col, t, lookups)}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');
@@ -2058,7 +2069,7 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
       ${transactions.length === 0 ? `
         <p style="font-size:14px;color:#64748b;">Nenhuma conta encontrada para os filtros selecionados.</p>
       ` : `
-        <table style="width:100%;border-collapse:collapse;">
+        <table style="width:100%;table-layout:fixed;border-collapse:collapse;">
           <thead><tr>${headerCells}</tr></thead>
           <tbody>${rows}</tbody>
         </table>
