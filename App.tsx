@@ -49,10 +49,12 @@ import {
   Menu,
   SlidersHorizontal,
   CreditCard,
-  Sheet
+  Sheet,
+  Landmark
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 import { ManagedPortfolios } from './components/ManagedPortfolios';
+import { BankStatementImport } from './components/BankStatementImport';
 
 // Implementação segura e à prova de sandbox do window.localStorage para o ambiente de IFrames do AI Studio
 const safeStorage = (() => {
@@ -387,6 +389,7 @@ const App: FC = () => {
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isCreditCardImportOpen, setIsCreditCardImportOpen] = useState(false);
   const [isSpreadsheetImportOpen, setIsSpreadsheetImportOpen] = useState(false);
+  const [isBankStatementImportOpen, setIsBankStatementImportOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [partnerTransaction, setPartnerTransaction] = useState<Transaction | null>(null);
 
@@ -1716,6 +1719,15 @@ const App: FC = () => {
                     <span className="hidden sm:inline">Importar planilha</span>
                   </button>
                 )}
+                {canCreateTransaction && activeTab === 'bank-transactions' && (
+                  <button
+                    onClick={() => setIsBankStatementImportOpen(true)}
+                    className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors h-[38px] shadow-sm animate-fade-in"
+                  >
+                    <Landmark className="w-4 h-4 text-teal-600" />
+                    <span className="hidden sm:inline">Importar extrato</span>
+                  </button>
+                )}
                 {canCreateTransaction && activeTab !== 'investments' && (
                   <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
                       <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Lançar</span>
@@ -2229,7 +2241,23 @@ const App: FC = () => {
         />
       )}
 
-      <TransactionForm 
+      {isBankStatementImportOpen && (
+        <BankStatementImport
+          onClose={() => setIsBankStatementImportOpen(false)}
+          onSuccess={() => {
+            setIsBankStatementImportOpen(false);
+            loadTransactions();
+            loadRegistries(true, selectedWalletId);
+          }}
+          banks={registries.banks}
+          categories={registries.categories}
+          costCenters={registries.costCenters}
+          wallets={registries.wallets}
+          participants={registries.participants}
+        />
+      )}
+
+      <TransactionForm
         isOpen={isFormOpen} 
         onClose={() => setIsFormOpen(false)} 
         onSave={handleSaveTransaction} 

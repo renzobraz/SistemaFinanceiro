@@ -113,11 +113,15 @@ export function findCandidates(
   dueDate?: string
 ): CandidateMatch[] {
   const canonicalName = resolveCanonicalName(item.rawDescription, aliases);
-  const debits = pendingTxs.filter(tx => tx.type === "DEBIT" && tx.status === "PENDING");
+  // Fatura de cartão: item.isRefund é sempre false, então isso continua batendo só com
+  // DEBIT como antes. Extrato de conta (créditos/débitos reais): isRefund=true marca
+  // uma entrada, então casa com transações PENDING do tipo CREDIT.
+  const expectedType = item.isRefund ? "CREDIT" : "DEBIT";
+  const candidatesPool = pendingTxs.filter(tx => tx.type === expectedType && tx.status === "PENDING");
 
   const candidates: CandidateMatch[] = [];
 
-  for (const tx of debits) {
+  for (const tx of candidatesPool) {
     const diff = Math.abs(tx.value - item.value);
     if (diff <= 0.01) {
       const similarity = descriptionSimilarity(canonicalName, tx.description);
