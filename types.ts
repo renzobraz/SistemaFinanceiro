@@ -36,6 +36,12 @@ export interface BaseEntity {
 export interface Bank extends BaseEntity {
   currency: Currency;
   type: WalletType;
+  // Rendimento diário automático (conta remunerada, ex: Mercado Pago/Nubank) em % do CDI
+  yieldEnabled?: boolean;
+  yieldCdiPercent?: number; // Ex: 100 = 100% do CDI, 105 = 105% do CDI
+  yieldCategoryId?: string;
+  yieldCostCenterId?: string;
+  yieldParticipantId?: string;
 }
 
 export interface Category extends BaseEntity {}
@@ -102,6 +108,7 @@ export interface Transaction {
   createdAt?: string;
   managedPortfolioId?: string;
   importBatchId?: string;
+  autoYieldDate?: string; // Preenchido quando o lançamento foi gerado automaticamente pelo cron de rendimento CDI (data do dia que rendeu)
 }
 
 export interface AssetAccrual {

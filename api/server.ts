@@ -2297,6 +2297,168 @@ app.post("/api/cron/send-reports", async (req: any, res: any) => {
   }
 });
 
+// =========================================================================
+// RENDIMENTO DIÁRIO DE CONTA (% do CDI) — cron diário
+// =========================================================================
+// Converte 'YYYY-MM-DD' para 'DD/MM/YYYY' (formato exigido pela API do Banco Central)
+function toBcbDateFormat(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function addDaysIso(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().substring(0, 10);
+}
+
+// Busca a taxa CDI diária (SGS série 12, % ao dia) publicada pelo Banco Central no intervalo informado.
+// Retorna um mapa { 'YYYY-MM-DD': taxaPercentual }. Dias sem valor (fins de semana/feriados) não aparecem no mapa.
+async function fetchCdiDailyRates(startIso: string, endIso: string): Promise<Record<string, number>> {
+  const url = `https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json&dataInicial=${toBcbDateFormat(startIso)}&dataFinal=${toBcbDateFormat(endIso)}`;
+  const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (FinControlPro)' } });
+  if (!response.ok) {
+    if (response.status === 404) return {}; // Nenhum valor no período (ex: período todo em fim de semana/feriado)
+    throw new Error(`Falha ao buscar CDI no Banco Central (status ${response.status})`);
+  }
+  const data: any = await response.json();
+  const map: Record<string, number> = {};
+  (Array.isArray(data) ? data : []).forEach((row: any) => {
+    const [d, m, y] = String(row.data).split('/');
+    map[`${y}-${m}-${d}`] = Number(row.valor);
+  });
+  return map;
+}
+
+app.post("/api/cron/apply-account-yield", async (req: any, res: any) => {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.authorization;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ error: "Não autorizado" });
+  }
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceKey) {
+    return res.status(500).json({ error: "Configuração do Supabase (service role) ausente" });
+  }
+
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
+
+  const summary = { banksChecked: 0, postingsCreated: 0, skipped: 0, errors: [] as string[] };
+
+  try {
+    const todayInSaoPaulo = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const yesterday = addDaysIso(todayInSaoPaulo, -1);
+    // Janela de segurança: cobre até 14 dias para recuperar automaticamente de eventuais falhas do cron,
+    // sem nunca "voltar" além disso.
+    const windowStart = addDaysIso(todayInSaoPaulo, -14);
+
+    const { data: banks, error: banksError } = await admin
+      .from('banks')
+      .select('id, name, organization_id, wallet_id, yield_enabled, yield_cdi_percent, yield_category_id, yield_cost_center_id, yield_participant_id')
+      .eq('yield_enabled', true);
+    if (banksError) throw banksError;
+
+    const enabledBanks = banks || [];
+    summary.banksChecked = enabledBanks.length;
+    if (enabledBanks.length === 0) {
+      return res.json(summary);
+    }
+
+    const cdiRates = await fetchCdiDailyRates(windowStart, yesterday);
+    const availableDates = Object.keys(cdiRates).sort(); // 'YYYY-MM-DD' ordena corretamente como string
+
+    for (const bank of enabledBanks) {
+      try {
+        if (!bank.yield_cdi_percent || Number(bank.yield_cdi_percent) <= 0) {
+          summary.skipped++;
+          summary.errors.push(`Conta ${bank.name}: yield_enabled=true mas yield_cdi_percent não configurado.`);
+          continue;
+        }
+        if (!bank.yield_category_id) {
+          summary.skipped++;
+          summary.errors.push(`Conta ${bank.name}: falta configurar a Categoria do rendimento.`);
+          continue;
+        }
+
+        // Último dia já lançado para esta conta. Se nunca rodou antes, começa apenas de ontem
+        // (não faz backfill retroativo não solicitado ao ligar o recurso pela primeira vez).
+        const { data: lastPosting } = await admin
+          .from('transactions')
+          .select('auto_yield_date')
+          .eq('bank_id', bank.id)
+          .not('auto_yield_date', 'is', null)
+          .order('auto_yield_date', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const lastPostedDate = lastPosting?.auto_yield_date || addDaysIso(yesterday, -1);
+
+        const pendingDates = availableDates.filter(d => d > lastPostedDate && d <= yesterday);
+
+        for (const targetDate of pendingDates) {
+          // Saldo do dia anterior ao dia que rendeu (ex: rendimento de segunda usa o saldo de domingo,
+          // que é igual ao fechamento de sexta se não houve movimentação no fim de semana).
+          const { data: txRows, error: txError } = await admin
+            .from('transactions')
+            .select('value, type')
+            .eq('bank_id', bank.id)
+            .eq('status', 'PAID')
+            .lt('date', targetDate);
+          if (txError) throw txError;
+
+          const balance = (txRows || []).reduce((acc: number, t: any) => {
+            return acc + (t.type === 'CREDIT' ? Number(t.value) : -Number(t.value));
+          }, 0);
+
+          if (balance <= 0) continue;
+
+          const dailyRatePercent = cdiRates[targetDate];
+          const yieldValue = Math.round(balance * (dailyRatePercent / 100) * (Number(bank.yield_cdi_percent) / 100) * 100) / 100;
+          if (yieldValue <= 0) continue;
+
+          const [dy, dm, dd] = [targetDate.substring(0, 4), targetDate.substring(5, 7), targetDate.substring(8, 10)];
+          const { error: insertError } = await admin.from('transactions').insert({
+            id: crypto.randomUUID(),
+            date: targetDate,
+            description: `Rendimento (${Number(bank.yield_cdi_percent)}% do CDI) - ${dd}/${dm}/${dy}`,
+            doc_number: '',
+            value: yieldValue,
+            type: 'CREDIT',
+            status: 'PENDING',
+            bank_id: bank.id,
+            category_id: bank.yield_category_id,
+            cost_center_id: bank.yield_cost_center_id || null,
+            participant_id: bank.yield_participant_id || null,
+            wallet_id: bank.wallet_id || null,
+            organization_id: bank.organization_id,
+            auto_yield_date: targetDate,
+          });
+
+          if (insertError) {
+            if (insertError.code === '23505') {
+              // Já existia um lançamento para esta conta+dia (corrida/reexecução do cron) — ignora.
+              continue;
+            }
+            throw insertError;
+          }
+          summary.postingsCreated++;
+        }
+      } catch (bankError: any) {
+        summary.errors.push(`Conta ${bank.name}: ${bankError.message}`);
+      }
+    }
+
+    return res.json(summary);
+  } catch (error: any) {
+    console.error("[CRON] Erro ao processar rendimento de contas:", error);
+    return res.status(500).json({ error: "Falha ao processar rendimento de contas", details: error.message, ...summary });
+  }
+});
+
 // Envio manual — usado pelo botão "Enviar Agora" da tela de Relatórios Agendados.
 // Aceita { scheduleId } para reenviar um agendamento salvo, ou os dados completos
 // do formulário (sem scheduleId) para um envio avulso, sem persistir nada.

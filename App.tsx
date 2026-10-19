@@ -2041,9 +2041,12 @@ const App: FC = () => {
                         />
                       </div>
                     ) : (
-                    <RegistryManager 
-                        title={registryTabs.find(t => t.id === activeRegistryTab)?.label || ''} 
-                        items={registries[activeRegistryTab as keyof typeof registries]} 
+                    <RegistryManager
+                        title={registryTabs.find(t => t.id === activeRegistryTab)?.label || ''}
+                        items={registries[activeRegistryTab as keyof typeof registries]}
+                        categories={registries.categories}
+                        costCenters={registries.costCenters}
+                        participants={registries.participants}
                         userModulePermissions={userModulePermissions}
                         userRole={userRole}
                         // @ts-ignore

@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { Plus, Trash2, Edit2, Save, X, Upload, Download, Search, Tag, Loader2, Wand2, Sparkles, ChevronUp, ChevronDown, ArrowUpDown, Archive, ArchiveRestore, Eye, EyeOff, Users, Wallet } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Upload, Download, Search, Tag, Loader2, Wand2, Sparkles, ChevronUp, ChevronDown, ArrowUpDown, Archive, ArchiveRestore, Eye, EyeOff, Users, Wallet, Percent } from 'lucide-react';
 import { BaseEntity, Currency, WalletType } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -31,6 +31,9 @@ interface RegistryManagerProps {
   foreignKey?: string;
   assetTypes?: BaseEntity[];
   assetSectors?: BaseEntity[];
+  categories?: BaseEntity[];
+  costCenters?: BaseEntity[];
+  participants?: BaseEntity[];
   userModulePermissions?: Record<string, any>;
   userRole?: string;
 }
@@ -62,6 +65,9 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   foreignKey,
   assetTypes,
   assetSectors,
+  categories,
+  costCenters,
+  participants,
   userModulePermissions = {},
   userRole = ""
 }) => {
@@ -95,6 +101,13 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
   const [fixingParticipantId, setFixingParticipantId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'ARCHIVED'>('ACTIVE');
   const [isAutoFilling, setIsAutoFilling] = useState(false);
+  const [yieldModalItem, setYieldModalItem] = useState<(BaseEntity & { [key: string]: any }) | null>(null);
+  const [yieldEnabled, setYieldEnabled] = useState(false);
+  const [yieldCdiPercent, setYieldCdiPercent] = useState<number>(100);
+  const [yieldCategoryId, setYieldCategoryId] = useState('');
+  const [yieldCostCenterId, setYieldCostCenterId] = useState('');
+  const [yieldParticipantId, setYieldParticipantId] = useState('');
+  const [isSavingYield, setIsSavingYield] = useState(false);
   const [nameFilter, setNameFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [sectorFilter, setSectorFilter] = useState('');
@@ -347,6 +360,14 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
         if (title.toLowerCase().includes('banco')) {
           extra.currency = tempCurrency;
           extra.type = tempWalletType;
+          // Preserva a configuração de rendimento (% do CDI) já salva nesta conta —
+          // este formulário inline não a edita, apenas nome/tipo/moeda.
+          const editingBank = items.find(i => i.id === editingId);
+          extra.yieldEnabled = editingBank?.yieldEnabled || false;
+          extra.yieldCdiPercent = editingBank?.yieldCdiPercent;
+          extra.yieldCategoryId = editingBank?.yieldCategoryId;
+          extra.yieldCostCenterId = editingBank?.yieldCostCenterId;
+          extra.yieldParticipantId = editingBank?.yieldParticipantId;
         }
         if (title.toLowerCase().includes('carteira')) {
           // Wallet is now just a portfolio/company name
@@ -364,6 +385,35 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
       } finally {
         setIsSaving(false);
       }
+    }
+  };
+
+  const handleOpenYieldModal = (item: BaseEntity & { [key: string]: any }) => {
+    setYieldModalItem(item);
+    setYieldEnabled(item.yieldEnabled || false);
+    setYieldCdiPercent(item.yieldCdiPercent || 100);
+    setYieldCategoryId(item.yieldCategoryId || '');
+    setYieldCostCenterId(item.yieldCostCenterId || '');
+    setYieldParticipantId(item.yieldParticipantId || '');
+  };
+
+  const handleSaveYieldConfig = async () => {
+    if (!yieldModalItem || isSavingYield) return;
+    if (yieldEnabled && !yieldCategoryId) return; // Categoria é obrigatória quando habilitado
+    setIsSavingYield(true);
+    try {
+      await onEdit(yieldModalItem.id, yieldModalItem.name, {
+        currency: yieldModalItem.currency,
+        type: yieldModalItem.type,
+        yieldEnabled,
+        yieldCdiPercent,
+        yieldCategoryId: yieldCategoryId || undefined,
+        yieldCostCenterId: yieldCostCenterId || undefined,
+        yieldParticipantId: yieldParticipantId || undefined,
+      });
+      setYieldModalItem(null);
+    } finally {
+      setIsSavingYield(false);
     }
   };
 
@@ -1430,6 +1480,19 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
                               {item.active === false ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
                             </button>
                           )}
+                          {isBankRegistry && hasEditPermission && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleOpenYieldModal(item); }}
+                              className={`p-1.5 rounded-md transition-colors ${
+                                item.yieldEnabled
+                                  ? 'bg-purple-100 text-purple-600 hover:bg-purple-200 shadow-sm'
+                                  : 'text-slate-400 hover:text-purple-600 hover:bg-purple-100'
+                              }`}
+                              title={item.yieldEnabled ? `Rendimento: ${item.yieldCdiPercent || 0}% do CDI` : "Configurar rendimento (% do CDI)"}
+                            >
+                              <Percent className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           {hasEditPermission && (
                             <button onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-100 rounded-md transition-colors" title="Editar">
                               <Edit2 className="w-3.5 h-3.5" />
@@ -1809,6 +1872,106 @@ export const RegistryManager: React.FC<RegistryManagerProps> = ({
               >
                 {isMergingSelected ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
                 Unificar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de configuração de rendimento diário (% do CDI) de uma conta */}
+      {yieldModalItem && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Percent className="w-5 h-5 text-purple-600" /> Rendimento de "{yieldModalItem.name}"
+              </h3>
+              <p className="text-sm text-slate-500 mt-1">
+                Gera automaticamente, todo dia útil, um lançamento PENDENTE em Contas a Receber com o
+                rendimento do saldo do dia anterior, usando a taxa CDI diária publicada pelo Banco Central.
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={yieldEnabled}
+                  onChange={(e) => setYieldEnabled(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                />
+                <span className="text-sm font-medium text-gray-700">Habilitar rendimento automático nesta conta</span>
+              </label>
+
+              {yieldEnabled && (
+                <div className="space-y-4 animate-fade-in">
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">% do CDI</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={yieldCdiPercent}
+                        onChange={(e) => setYieldCdiPercent(parseFloat(e.target.value) || 0)}
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white pr-16"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">% do CDI</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">Ex: 100 = rende o CDI integral, 105 = rende 105% do CDI.</p>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                      Categoria <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={yieldCategoryId}
+                      onChange={(e) => setYieldCategoryId(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+                    >
+                      <option value="">— selecione —</option>
+                      {(categories || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Centro de Custo (opcional)</label>
+                    <select
+                      value={yieldCostCenterId}
+                      onChange={(e) => setYieldCostCenterId(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+                    >
+                      <option value="">— nenhum —</option>
+                      {(costCenters || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Participante (opcional)</label>
+                    <select
+                      value={yieldParticipantId}
+                      onChange={(e) => setYieldParticipantId(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+                    >
+                      <option value="">— nenhum —</option>
+                      {(participants || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-2">
+              <button
+                onClick={() => setYieldModalItem(null)}
+                disabled={isSavingYield}
+                className="px-4 py-2 text-slate-600 text-sm font-bold hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveYieldConfig}
+                disabled={isSavingYield || (yieldEnabled && !yieldCategoryId)}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-bold hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isSavingYield ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Salvar
               </button>
             </div>
           </div>

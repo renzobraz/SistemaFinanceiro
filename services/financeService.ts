@@ -419,7 +419,8 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   iof: db.iof ? Number(db.iof) : undefined,
   vet: db.vet ? Number(db.vet) : undefined,
   originalValue: db.original_value ? Number(db.original_value) : undefined,
-  originalCurrency: db.original_currency || undefined
+  originalCurrency: db.original_currency || undefined,
+  autoYieldDate: db.auto_yield_date ? String(db.auto_yield_date).substring(0, 10) : undefined
 });
 
 const mapTransactionToDb = (t: Transaction, userId?: string | null, orgId?: string | null) => {
@@ -441,6 +442,7 @@ const mapTransactionToDb = (t: Transaction, userId?: string | null, orgId?: stri
     managed_portfolio_id: t.managedPortfolioId || null,
     import_batch_id: t.importBatchId || null,
     emission_date: t.emissionDate || null,
+    auto_yield_date: t.autoYieldDate || null,
   };
 
   // Only include exchange fields if they have actual values to prevent PGRST204 errors on older schemas
@@ -2034,13 +2036,18 @@ export const financeService = {
         
         let result: T[] = [];
         if (type === 'banks') {
-          result = allData.map((d: any) => ({ 
-            id: String(d.id), 
-            name: d.name, 
-            type: d.type || 'CHECKING', 
+          result = allData.map((d: any) => ({
+            id: String(d.id),
+            name: d.name,
+            type: d.type || 'CHECKING',
             currency: d.currency || 'BRL',
             active: d.active !== false,
-            walletId: d.wallet_id
+            walletId: d.wallet_id,
+            yieldEnabled: d.yield_enabled === true,
+            yieldCdiPercent: d.yield_cdi_percent != null ? Number(d.yield_cdi_percent) : undefined,
+            yieldCategoryId: d.yield_category_id ? String(d.yield_category_id) : undefined,
+            yieldCostCenterId: d.yield_cost_center_id ? String(d.yield_cost_center_id) : undefined,
+            yieldParticipantId: d.yield_participant_id ? String(d.yield_participant_id) : undefined
           })) as any;
 
           const { data: sessionData } = await supabase.auth.getSession();
@@ -2285,6 +2292,11 @@ export const financeService = {
         if (type === 'banks') {
             payload.type = (item as any).type || 'CHECKING';
             payload.currency = (item as any).currency || 'BRL';
+            payload.yield_enabled = (item as any).yieldEnabled === true;
+            payload.yield_cdi_percent = (item as any).yieldCdiPercent || null;
+            payload.yield_category_id = (item as any).yieldCategoryId || null;
+            payload.yield_cost_center_id = (item as any).yieldCostCenterId || null;
+            payload.yield_participant_id = (item as any).yieldParticipantId || null;
         }
         if (type === 'wallets') {
             // Wallet is now just a portfolio/company name
