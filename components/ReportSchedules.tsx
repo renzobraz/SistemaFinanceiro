@@ -110,6 +110,27 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
     loadSchedules();
   }, []);
 
+  // Troca a carteira do filtro e limpa Banco/Categoria/Centro de Custo que não pertençam
+  // mais a ela (senão o relatório continua filtrando por um registro de outra carteira,
+  // sem o usuário perceber, e o select só mantinha a opção "escondida" por baixo).
+  const handleWalletFilterChange = (newWalletId: string | undefined) => {
+    setForm(f => {
+      const filters = { ...f.filters, walletId: newWalletId };
+      if (!newWalletId) return { ...f, filters };
+
+      const bank = registries.banks.find(b => b.id === filters.bankId);
+      if (bank && bank.walletId && bank.walletId !== newWalletId) filters.bankId = undefined;
+
+      const category = registries.categories.find(c => c.id === filters.categoryId);
+      if (category && category.walletId && category.walletId !== newWalletId) filters.categoryId = undefined;
+
+      const costCenter = registries.costCenters.find(c => c.id === filters.costCenterId);
+      if (costCenter && costCenter.walletId && costCenter.walletId !== newWalletId) filters.costCenterId = undefined;
+
+      return { ...f, filters };
+    });
+  };
+
   const toggleColumn = (key: ReportColumnKey) => {
     setForm(f => ({
       ...f,
@@ -417,7 +438,7 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
                   <label className="block text-xs font-bold text-slate-500 mb-1.5">Carteira</label>
                   <select
                     value={form.filters.walletId || ''}
-                    onChange={(e) => setForm({ ...form, filters: { ...form.filters, walletId: e.target.value || undefined } })}
+                    onChange={(e) => handleWalletFilterChange(e.target.value || undefined)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                   >
                     <option value="">Todas Carteiras</option>
@@ -433,7 +454,13 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                   >
                     <option value="">Todas Categorias</option>
-                    {registries.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    {registries.categories
+                      .filter(c => {
+                        if (c.id === form.filters.categoryId) return true; // sempre mostra a selecionada
+                        if (!form.filters.walletId) return true;
+                        return !c.walletId || c.walletId === form.filters.walletId;
+                      })
+                      .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
 
@@ -445,7 +472,13 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                   >
                     <option value="">Todos os Centros de Custo</option>
-                    {registries.costCenters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    {registries.costCenters
+                      .filter(c => {
+                        if (c.id === form.filters.costCenterId) return true; // sempre mostra o selecionado
+                        if (!form.filters.walletId) return true;
+                        return !c.walletId || c.walletId === form.filters.walletId;
+                      })
+                      .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
               </div>
