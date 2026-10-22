@@ -423,6 +423,38 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
   const filterInputClass = "w-full px-2 py-1 bg-white border border-slate-200 rounded text-[11px] font-normal normal-case outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-300";
 
+  // Opções dos filtros de coluna (Banco/Categoria/Participante/Centro de Custo) restritas à
+  // Carteira escolhida no próprio filtro de coluna — evita mostrar/selecionar um registro de
+  // outra carteira quando a tela está em modo "Todas as Carteiras" (onde `registries` chega
+  // sem filtro de servidor por carteira).
+  const filterBankOptions = [...registries.banks]
+    .filter(b => b.id === columnFilters.bankId || !columnFilters.walletId || b.walletId === columnFilters.walletId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const filterCategoryOptions = registries.categories
+    .filter(c => c.id === columnFilters.categoryId || !columnFilters.walletId || !c.walletId || c.walletId === columnFilters.walletId);
+  const filterParticipantOptions = registries.participants
+    .filter(p => p.id === columnFilters.participantId || !columnFilters.walletId || !p.walletId || p.walletId === columnFilters.walletId);
+  const filterCostCenterOptions = registries.costCenters
+    .filter(cc => cc.id === columnFilters.costCenterId || !columnFilters.walletId || !cc.walletId || cc.walletId === columnFilters.walletId);
+
+  // Troca a carteira do filtro de coluna e limpa Banco/Categoria/Participante/Centro de Custo
+  // que não pertençam mais a ela (mesmo cuidado do filtro de Relatórios Agendados).
+  const handleColumnWalletFilterChange = (newWalletId: string) => {
+    setColumnFilters(f => {
+      const next = { ...f, walletId: newWalletId };
+      if (!newWalletId) return next;
+      const bank = registries.banks.find(b => b.id === f.bankId);
+      if (bank && bank.walletId && bank.walletId !== newWalletId) next.bankId = '';
+      const category = registries.categories.find(c => c.id === f.categoryId);
+      if (category && category.walletId && category.walletId !== newWalletId) next.categoryId = '';
+      const participant = registries.participants.find(p => p.id === f.participantId);
+      if (participant && participant.walletId && participant.walletId !== newWalletId) next.participantId = '';
+      const costCenter = registries.costCenters.find(cc => cc.id === f.costCenterId);
+      if (costCenter && costCenter.walletId && costCenter.walletId !== newWalletId) next.costCenterId = '';
+      return next;
+    });
+  };
+
   return (
     <>
         <div className={containerClasses}>
@@ -536,7 +568,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Banco</label>
                 <select value={columnFilters.bankId} onChange={e => setColumnFilters(f => ({...f, bankId: e.target.value}))} className={filterInputClass}>
                   <option value="">Todos</option>
-                  {registries.banks.sort((a,b) => a.name.localeCompare(b.name)).map(b => (
+                  {filterBankOptions.map(b => (
                     <option key={b.id} value={b.id}>{b.name} {b.currency && b.currency !== 'BRL' ? `(${b.currency})` : ''}</option>
                   ))}
                 </select>
@@ -544,7 +576,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Carteira</label>
-                <select value={columnFilters.walletId} onChange={e => setColumnFilters(f => ({...f, walletId: e.target.value}))} className={filterInputClass}>
+                <select value={columnFilters.walletId} onChange={e => handleColumnWalletFilterChange(e.target.value)} className={filterInputClass}>
                   <option value="">Todas</option>
                   {registries.wallets?.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
@@ -554,7 +586,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Categoria</label>
                 <select value={columnFilters.categoryId} onChange={e => setColumnFilters(f => ({...f, categoryId: e.target.value}))} className={filterInputClass}>
                   <option value="">Todas</option>
-                  {registries.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {filterCategoryOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
 
@@ -562,7 +594,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Participante</label>
                 <select value={columnFilters.participantId} onChange={e => setColumnFilters(f => ({...f, participantId: e.target.value}))} className={filterInputClass}>
                   <option value="">Todos</option>
-                  {registries.participants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {filterParticipantOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
 
@@ -570,7 +602,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">C. Custo</label>
                 <select value={columnFilters.costCenterId} onChange={e => setColumnFilters(f => ({...f, costCenterId: e.target.value}))} className={filterInputClass}>
                   <option value="">Todos</option>
-                  {registries.costCenters.map(cc => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+                  {filterCostCenterOptions.map(cc => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
                 </select>
               </div>
 
@@ -621,13 +653,13 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         <th className="p-2">
                             <select value={columnFilters.bankId} onChange={e => setColumnFilters(f => ({...f, bankId: e.target.value}))} className={filterInputClass}>
                                 <option value="">Todos</option>
-                                {registries.banks.sort((a,b) => a.name.localeCompare(b.name)).map(b => (
+                                {filterBankOptions.map(b => (
                                     <option key={b.id} value={b.id}>{b.name} {b.currency && b.currency !== 'BRL' ? `(${b.currency})` : ''}</option>
                                 ))}
                             </select>
                         </th>
                         <th className="p-2">
-                             <select value={columnFilters.walletId} onChange={e => setColumnFilters(f => ({...f, walletId: e.target.value}))} className={filterInputClass}>
+                             <select value={columnFilters.walletId} onChange={e => handleColumnWalletFilterChange(e.target.value)} className={filterInputClass}>
                                 <option value="">Todas</option>
                                 {registries.wallets?.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                             </select>
@@ -635,19 +667,19 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         <th className="p-2">
                             <select value={columnFilters.categoryId} onChange={e => setColumnFilters(f => ({...f, categoryId: e.target.value}))} className={filterInputClass}>
                                 <option value="">Todas</option>
-                                {registries.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                {filterCategoryOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
                         </th>
                         <th className="p-2">
                             <select value={columnFilters.participantId} onChange={e => setColumnFilters(f => ({...f, participantId: e.target.value}))} className={filterInputClass}>
                                 <option value="">Todos</option>
-                                {registries.participants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                {filterParticipantOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                         </th>
                         <th className="p-2">
                             <select value={columnFilters.costCenterId} onChange={e => setColumnFilters(f => ({...f, costCenterId: e.target.value}))} className={filterInputClass}>
                                 <option value="">Todos</option>
-                                {registries.costCenters.map(cc => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+                                {filterCostCenterOptions.map(cc => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
                             </select>
                         </th>
                         <th className="p-2">

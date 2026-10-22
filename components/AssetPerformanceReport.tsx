@@ -1256,16 +1256,20 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
           walletId = String(selectedWalletId);
         }
 
-        // Se ainda estiver vazio e não houver contexto, não forçamos o banco [0]
-        // O financeService deve conseguir salvar sem banco se o banco for opcional
-        // Mas para transações reais, o banco costuma ser necessário.
-        // Se ainda não temos nada, aí sim usamos o primeiro apenas como último recurso
-        if (!bankId && registries.banks.length > 0) bankId = String(registries.banks[0].id);
-        if (!walletId && registries.wallets.length > 0) walletId = String(registries.wallets[0].id);
-        
-        // Categoria de rendimentos
-        let yieldCat = registries.categories.find(c => 
-          c.name.toLowerCase().includes('rendimento') || 
+        // Sem contexto confiável de Banco/Carteira (sem lançamento anterior deste ativo e sem
+        // filtro específico selecionado), recusamos a gerar o lançamento em vez de "adivinhar"
+        // pegando o primeiro banco/carteira da lista — isso já causou lançamento indo parar na
+        // conta/carteira errada silenciosamente.
+        if (!bankId || !walletId) {
+          alert('Não foi possível determinar automaticamente o Banco e a Carteira deste ativo (não há lançamento anterior dele e nenhum Banco/Carteira específico está selecionado nos filtros do topo). Selecione uma Carteira e um Banco específicos antes de atualizar o saldo.');
+          return;
+        }
+
+        // Categoria de rendimentos — restrita à carteira resolvida (ou categorias compartilhadas
+        // entre carteiras), para não aplicar por engano uma categoria de outra carteira.
+        const categoriesInWallet = registries.categories.filter(c => !c.walletId || c.walletId === walletId);
+        let yieldCat = categoriesInWallet.find(c =>
+          c.name.toLowerCase().includes('rendimento') ||
           c.name.toLowerCase().includes('provento') ||
           c.name.toLowerCase().includes('ajuste')
         );
@@ -1273,6 +1277,10 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
         const dateStr = new Date().toISOString().split('T')[0];
 
         if (diff > 0) {
+          if (!yieldCat) {
+            alert('Não existe uma categoria "Rendimento", "Provento" ou "Ajuste" cadastrada para esta carteira. Cadastre uma categoria com um desses nomes antes de atualizar o saldo, ou lance o rendimento manualmente.');
+            return;
+          }
           // Rendimento (CRÉDITO)
           await financeService.saveTransaction({
             id: '',
@@ -1285,8 +1293,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             bankId: bankId,
             walletId: walletId,
             participantId: asset.participantId,
-            categoryId: yieldCat?.id || (registries.categories[0]?.id || ''),
-            costCenterId: lastTx?.costCenterId || (registries.costCenters && registries.costCenters[0]?.id) || ''
+            categoryId: yieldCat.id,
+            costCenterId: lastTx?.costCenterId || ''
           });
 
           // Adiciona também ao histórico de acréscimos manuais para visibilidade
@@ -1299,6 +1307,11 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             description: `Ajuste Automático via Atualização de Saldo`
           });
         } else {
+          const debitCat = categoriesInWallet.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('imposto')) || yieldCat;
+          if (!debitCat) {
+            alert('Não existe uma categoria "Taxa", "Imposto", "Rendimento", "Provento" ou "Ajuste" cadastrada para esta carteira. Cadastre uma categoria compatível antes de atualizar o saldo, ou lance o ajuste manualmente.');
+            return;
+          }
           // Ajuste Negativo (DÉBITO)
           await financeService.saveTransaction({
             id: '',
@@ -1311,8 +1324,8 @@ export const AssetPerformanceReport: React.FC<AssetPerformanceReportProps> = ({
             bankId: bankId,
             walletId: walletId,
             participantId: asset.participantId,
-            categoryId: registries.categories.find(c => c.name.toLowerCase().includes('taxa') || c.name.toLowerCase().includes('imposto'))?.id || yieldCat?.id || (registries.categories[0]?.id || ''),
-            costCenterId: lastTx?.costCenterId || (registries.costCenters && registries.costCenters[0]?.id) || ''
+            categoryId: debitCat.id,
+            costCenterId: lastTx?.costCenterId || ''
           });
 
           // Registra o ajuste negativo também
