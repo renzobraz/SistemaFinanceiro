@@ -35,6 +35,19 @@ import {
   FeeCategoryKey
 } from '../types';
 
+// Formata uma data 'YYYY-MM-DD' para 'DD/MM/YYYY' sem passar por `new Date(string)` — esse
+// construtor interpreta a string como UTC meia-noite, e ao exibir no fuso de Brasília (UTC-3)
+// a data "volta" um dia (ex: 15/01 vira 14/01 no cabeçalho). Caso a string não seja uma data
+// pura (ex: já venha com horário), cai no comportamento antigo como fallback.
+function formatDateSafe(dateStr?: string | null): string {
+  if (!dateStr) return 'N/D';
+  const parts = dateStr.split('-');
+  if (parts.length === 3 && parts[0].length === 4) {
+    return `${parts[2].substring(0, 2)}/${parts[1]}/${parts[0]}`;
+  }
+  return new Date(dateStr).toLocaleDateString('pt-BR');
+}
+
 interface BrokerageImportProps {
   onClose: () => void;
   onSuccess: () => void;
@@ -1318,7 +1331,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                         <span className="text-slate-300">|</span>
                         <div>
                           <span className="font-black text-slate-800">Nota #{note.docNumber}</span>
-                          <span className="ml-2 text-xs text-slate-400 font-bold">{new Date(note.date).toLocaleDateString('pt-BR')} · {bankName}</span>
+                          <span className="ml-2 text-xs text-slate-400 font-bold">{formatDateSafe(note.date)} · {bankName}</span>
                         </div>
                         <div className="ml-auto flex items-center gap-2">
                           {editingTxs.some(t => t._changed) && (
@@ -1426,7 +1439,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                           const noneAssigned = withPortfolio === 0;
                           return (
                             <tr key={note.key} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                              <td className="px-4 py-3 font-bold text-slate-700">{new Date(note.date).toLocaleDateString('pt-BR')}</td>
+                              <td className="px-4 py-3 font-bold text-slate-700">{formatDateSafe(note.date)}</td>
                               <td className="px-4 py-3 font-mono text-slate-800">#{note.docNumber}</td>
                               <td className="px-4 py-3 text-slate-600">{bankName}</td>
                               <td className="px-4 py-3 text-center text-slate-700">{note.txs.length}</td>
@@ -1533,7 +1546,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
                   <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">Data do Pregão</p>
                   <p className="text-lg font-black text-slate-800">
-                    {parsedNote.metadata?.date ? new Date(parsedNote.metadata.date).toLocaleDateString('pt-BR') : 'N/D'}
+                    {formatDateSafe(parsedNote.metadata?.date)}
                   </p>
                 </div>
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
@@ -1567,7 +1580,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
                   <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">Liquidação</p>
                   <p className="text-lg font-black text-slate-800">
-                    {parsedNote.metadata?.settlementDate ? new Date(parsedNote.metadata.settlementDate).toLocaleDateString('pt-BR') : 'N/D'}
+                    {formatDateSafe(parsedNote.metadata?.settlementDate)}
                   </p>
                 </div>
               </div>
@@ -2062,7 +2075,7 @@ export const BrokerageImport: React.FC<BrokerageImportProps> = ({
                 </div>
                 <div>
                   <h3 className="text-lg font-black text-slate-800 tracking-tight">Comparativo de Diferenças</h3>
-                  <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Nota Nº {noteNumber} — {tradeDate ? new Date(tradeDate).toLocaleDateString('pt-BR') : 'N/D'}</p>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Nota Nº {noteNumber} — {formatDateSafe(tradeDate)}</p>
                 </div>
               </div>
               <button 

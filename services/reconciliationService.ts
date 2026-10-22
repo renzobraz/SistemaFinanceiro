@@ -164,17 +164,32 @@ export function findCandidates(
 }
 
 /**
- * 2d-bis. Acha, entre transações já PAGAS do banco, uma que bata exatamente com o item
- * do extrato (mesmo tipo, valor e data) — sinal de que aquele lançamento já foi
- * registrado diretamente como pago (sem passar por Contas a Pagar), para não duplicar.
+ * 2d-bis. Acha, entre transações já PAGAS do banco, uma que bata com o item do extrato
+ * (mesmo tipo, valor e descrição parecida, numa data compatível) — sinal de que aquele
+ * item já foi importado antes (ex: reimportação parcial/repetida da mesma fatura/extrato),
+ * para não duplicar o lançamento.
+ *
+ * A data é checada contra o purchaseDate do item (extrato de conta, lançado com a data real)
+ * e também contra dueDate (fatura de cartão: os lançamentos PAID são sempre salvos com a data
+ * de vencimento da fatura, não a data de compra).
  */
-function findPaidMatch(item: CardStatementItem, paidTxs: Transaction[]): Transaction | undefined {
+function findPaidMatch(
+  item: CardStatementItem,
+  paidTxs: Transaction[],
+  dueDate?: string,
+  canonicalName?: string
+): Transaction | undefined {
   const expectedType = item.isRefund ? "CREDIT" : "DEBIT";
-  return paidTxs.find(tx =>
-    tx.type === expectedType &&
-    Math.abs(tx.value - item.value) <= 0.01 &&
-    tx.date === item.purchaseDate
-  );
+  return paidTxs.find(tx => {
+    if (tx.type !== expectedType) return false;
+    if (Math.abs(tx.value - item.value) > 0.01) return false;
+    const dateMatches = tx.date === item.purchaseDate || (!!dueDate && tx.date === dueDate);
+    if (!dateMatches) return false;
+    if (canonicalName) {
+      return descriptionSimilarity(canonicalName, tx.description) >= 0.2;
+    }
+    return true;
+  });
 }
 
 /**
@@ -213,12 +228,13 @@ export async function reconcileStatementWithPayables(
       }
 
       if (status === "NEW" && paidTxs.length > 0) {
-        const paidMatch = findPaidMatch(statementItem, paidTxs);
+        const canonicalName = resolveCanonicalName(statementItem.rawDescription, aliases);
+        const paidMatch = findPaidMatch(statementItem, paidTxs, statement.metadata.dueDate, canonicalName);
         if (paidMatch) {
           candidates = [{
             transaction: paidMatch,
             confidence: "HIGH",
-            reason: `Já lançado como pago em ${paidMatch.date} (mesmo valor e tipo)`,
+            reason: `Já importado antes — lançado como pago em ${paidMatch.date} (mesmo valor, tipo e descrição parecida)`,
             similarityScore: 1,
           }];
           status = "MATCHED";

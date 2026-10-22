@@ -182,11 +182,23 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const finishParsing = async (parsedStatement: CardStatement) => {
     setProgressMsg('Conciliando com Contas a Pagar...');
     const aliases: MerchantAlias[] = await financeService.getMerchantAliases();
+
+    // Janela de busca de lançamentos já PAGOS para checar duplicidade (reimportação parcial
+    // ou repetida da mesma fatura): cobre desde a compra mais antiga do extrato até a data de
+    // vencimento, pois os itens "Gastos a Lançar" são salvos com data = vencimento, não a data
+    // de compra.
+    const itemDates = parsedStatement.cards.flatMap(c => c.items.map(i => i.purchaseDate)).filter(Boolean).sort();
+    const periodStart = itemDates[0];
+    const periodEnd = [itemDates[itemDates.length - 1], dueDate].filter(Boolean).sort().slice(-1)[0];
+
     const reconResult = await reconcileStatementWithPayables(
       parsedStatement,
       selectedBankId,
       aliases,
-      (bankId) => financeService.getTransactions({ bankId, status: 'PENDING' })
+      (bankId) => financeService.getTransactions({ bankId, status: 'PENDING' }),
+      // Fatura de cartão costuma ser confirmada em etapas (meia fatura hoje, resto depois) —
+      // checa também contra o que já está pago para não duplicar quem já foi importado.
+      (bankId) => financeService.getTransactions({ bankId, status: 'PAID', startDate: periodStart, endDate: periodEnd })
     );
 
     setStatement(parsedStatement);

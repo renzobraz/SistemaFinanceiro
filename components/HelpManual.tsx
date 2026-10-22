@@ -17,6 +17,7 @@ import {
   Settings as SettingsIcon,
   Wand2,
   Search,
+  Percent,
 } from 'lucide-react';
 
 const TOC = [
@@ -32,6 +33,7 @@ const TOC = [
   { href: '#equipe', label: '10. Equipe e Permissões' },
   { href: '#configuracoes', label: '11. Configurações' },
   { href: '#offline', label: '12. Modo Offline e Sincronização' },
+  { href: '#rendimento-cdi', label: '13. Rendimento Automático (% do CDI)' },
 ];
 
 export const HelpManual: React.FC = () => {
@@ -87,6 +89,9 @@ export const HelpManual: React.FC = () => {
               <p className="text-xs italic text-slate-500">
                 Se o saldo de um Banco/Carteira parecer errado (ex.: negativo sem sentido), o motivo mais comum é um cadastro duplicado
                 (o mesmo banco criado duas vezes por engano numa importação) — veja a seção 6 para corrigir usando "Unificar Selecionados".
+              </p>
+              <p className="text-xs italic text-slate-500">
+                Conta remunerada (rende % do CDI, ex. Mercado Pago/Nubank)? Veja a seção 13 para configurar o rendimento automático.
               </p>
             </div>
           </section>
@@ -378,6 +383,33 @@ export const HelpManual: React.FC = () => {
                 <li>Novos lançamentos serão salvos temporariamente no navegador, mas <strong>atenção</strong>: dados locais podem ser perdidos se o cache do navegador for limpo.</li>
                 <li>Recomendamos configurar a conexão na aba <strong>Configurações</strong> para segurança dos dados.</li>
               </ul>
+            </div>
+          </section>
+
+          <section id="rendimento-cdi" className="space-y-4 scroll-mt-4">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 pb-2 border-b border-slate-100">
+              <Percent className="w-5 h-5 text-purple-600" />
+              13. Rendimento Automático (% do CDI)
+            </h2>
+            <div className="text-slate-600 space-y-3 leading-relaxed text-sm">
+              <p>
+                Para contas que rendem sobre o saldo que fica parado nelas (ex.: Mercado Pago, Nubank, caixinhas/cofrinhos), o
+                sistema pode gerar sozinho, todo dia útil, um lançamento <strong>Pendente</strong> em Contas a Receber com o
+                rendimento do dia — calculado como <em>saldo do dia anterior × taxa CDI diária (Banco Central) × % configurado</em>.
+              </p>
+              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-slate-700 text-xs">
+                <p className="mb-2 font-bold">Como habilitar:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Vá em <strong>Cadastros &gt; Bancos</strong> e clique no ícone <strong>%</strong> ao lado da conta desejada.</li>
+                  <li>Marque "Habilitar rendimento automático" e informe o <strong>% do CDI</strong> (ex.: 100 = rende o CDI cheio, 105 = rende 105% do CDI).</li>
+                  <li>Escolha a <strong>Categoria</strong> (obrigatória) e, se quiser, Centro de Custo e Participante padrão do lançamento gerado.</li>
+                </ul>
+              </div>
+              <p className="text-xs italic text-slate-500">
+                O lançamento sempre nasce <strong>Pendente</strong> — você confere e dá baixa manualmente quando o valor realmente
+                cair na conta. A verificação roda 1x por dia; se a taxa CDI do dia ainda não tiver sido publicada pelo Banco Central
+                (acontece às vezes, com 1-2 dias de atraso), o sistema completa os dias pendentes sozinho assim que ela sai, sem duplicar.
+              </p>
             </div>
           </section>
 
