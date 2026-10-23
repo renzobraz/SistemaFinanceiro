@@ -2365,6 +2365,7 @@ app.post("/api/cron/apply-account-yield", async (req: any, res: any) => {
     const enabledBanks = banks || [];
     summary.banksChecked = enabledBanks.length;
     if (enabledBanks.length === 0) {
+      console.log("[CRON] Rendimento de contas: nenhuma conta com yield_enabled=true encontrada. Nada a fazer.");
       return res.json(summary);
     }
 
@@ -2452,6 +2453,7 @@ app.post("/api/cron/apply-account-yield", async (req: any, res: any) => {
       }
     }
 
+    console.log(`[CRON] Rendimento de contas: ${summary.banksChecked} conta(s) verificada(s), ${summary.postingsCreated} lançamento(s) criado(s), ${summary.skipped} ignorada(s).${summary.errors.length > 0 ? ` Avisos: ${summary.errors.join(' | ')}` : ''}`);
     return res.json(summary);
   } catch (error: any) {
     console.error("[CRON] Erro ao processar rendimento de contas:", error);
