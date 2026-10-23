@@ -2221,7 +2221,9 @@ async function sendScheduledReport(admin: any, schedule: any): Promise<{ success
   return { success: true };
 }
 
-app.post("/api/cron/send-reports", async (req: any, res: any) => {
+// Vercel invoca cron jobs com GET (user-agent vercel-cron/1.0), não POST — ver
+// https://vercel.com/docs/cron-jobs. Rota registrada só como GET por isso.
+app.get("/api/cron/send-reports", async (req: any, res: any) => {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -2330,7 +2332,9 @@ async function fetchCdiDailyRates(startIso: string, endIso: string): Promise<Rec
   return map;
 }
 
-app.post("/api/cron/apply-account-yield", async (req: any, res: any) => {
+// Vercel invoca cron jobs com GET (user-agent vercel-cron/1.0), não POST — ver
+// https://vercel.com/docs/cron-jobs. Rota registrada só como GET por isso.
+app.get("/api/cron/apply-account-yield", async (req: any, res: any) => {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
