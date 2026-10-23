@@ -17,6 +17,7 @@ import {
   Filter,
   Terminal,
   AtSign,
+  Repeat,
   X
 } from 'lucide-react';
 import { safeStorage } from '../services/financeService';
@@ -93,6 +94,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'settings-team', label: 'Gerenciar Equipe', icon: Users },
     { id: 'settings-email', label: 'Configuração E-mail', icon: AtSign },
     { id: 'settings-reports-schedule', label: 'Relatórios Agendados', icon: CalendarClock },
+    { id: 'settings-recurring', label: 'Recorrências', icon: Repeat },
     { id: 'settings-database', label: 'Conexão Banco de Dados', icon: Database },
     { id: 'settings-sql', label: 'Configuração SQL', icon: Terminal },
     { id: 'settings-manual', label: 'Manual / Ajuda', icon: BookOpen },

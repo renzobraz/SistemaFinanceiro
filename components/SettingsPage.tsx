@@ -16,10 +16,11 @@ import {
 import { TeamManagement } from './TeamManagement';
 import { SmtpSettings } from './SmtpSettings';
 import { ReportSchedules } from './ReportSchedules';
+import { RecurringRules } from './RecurringRules';
 import { HelpManual } from './HelpManual';
 import { SettingsView } from './SettingsView';
 import { financeService } from '../services/financeService';
-import { Bank, Wallet, Category, CostCenter, UserPreferences } from '../types';
+import { Bank, Wallet, Category, CostCenter, Participant, UserPreferences } from '../types';
 
 interface SettingsPageProps {
   activeSubTab?: string;
@@ -28,13 +29,14 @@ interface SettingsPageProps {
     wallets: Wallet[];
     categories: Category[];
     costCenters: CostCenter[];
+    participants: Participant[];
   };
   onSaveConfig?: () => void;
   onUpdatePrefs: (prefs: UserPreferences) => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, registries, onSaveConfig, onUpdatePrefs }) => {
-  const [activeTab, setActiveTab] = useState<'team' | 'email' | 'reports-schedule' | 'filters' | 'database' | 'sql' | 'manual'>('filters');
+  const [activeTab, setActiveTab] = useState<'team' | 'email' | 'reports-schedule' | 'recurring' | 'filters' | 'database' | 'sql' | 'manual'>('filters');
   const [prefs, setPrefs] = useState<UserPreferences>({
     defaultDateRange: 'CURRENT_MONTH',
     defaultStatus: 'ALL',
@@ -249,6 +251,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ activeSubTab, regist
           {activeTab === 'email' && <SmtpSettings />}
 
           {activeTab === 'reports-schedule' && <ReportSchedules registries={registries} />}
+          {activeTab === 'recurring' && <RecurringRules registries={registries} />}
 
           {activeTab === 'database' && (
             <div className="animate-in fade-in duration-500">

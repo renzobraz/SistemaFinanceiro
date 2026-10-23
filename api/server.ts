@@ -2467,6 +2467,108 @@ app.get("/api/cron/apply-account-yield", async (req: any, res: any) => {
   }
 });
 
+// =========================================================================
+// RECORRÊNCIA SEM DATA DE FIM — cron diário
+// =========================================================================
+// Avança uma data 'YYYY-MM-DD' em um período (mesma lógica de calculateDate do TransactionForm:
+// em mensal/anual, se o mês de destino não tiver o dia exato, usa o último dia desse mês).
+function advanceRecurringDate(isoDate: string, frequency: 'WEEKLY' | 'MONTHLY' | 'YEARLY'): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d, 12));
+  if (frequency === 'MONTHLY') {
+    date.setUTCMonth(date.getUTCMonth() + 1);
+    if (date.getUTCDate() !== d) date.setUTCDate(0);
+  } else if (frequency === 'WEEKLY') {
+    date.setUTCDate(date.getUTCDate() + 7);
+  } else if (frequency === 'YEARLY') {
+    date.setUTCFullYear(date.getUTCFullYear() + 1);
+  }
+  return date.toISOString().substring(0, 10);
+}
+
+// Vercel invoca cron jobs com GET (user-agent vercel-cron/1.0), não POST — ver
+// https://vercel.com/docs/cron-jobs.
+app.get("/api/cron/generate-recurring", async (req: any, res: any) => {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.authorization;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ error: "Não autorizado" });
+  }
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceKey) {
+    return res.status(500).json({ error: "Configuração do Supabase (service role) ausente" });
+  }
+
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
+
+  const summary = { rulesChecked: 0, postingsCreated: 0, errors: [] as string[] };
+
+  try {
+    const todayInSaoPaulo = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+
+    const { data: rules, error: rulesError } = await admin
+      .from('recurring_rules')
+      .select('*')
+      .eq('active', true)
+      .lte('next_date', todayInSaoPaulo);
+    if (rulesError) throw rulesError;
+
+    const dueRules = rules || [];
+    summary.rulesChecked = dueRules.length;
+
+    for (const rule of dueRules) {
+      try {
+        let cursor = rule.next_date;
+        let iterations = 0;
+        // Limite de segurança: no máximo 24 ocorrências por execução (cobre até 2 anos de atraso
+        // numa regra mensal), para nunca entrar num loop longo demais numa única invocação.
+        while (cursor <= todayInSaoPaulo && iterations < 24) {
+          iterations++;
+          const { error: insertError } = await admin.from('transactions').insert({
+            id: crypto.randomUUID(),
+            date: cursor,
+            description: rule.description,
+            doc_number: '',
+            value: rule.value,
+            type: rule.type,
+            status: 'PENDING',
+            bank_id: rule.bank_id,
+            category_id: rule.category_id,
+            cost_center_id: rule.cost_center_id || null,
+            participant_id: rule.participant_id || null,
+            wallet_id: rule.wallet_id || null,
+            organization_id: rule.organization_id,
+            recurring_rule_id: rule.id,
+          });
+          if (insertError) {
+            if (insertError.code !== '23505') throw insertError; // já existia — ignora e segue
+          } else {
+            summary.postingsCreated++;
+          }
+          cursor = advanceRecurringDate(cursor, rule.frequency);
+        }
+
+        await admin
+          .from('recurring_rules')
+          .update({ next_date: cursor, last_generated_at: new Date().toISOString() })
+          .eq('id', rule.id);
+      } catch (ruleError: any) {
+        summary.errors.push(`Regra "${rule.description}" (${rule.id}): ${ruleError.message}`);
+      }
+    }
+
+    console.log(`[CRON] Recorrência: ${summary.rulesChecked} regra(s) verificada(s), ${summary.postingsCreated} lançamento(s) criado(s).${summary.errors.length > 0 ? ` Avisos: ${summary.errors.join(' | ')}` : ''}`);
+    return res.json(summary);
+  } catch (error: any) {
+    console.error("[CRON] Erro ao processar recorrências:", error);
+    return res.status(500).json({ error: "Falha ao processar recorrências", details: error.message, ...summary });
+  }
+});
+
 // Envio manual — usado pelo botão "Enviar Agora" da tela de Relatórios Agendados.
 // Aceita { scheduleId } para reenviar um agendamento salvo, ou os dados completos
 // do formulário (sem scheduleId) para um envio avulso, sem persistir nada.

@@ -20,6 +20,7 @@ import {
   Wallet,
   TransactionStatus,
 } from "../types";
+import { financeService } from "../services/financeService";
 
 interface TransactionFormProps {
   isOpen: boolean;
@@ -172,6 +173,9 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [recurrenceCount, setRecurrenceCount] = useState(2);
   const [recurrenceFreq, setRecurrenceFreq] =
     useState<RecurrenceFrequency>("MONTHLY");
+  // Sem data de fim: cria só a 1ª ocorrência agora + uma regra que o cron diário usa pra ir
+  // gerando as próximas sozinho, pra sempre (sem precisar "chutar" uma quantidade de parcelas).
+  const [isIndeterminate, setIsIndeterminate] = useState(false);
 
   const [participantSearch, setParticipantSearch] = useState("");
   const deferredParticipantSearch = useDeferredValue(participantSearch);
@@ -676,7 +680,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     try {
       const transactionsToSave: Transaction[] = [];
       const isNew = !id;
-      const loops = isNew && isRecurrent ? Math.max(1, recurrenceCount) : 1;
+      const isIndeterminateRecurrence =
+        isNew && isRecurrent && isIndeterminate && mode !== "TRANSFER";
+      const loops = isIndeterminateRecurrence
+        ? 1
+        : isNew && isRecurrent
+          ? Math.max(1, recurrenceCount)
+          : 1;
 
       // Se estivermos gerando um desconto simultâneo, precisamos de um linkedId comum
       const refundLinkedId = withDiscount ? (linkedId || generateUUID()) : undefined;
@@ -799,6 +809,31 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       }
 
       await onSave(transactionsToSave);
+
+      if (isIndeterminateRecurrence) {
+        try {
+          await financeService.saveRecurringRule({
+            walletId: formData.walletId,
+            bankId: formData.bankId,
+            categoryId: formData.categoryId,
+            costCenterId: formData.costCenterId || undefined,
+            participantId: formData.participantId || undefined,
+            description: formData.description,
+            value: formData.value,
+            type: formData.type,
+            frequency: recurrenceFreq,
+            nextDate: calculateDate(formData.date, 1, recurrenceFreq),
+            active: true,
+          });
+        } catch (ruleError) {
+          console.error("Erro ao criar regra de recorrência indeterminada:", ruleError);
+          alert(
+            "O lançamento foi salvo, mas houve um erro ao criar a regra de recorrência automática. " +
+            "As próximas ocorrências não serão geradas sozinhas — avise o suporte ou recrie a recorrência.",
+          );
+        }
+      }
+
       onClose();
     } catch (error) {
       console.error("Erro ao salvar lançamento:", error);
@@ -1266,20 +1301,39 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 <label className="block text-xs font-bold text-purple-700 uppercase mb-1">
                   Quantidade (Parcelas)
                 </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min="2"
-                    max="360"
-                    value={recurrenceCount}
-                    onChange={(e) =>
-                      setRecurrenceCount(parseInt(e.target.value) || 2)
-                    }
-                    className="w-24 px-3 py-2 bg-white border border-purple-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-purple-500 outline-none"
-                  />
-                  <span className="text-xs text-purple-600 italic">vezes</span>
-                </div>
+                {isIndeterminate ? (
+                  <div className="px-3 py-2 bg-white border border-purple-200 rounded-lg text-sm text-purple-700 italic">
+                    Sem fim — gerado automaticamente
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="2"
+                      max="360"
+                      value={recurrenceCount}
+                      onChange={(e) =>
+                        setRecurrenceCount(parseInt(e.target.value) || 2)
+                      }
+                      className="w-24 px-3 py-2 bg-white border border-purple-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-purple-500 outline-none"
+                    />
+                    <span className="text-xs text-purple-600 italic">vezes</span>
+                  </div>
+                )}
               </div>
+              {mode !== "TRANSFER" && (
+                <label className="flex items-center gap-2 cursor-pointer select-none md:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={isIndeterminate}
+                    onChange={(e) => setIsIndeterminate(e.target.checked)}
+                    className="w-4 h-4 rounded border-purple-300 text-purple-600 focus:ring-purple-500"
+                  />
+                  <span className="text-xs font-bold text-purple-700">
+                    Sem data de fim (repete pra sempre, até eu pausar)
+                  </span>
+                </label>
+              )}
             </div>
           )}
 

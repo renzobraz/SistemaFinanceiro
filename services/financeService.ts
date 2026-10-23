@@ -17,7 +17,8 @@ import {
   Organization,
   OrganizationMember,
   MerchantAlias,
-  ReportSchedule
+  ReportSchedule,
+  RecurringRule
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -420,7 +421,8 @@ const mapTransactionFromDb = (db: any): Transaction => ({
   vet: db.vet ? Number(db.vet) : undefined,
   originalValue: db.original_value ? Number(db.original_value) : undefined,
   originalCurrency: db.original_currency || undefined,
-  autoYieldDate: db.auto_yield_date ? String(db.auto_yield_date).substring(0, 10) : undefined
+  autoYieldDate: db.auto_yield_date ? String(db.auto_yield_date).substring(0, 10) : undefined,
+  recurringRuleId: db.recurring_rule_id ? String(db.recurring_rule_id) : undefined
 });
 
 const mapTransactionToDb = (t: Transaction, userId?: string | null, orgId?: string | null) => {
@@ -443,6 +445,7 @@ const mapTransactionToDb = (t: Transaction, userId?: string | null, orgId?: stri
     import_batch_id: t.importBatchId || null,
     emission_date: t.emissionDate || null,
     auto_yield_date: t.autoYieldDate || null,
+    recurring_rule_id: t.recurringRuleId || null,
   };
 
   // Only include exchange fields if they have actual values to prevent PGRST204 errors on older schemas
@@ -3584,5 +3587,83 @@ export const financeService = {
       const errData = await response.json().catch(() => ({}));
       throw new Error(errData.details || errData.error || `Erro do servidor (${response.status}) ao enviar relatório.`);
     }
+  },
+
+  async getRecurringRules(): Promise<RecurringRule[]> {
+    if (!this.activeOrganizationId) return [];
+    const supabase = getSupabase();
+    if (!supabase) return [];
+
+    const { data, error } = await supabase
+      .from('recurring_rules')
+      .select('*')
+      .eq('organization_id', this.activeOrganizationId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return (data || []).map((r: any) => ({
+      id: r.id,
+      organization_id: r.organization_id,
+      walletId: r.wallet_id || undefined,
+      bankId: r.bank_id,
+      categoryId: r.category_id,
+      costCenterId: r.cost_center_id || undefined,
+      participantId: r.participant_id || undefined,
+      description: r.description,
+      value: Number(r.value),
+      type: r.type,
+      frequency: r.frequency,
+      nextDate: r.next_date,
+      active: r.active,
+      createdAt: r.created_at,
+      lastGeneratedAt: r.last_generated_at || undefined,
+    }));
+  },
+
+  async saveRecurringRule(rule: RecurringRule): Promise<string> {
+    if (!this.activeOrganizationId) throw new Error("Nenhuma organização ativa selecionada");
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const payload = {
+      organization_id: this.activeOrganizationId,
+      wallet_id: rule.walletId || null,
+      bank_id: rule.bankId,
+      category_id: rule.categoryId,
+      cost_center_id: rule.costCenterId || null,
+      participant_id: rule.participantId || null,
+      description: rule.description,
+      value: rule.value,
+      type: rule.type,
+      frequency: rule.frequency,
+      next_date: rule.nextDate,
+      active: rule.active,
+    };
+
+    if (rule.id) {
+      const { error } = await supabase.from('recurring_rules').update(payload).eq('id', rule.id);
+      if (error) throw error;
+      return rule.id;
+    } else {
+      const { data, error } = await supabase.from('recurring_rules').insert(payload).select('id').single();
+      if (error) throw error;
+      return data.id;
+    }
+  },
+
+  async toggleRecurringRuleActive(id: string, active: boolean): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const { error } = await supabase.from('recurring_rules').update({ active }).eq('id', id);
+    if (error) throw error;
+  },
+
+  async deleteRecurringRule(id: string): Promise<void> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase não configurado");
+
+    const { error } = await supabase.from('recurring_rules').delete().eq('id', id);
+    if (error) throw error;
   },
 };

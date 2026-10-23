@@ -109,6 +109,31 @@ export interface Transaction {
   managedPortfolioId?: string;
   importBatchId?: string;
   autoYieldDate?: string; // Preenchido quando o lançamento foi gerado automaticamente pelo cron de rendimento CDI (data do dia que rendeu)
+  recurringRuleId?: string; // Preenchido quando o lançamento foi gerado automaticamente por uma RecurringRule (recorrência sem data de fim)
+}
+
+export type RecurrenceFrequency = 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+
+// Regra de recorrência "sem data de fim": ao contrário do "Repetir? + Quantidade de Parcelas"
+// (que gera N lançamentos de uma vez na criação), esta regra fica salva e o cron diário
+// (/api/cron/generate-recurring) gera só a PRÓXIMA ocorrência quando chega a data, indefinidamente,
+// até o usuário pausar/excluir a regra.
+export interface RecurringRule {
+  id?: string;
+  organization_id?: string;
+  walletId?: string;
+  bankId: string;
+  categoryId: string;
+  costCenterId?: string;
+  participantId?: string;
+  description: string;
+  value: number;
+  type: TransactionType;
+  frequency: RecurrenceFrequency;
+  nextDate: string; // Data (YYYY-MM-DD) da próxima ocorrência a ser gerada
+  active: boolean;
+  createdAt?: string;
+  lastGeneratedAt?: string;
 }
 
 export interface AssetAccrual {
