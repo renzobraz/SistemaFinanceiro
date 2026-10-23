@@ -2338,7 +2338,8 @@ app.get("/api/cron/apply-account-yield", async (req: any, res: any) => {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    console.warn(`[CRON] apply-account-yield: rejeitado (401). CRON_SECRET configurado: ${!!cronSecret}. Header Authorization recebido: ${authHeader ? 'sim (' + authHeader.length + ' chars)' : 'nenhum'}.`);
+    const cronEnvKeys = Object.keys(process.env).filter(k => k.toUpperCase().includes('CRON'));
+    console.warn(`[CRON] apply-account-yield: rejeitado (401). CRON_SECRET configurado: ${!!cronSecret}. Header Authorization recebido: ${authHeader ? 'sim (' + authHeader.length + ' chars)' : 'nenhum'}. Variáveis de ambiente com "CRON" no nome: ${JSON.stringify(cronEnvKeys)}.`);
     return res.status(401).json({ error: "Não autorizado" });
   }
 
