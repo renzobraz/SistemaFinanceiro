@@ -18,7 +18,8 @@ import {
   History,
   RotateCcw,
   XCircle,
-  Calendar
+  Calendar,
+  RefreshCw
 } from 'lucide-react';
 import { Transaction, Bank, Category, CostCenter, Participant, Wallet } from '../types';
 import { ConfirmModal } from './ConfirmModal';
@@ -97,6 +98,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const [bulkDate, setBulkDate] = useState(new Date().toISOString().split('T')[0]);
   const [bulkValue, setBulkValue] = useState<string>('');
   const [scopedBaseline, setScopedBaseline] = useState<number | null>(null);
+  const [recalculatingId, setRecalculatingId] = useState<string | null>(null);
 
   // Saldo anterior corrente. Se Banco ou Carteira estiverem filtrados nesta tela,
   // busca o saldo anterior especifico dessa combinacao em vez de usar o total geral.
@@ -407,6 +409,57 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     // Garante que o valor zero não seja exibido como negativo devido a erros de precisão
     const absoluteVal = Math.abs(val) < 0.001 ? 0 : val;
     return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(absoluteVal);
+  };
+
+  // Recalcula um lançamento de rendimento automático (% do CDI) ainda Pendente, usando o saldo
+  // PAGO atual da conta (em vez do saldo "congelado" no momento em que o cron original rodou) —
+  // útil quando faltavam lançamentos de dias anteriores naquele momento.
+  const handleRecalculateYield = async (t: Transaction) => {
+    if (!t.autoYieldDate || recalculatingId) return;
+    setRecalculatingId(t.id);
+    try {
+      const bank = registries.banks.find(b => b.id === t.bankId) as any;
+      const pct = bank?.yieldCdiPercent;
+      if (!pct || pct <= 0) {
+        alert('Esta conta não tem mais um "% do CDI" configurado (Cadastros > Bancos > ícone %). Configure antes de recalcular.');
+        return;
+      }
+
+      const [y, m, d] = t.autoYieldDate.split('-');
+      const bcbDate = `${d}/${m}/${y}`;
+      const rateRes = await fetch(`https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json&dataInicial=${bcbDate}&dataFinal=${bcbDate}`);
+      const rateData = rateRes.ok ? await rateRes.json() : [];
+      const dailyRate = Array.isArray(rateData) && rateData.length > 0 ? Number(rateData[0].valor) : null;
+      if (dailyRate === null) {
+        alert(`Não foi possível obter a taxa CDI do dia ${formatDateDisplay(t.autoYieldDate)} no Banco Central. Tente novamente mais tarde.`);
+        return;
+      }
+
+      const dayBeforeDate = new Date(`${t.autoYieldDate}T12:00:00Z`);
+      dayBeforeDate.setUTCDate(dayBeforeDate.getUTCDate() - 1);
+      const dayBefore = dayBeforeDate.toISOString().substring(0, 10);
+
+      const paidTxs = await financeService.getTransactions({ bankId: t.bankId, status: 'PAID', endDate: dayBefore });
+      const balance = paidTxs.reduce((acc, tx) => acc + (tx.type === 'CREDIT' ? tx.value : -tx.value), 0);
+      const newValue = Math.round(balance * (dailyRate / 100) * (pct / 100) * 100) / 100;
+
+      if (Math.abs(newValue - t.value) < 0.005) {
+        alert(`Valor recalculado (${formatMoney(newValue)}) é igual ao atual. Nada para atualizar.`);
+        return;
+      }
+
+      const confirmMsg = `Saldo pago considerado (até ${formatDateDisplay(dayBefore)}): ${formatMoney(balance)}\nTaxa CDI do dia ${formatDateDisplay(t.autoYieldDate)}: ${dailyRate}%\n\nValor atual: ${formatMoney(t.value)}\nValor recalculado: ${formatMoney(newValue)}\n\nAtualizar este lançamento para o novo valor?`;
+      if (!window.confirm(confirmMsg)) return;
+
+      if (onUpdateValue) {
+        onUpdateValue([t.id], newValue);
+      }
+    } catch (e: any) {
+      console.error('[Recalcular Rendimento]', e);
+      alert('Erro ao recalcular o rendimento: ' + (e.message || ''));
+    } finally {
+      setRecalculatingId(null);
+    }
   };
 
   const containerClasses = variant === 'card' 
@@ -765,6 +818,16 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     <td className="p-3 text-right">
                         {(hasEditPermission || hasDeletePermission) ? (
                         <div className="flex items-center justify-end gap-1">
+                            {hasEditPermission && t.autoYieldDate && t.status === 'PENDING' && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleRecalculateYield(t); }}
+                              disabled={recalculatingId === t.id}
+                              className="p-1.5 text-purple-600 hover:bg-purple-50 rounded transition-colors disabled:opacity-50"
+                              title="Recalcular rendimento com o saldo pago atual"
+                            >
+                              <RefreshCw className={`w-4 h-4 ${recalculatingId === t.id ? 'animate-spin' : ''}`} />
+                            </button>
+                            )}
                             {hasEditPermission && (
                             <button onClick={(e) => { e.stopPropagation(); onEdit(t); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"><Edit2 className="w-4 h-4" /></button>
                             )}
@@ -895,10 +958,21 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                             {/* Action Buttons with 44px min touch target */}
                             {(hasEditPermission || hasDeletePermission) && (
                             <div className="flex items-center justify-end gap-1.5 border-t border-slate-100 pt-2.5 mt-2">
-                                {hasEditPermission && (
-                                <button 
+                                {hasEditPermission && t.autoYieldDate && t.status === 'PENDING' && (
+                                <button
                                     type="button"
-                                    onClick={(e) => { e.stopPropagation(); onEdit(t); }} 
+                                    onClick={(e) => { e.stopPropagation(); handleRecalculateYield(t); }}
+                                    disabled={recalculatingId === t.id}
+                                    className="w-11 h-11 flex items-center justify-center text-purple-600 hover:bg-purple-50 active:bg-purple-100 rounded-xl transition-colors disabled:opacity-50"
+                                    title="Recalcular rendimento com o saldo pago atual"
+                                >
+                                    <RefreshCw className={`w-5 h-5 ${recalculatingId === t.id ? 'animate-spin' : ''}`} />
+                                </button>
+                                )}
+                                {hasEditPermission && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); onEdit(t); }}
                                     className="w-11 h-11 flex items-center justify-center text-blue-600 hover:bg-blue-50 active:bg-blue-100 rounded-xl transition-colors"
                                     title="Editar Transação"
                                 >
