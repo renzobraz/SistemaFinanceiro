@@ -95,20 +95,80 @@ async function extractPdfText(base64: string): Promise<string> {
         // Ordena linhas de cima para baixo (Y do PDF cresce de baixo para cima)
         rows.sort((a, b) => b.y - a.y);
 
-        // Monta o texto linha a linha, com espaço proporcional à lacuna horizontal
-        const lines: string[] = [];
-        for (const row of rows) {
-          row.items.sort((a, b) => a.x - b.x);
-          let line = "";
-          let lastXEnd = -Infinity;
-          for (const item of row.items) {
-            if (lastXEnd > -Infinity && item.x - lastXEnd > COLUMN_GAP_THRESHOLD) {
-              line += " ";
+        // Faturas Itaú imprimem a tabela "Lançamentos" em duas colunas lado a lado
+        // (visível no próprio cabeçalho duplicado "Lançamentos: compras e saques
+        // Lançamentos: compras e saques"). Como as colunas normalmente têm número
+        // diferente de linhas (uma lista mais itens que a outra), juntar tudo numa
+        // única linha por Y gruda lançamentos de colunas diferentes num só registro
+        // (data/valor errados) e pode até colar o marcador de fim de lista
+        // ("Total dos lançamentos atuais") numa linha de lançamento real ainda em
+        // andamento na outra coluna, cortando a extração antes da hora.
+        //
+        // Para evitar isso, detectamos a posição X de cada coluna a partir das
+        // células de DATA (sempre um item isolado "dd/mm", nunca mesclado com o
+        // resto) e, se houver duas posições X bem distintas, tratamos como duas
+        // colunas: cada uma é lida de cima a baixo separadamente e só depois as
+        // duas sequências são concatenadas (coluna esquerda inteira, depois a
+        // direita inteira) — nunca itens de uma misturados linha a linha com a
+        // outra.
+        // Importante: NÃO usar o ponto médio entre as duas posições de data como
+        // divisor. A célula de valor da coluna esquerda (alinhada à direita) pode
+        // começar bem depois da data, então o ponto médio entre as duas datas corta
+        // dentro da própria linha da coluna esquerda (separando sua descrição do seu
+        // valor). Em vez disso, usamos uma margem fixa pouco antes do início da data
+        // da coluna direita — validado com os pontos reais: coluna A termina (mesmo
+        // a célula de valor) por volta de x=343, coluna B começa em x=370.8, uma
+        // margem de 15pt cai com folga dentro desse intervalo vazio dos dois lados.
+        const DATE_CELL_RE = /^\d{2}\/\d{2}$/;
+        const dateXs = allItems.filter(it => DATE_CELL_RE.test(it.str.trim())).map(it => it.x);
+        let splitX = Infinity;
+        if (dateXs.length >= 2) {
+          const uniqueXs = Array.from(new Set(dateXs.map(x => Math.round(x * 10) / 10))).sort((a, b) => a - b);
+          let bestGap = 0;
+          let bestGapPos = -1;
+          for (let i = 1; i < uniqueXs.length; i++) {
+            const gap = uniqueXs[i] - uniqueXs[i - 1];
+            if (gap > bestGap) {
+              bestGap = gap;
+              bestGapPos = i;
             }
-            line += item.str;
-            lastXEnd = item.x + item.width;
           }
-          if (line.trim()) lines.push(line);
+          const MIN_COLUMN_GAP = 80; // pt — bem acima de qualquer variação normal de indentação
+          const RIGHT_COLUMN_MARGIN = 15; // pt — à esquerda do início da data da 2ª coluna
+          if (bestGapPos > 0 && bestGap > MIN_COLUMN_GAP) {
+            splitX = uniqueXs[bestGapPos] - RIGHT_COLUMN_MARGIN;
+          }
+        }
+
+        // Monta o texto de uma lista de linhas (já filtradas para uma única coluna),
+        // juntando células da mesma linha com espaço proporcional à lacuna horizontal.
+        function buildLines(rowList: { y: number; items: TextItem[] }[]): string[] {
+          const out: string[] = [];
+          for (const row of rowList) {
+            if (row.items.length === 0) continue;
+            const sorted = [...row.items].sort((a, b) => a.x - b.x);
+            let line = "";
+            let lastXEnd = -Infinity;
+            for (const item of sorted) {
+              if (lastXEnd > -Infinity && item.x - lastXEnd > COLUMN_GAP_THRESHOLD) {
+                line += " ";
+              }
+              line += item.str;
+              lastXEnd = item.x + item.width;
+            }
+            if (line.trim()) out.push(line);
+          }
+          return out;
+        }
+
+        let lines: string[];
+        if (splitX === Infinity) {
+          // Página sem duas colunas detectadas: comportamento single-column de sempre.
+          lines = buildLines(rows);
+        } else {
+          const leftRows = rows.map(r => ({ y: r.y, items: r.items.filter(it => it.x < splitX) }));
+          const rightRows = rows.map(r => ({ y: r.y, items: r.items.filter(it => it.x >= splitX) }));
+          lines = [...buildLines(leftRows), ...buildLines(rightRows)];
         }
 
         const pageText = lines.join("\n");

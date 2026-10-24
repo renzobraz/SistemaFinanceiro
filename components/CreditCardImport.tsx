@@ -10,12 +10,13 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
-  AlertTriangle
+  AlertTriangle,
+  Search
 } from 'lucide-react';
 import { financeService } from '../services/financeService';
 import { extractStatementAnchors, extractStatementWithAI, extractStatementWithGemini, reconcileStatement, parseFaturaXlsxRows } from '../services/cardStatementService';
 import { reconcileStatementWithPayables } from '../services/reconciliationService';
-import type { CardStatement, CardStatementItem, ReconciliationResult, MerchantAlias, Bank, Category, CostCenter, Wallet, Transaction, Participant } from '../types';
+import type { CardStatement, CardStatementItem, ReconciliationResult, MerchantAlias, Bank, Category, CostCenter, Wallet, Transaction, Participant, CandidateMatch } from '../types';
 
 // FNV-1a hash para identificar arquivos CSV já importados
 function hashCsv(str: string): string {
@@ -94,6 +95,14 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [duplicateWarning, setDuplicateWarning] = useState<{ hash: string; fileName: string; importedAt: string } | null>(null);
   const [currentCsvHash, setCurrentCsvHash] = useState<string | null>(null);
   const bypassDuplicateCheck = useRef(false);
+
+  // Todos os lançamentos PENDING da conta, para a busca manual no Contas a Pagar —
+  // diferente dos `candidates` calculados automaticamente por item, aqui o usuário
+  // pode escolher qualquer lançamento pendente, caso a sugestão automática esteja
+  // errada ou o candidato correto não tenha aparecido na lista.
+  const [allPendingTxs, setAllPendingTxs] = useState<Transaction[]>([]);
+  const [manualSearchOpen, setManualSearchOpen] = useState<Record<number, boolean>>({});
+  const [manualSearchQuery, setManualSearchQuery] = useState<Record<number, string>>({});
 
   useEffect(() => {
     setLocalParticipants(participants);
@@ -195,7 +204,13 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       parsedStatement,
       selectedBankId,
       aliases,
-      (bankId) => financeService.getTransactions({ bankId, status: 'PENDING' }),
+      async (bankId) => {
+        const pending = await financeService.getTransactions({ bankId, status: 'PENDING' });
+        // Guarda a lista completa para a busca manual na revisão — não só os
+        // candidatos que o algoritmo de conciliação escolheu automaticamente.
+        setAllPendingTxs(pending);
+        return pending;
+      },
       // Fatura de cartão costuma ser confirmada em etapas (meia fatura hoje, resto depois) —
       // checa também contra o que já está pago para não duplicar quem já foi importado.
       (bankId) => financeService.getTransactions({ bankId, status: 'PAID', startDate: periodStart, endDate: periodEnd })
@@ -683,6 +698,102 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       return `${parts[2]}/${parts[1]}/${parts[0]}`;
     }
     return new Date(dateStr).toLocaleDateString('pt-BR');
+  };
+
+  // Quando o usuário escolhe um lançamento pela busca manual (não pelos candidatos
+  // automáticos), o id selecionado não existe em `item.candidates` — isso identifica
+  // esse caso para mostrar um resumo de quem foi escolhido, já que nenhum dos radios
+  // dos candidatos vai aparecer marcado.
+  const getManualSelection = (selectedId: string | undefined, candidates: CandidateMatch[]): Transaction | undefined => {
+    if (!selectedId || selectedId === 'NEW') return undefined;
+    if (candidates.some(c => c.transaction.id === selectedId)) return undefined;
+    return allPendingTxs.find(tx => tx.id === selectedId);
+  };
+
+  const renderManualSelectionBanner = (selectedId: string | undefined, candidates: CandidateMatch[]) => {
+    const manual = getManualSelection(selectedId, candidates);
+    if (!manual) return null;
+    const participantName = participants.find(p => p.id === manual.participantId)?.name;
+    return (
+      <div className="flex items-start gap-2 text-xs bg-blue-50 border border-blue-200 rounded-lg p-2">
+        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
+        <div>
+          <p className="font-bold text-blue-900">
+            Selecionado manualmente: {manual.description}
+            {participantName && <span className="font-normal"> · Participante: {participantName}</span>}
+          </p>
+          <p className="text-[10px] text-blue-700">{formatDate(manual.date)} · {formatCurrency(manual.value)}</p>
+        </div>
+      </div>
+    );
+  };
+
+  // Campo de busca livre em TODOS os lançamentos PENDING da conta — não só os
+  // candidatos que o algoritmo de conciliação sugeriu. Resolve o caso em que a
+  // sugestão automática bate por coincidência (mesmo valor, texto parecido) mas é
+  // de um estabelecimento totalmente diferente do item da fatura.
+  const renderManualSearch = (idx: number, onSelect: (txId: string) => void) => {
+    const isOpen = manualSearchOpen[idx] ?? false;
+    const query = manualSearchQuery[idx] || '';
+    const normalizedQuery = query.trim().toLowerCase();
+    const results = normalizedQuery.length >= 2
+      ? allPendingTxs.filter(tx => tx.description.toLowerCase().includes(normalizedQuery)).slice(0, 8)
+      : [];
+
+    return (
+      <div className="pt-1">
+        <button
+          type="button"
+          onClick={() => setManualSearchOpen(prev => ({ ...prev, [idx]: !isOpen }))}
+          className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1.5"
+        >
+          <Search className="w-3.5 h-3.5" />
+          {isOpen ? 'Fechar busca' : 'Buscar outro lançamento no Contas a Pagar'}
+        </button>
+
+        {isOpen && (
+          <div className="mt-2 space-y-1.5 bg-slate-50 border border-slate-200 rounded-xl p-2">
+            <input
+              type="text"
+              autoFocus
+              value={query}
+              onChange={e => setManualSearchQuery(prev => ({ ...prev, [idx]: e.target.value }))}
+              placeholder="Digite parte da descrição do lançamento..."
+              className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+            />
+            {normalizedQuery.length > 0 && normalizedQuery.length < 2 && (
+              <p className="text-[10px] text-slate-400 px-1">Digite ao menos 2 caracteres...</p>
+            )}
+            {normalizedQuery.length >= 2 && results.length === 0 && (
+              <p className="text-[10px] text-slate-400 px-1">Nenhum lançamento pendente encontrado com esse termo.</p>
+            )}
+            {results.map(tx => {
+              const participantName = participants.find(p => p.id === tx.participantId)?.name;
+              return (
+                <button
+                  type="button"
+                  key={tx.id}
+                  onClick={() => {
+                    onSelect(tx.id);
+                    setManualSearchOpen(prev => ({ ...prev, [idx]: false }));
+                    setManualSearchQuery(prev => ({ ...prev, [idx]: '' }));
+                  }}
+                  className="w-full text-left flex items-start gap-2 text-xs text-slate-700 p-1.5 rounded-lg hover:bg-white border border-transparent hover:border-blue-200 transition-colors"
+                >
+                  <div>
+                    <p className="font-bold text-slate-800">
+                      {tx.description}
+                      {participantName && <span className="text-slate-500 font-normal"> · Participante: {participantName}</span>}
+                    </p>
+                    <p className="text-[10px] text-slate-500">{formatDate(tx.date)} · {formatCurrency(tx.value)}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const toggleSection = (section: 'MATCHED' | 'UNCERTAIN' | 'NEW') => {
@@ -1225,8 +1336,14 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                     />
                                     <span className="font-bold text-slate-800 -mt-0.5">Nenhum — criar novo lançamento</span>
                                   </label>
+
+                                  {renderManualSelectionBanner(selectedValue, item.candidates)}
                                 </div>
                               </div>
+
+                              {renderManualSearch(idx, (txId) => {
+                                setSelectedMatchedCandidates(prev => ({ ...prev, [idx]: txId }));
+                              })}
                             </div>
                           );
                         })}
@@ -1333,8 +1450,15 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                                     />
                                     <span className="text-slate-400 italic -mt-0.5">Não lançar (ignorar este item)</span>
                                   </label>
+
+                                  {renderManualSelectionBanner(selectedValue, item.candidates)}
                                 </div>
                               </div>
+
+                              {renderManualSearch(idx, (txId) => {
+                                setIgnoredItems(prev => ({ ...prev, [idx]: false }));
+                                setSelectedCandidates(prev => ({ ...prev, [idx]: txId }));
+                              })}
 
                               {selectedValue === 'NEW' && (
                                 <div className="mt-1 space-y-2">
