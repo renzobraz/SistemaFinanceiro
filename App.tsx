@@ -2226,6 +2226,8 @@ const App: FC = () => {
           costCenters={registries.costCenters}
           wallets={registries.wallets}
           participants={registries.participants}
+          preSelectedBankId={selectedBankId}
+          preSelectedWalletId={selectedWalletId}
         />
       )}
 

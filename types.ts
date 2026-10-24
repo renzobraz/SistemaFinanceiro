@@ -303,6 +303,7 @@ export interface CardStatementItem {
   isRefund: boolean;          // true para estornos/créditos
   installmentNumber?: number; // ex.: 9 (de "09/10")
   installmentTotal?: number;  // ex.: 10
+  merchantCategory?: string;  // categoria+cidade impressas pela fatura, ex. "ALIMENTAÇÃO · MURIAE" (só disponível via parser regex de PDF)
 }
 
 export interface CardSection {

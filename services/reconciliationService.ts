@@ -103,6 +103,32 @@ export function descriptionSimilarity(a: string, b: string): number {
   return 0.0;
 }
 
+const INSTALLMENT_IN_DESC_RE = /\((\d+)\s*\/\s*(\d+)\)/;
+
+/**
+ * Lê o número de parcela ("(N/M)") de uma descrição de transação já lançada, se houver.
+ */
+function extractInstallmentFromDescription(desc: string): { num: number; total: number } | null {
+  const m = desc.match(INSTALLMENT_IN_DESC_RE);
+  if (!m) return null;
+  return { num: parseInt(m[1], 10), total: parseInt(m[2], 10) };
+}
+
+/**
+ * Prioridade por parcela: quando o item da fatura é uma parcela (ex. 2/3), recorrências
+ * já lançadas no Contas a Pagar (TagItau, YDUQS, BAHAMAS...) costumam ter várias parcelas
+ * futuras pendentes com o MESMO valor e nome parecido — só a parcela difere. Sem isso, o
+ * desempate por similaridade/data pode escolher a parcela errada (ex. 3/3 em vez de 2/3).
+ * 2 = mesma parcela exata, 1 = candidato sem parcela identificável (neutro), 0 = parcela
+ * diferente da mesma série (provavelmente errada).
+ */
+function installmentTier(item: CardStatementItem, txDescription: string): number {
+  if (item.installmentNumber === undefined || item.installmentTotal === undefined) return 1;
+  const parsed = extractInstallmentFromDescription(txDescription);
+  if (!parsed) return 1;
+  return (parsed.num === item.installmentNumber && parsed.total === item.installmentTotal) ? 2 : 0;
+}
+
 /**
  * 2c. Busca candidatos de conciliação para um item da fatura nas transações PENDING.
  */
@@ -140,6 +166,10 @@ export function findCandidates(
         reason = `Apenas valor exato (${tx.description})`;
       }
 
+      if (installmentTier(item, tx.description) === 0) {
+        reason += " — atenção: parcela diferente desta (pode ser de outro mês)";
+      }
+
       candidates.push({
         transaction: tx,
         confidence,
@@ -150,6 +180,11 @@ export function findCandidates(
   }
 
   return candidates.sort((a, b) => {
+    const tierA = installmentTier(item, a.transaction.description);
+    const tierB = installmentTier(item, b.transaction.description);
+    if (tierB !== tierA) {
+      return tierB - tierA;
+    }
     if (b.similarityScore !== a.similarityScore) {
       return b.similarityScore - a.similarityScore;
     }

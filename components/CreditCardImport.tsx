@@ -36,6 +36,8 @@ interface CreditCardImportProps {
   costCenters: CostCenter[];
   wallets: Wallet[];
   participants: Participant[];
+  preSelectedBankId?: string;
+  preSelectedWalletId?: string;
 }
 
 const fileToBase64 = (file: File): Promise<string> => {
@@ -68,11 +70,29 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   costCenters,
   wallets,
   participants,
+  preSelectedBankId,
+  preSelectedWalletId,
 }) => {
   const [step, setStep] = useState<'upload' | 'processing' | 'review'>('upload');
   const [file, setFile] = useState<File | null>(null);
-  const [selectedBankId, setSelectedBankId] = useState<string>('');
-  const [selectedWalletId, setSelectedWalletId] = useState<string>('');
+  // Se a tela já foi aberta com uma conta/carteira em contexto (filtro ativo na
+  // tela de Contas a Pagar), já vem selecionado — evita reescolher toda vez.
+  const [selectedBankId, setSelectedBankId] = useState<string>(() => {
+    if (preSelectedBankId && preSelectedBankId !== 'ALL' && banks.some(b => b.id === preSelectedBankId)) {
+      return preSelectedBankId;
+    }
+    return '';
+  });
+  const [selectedWalletId, setSelectedWalletId] = useState<string>(() => {
+    if (preSelectedWalletId && preSelectedWalletId !== 'ALL' && wallets.some(w => w.id === preSelectedWalletId)) {
+      return preSelectedWalletId;
+    }
+    return '';
+  });
+  // Vencimento agora é opcional antes de processar: é preenchido automaticamente
+  // com a data extraída do arquivo (ver finishParsing) assim que ele é lido. O
+  // usuário ainda pode digitar antes (ex. CSV, que não traz vencimento) ou corrigir
+  // depois, na tela de revisão.
   const [dueDate, setDueDate] = useState<string>('');
   
   const [progressMsg, setProgressMsg] = useState<string>('');
@@ -80,6 +100,9 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
   const [statement, setStatement] = useState<CardStatement | null>(null);
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
+  // Guardado para sugerir categoria/centro de custo pelo participante escolhido
+  // (ver suggestFromParticipant) — os aliases já são carregados em finishParsing.
+  const [merchantAliases, setMerchantAliases] = useState<MerchantAlias[]>([]);
 
   const [selectedMatchedCandidates, setSelectedMatchedCandidates] = useState<Record<number, string>>({});
   const [selectedCandidates, setSelectedCandidates] = useState<Record<number, string>>({});
@@ -190,7 +213,17 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   // revisão. Compartilhado pelas três vias de importação (PDF, CSV e XLSX).
   const finishParsing = async (parsedStatement: CardStatement) => {
     setProgressMsg('Conciliando com Contas a Pagar...');
+
+    // Vencimento: se o usuário não digitou nada antes de processar, usa o que foi
+    // extraído do próprio arquivo (PDF traz isso nas âncoras; CSV não traz nada,
+    // então o campo fica vazio e o usuário preenche na tela de revisão).
+    const effectiveDueDate = dueDate || parsedStatement.metadata.dueDate || '';
+    if (!dueDate && parsedStatement.metadata.dueDate) {
+      setDueDate(parsedStatement.metadata.dueDate);
+    }
+
     const aliases: MerchantAlias[] = await financeService.getMerchantAliases();
+    setMerchantAliases(aliases);
 
     // Janela de busca de lançamentos já PAGOS para checar duplicidade (reimportação parcial
     // ou repetida da mesma fatura): cobre desde a compra mais antiga do extrato até a data de
@@ -198,7 +231,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     // de compra.
     const itemDates = parsedStatement.cards.flatMap(c => c.items.map(i => i.purchaseDate)).filter(Boolean).sort();
     const periodStart = itemDates[0];
-    const periodEnd = [itemDates[itemDates.length - 1], dueDate].filter(Boolean).sort().slice(-1)[0];
+    const periodEnd = [itemDates[itemDates.length - 1], effectiveDueDate].filter(Boolean).sort().slice(-1)[0];
 
     const reconResult = await reconcileStatementWithPayables(
       parsedStatement,
@@ -262,18 +295,9 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       if (item.status === 'MATCHED') {
         initialMatchedCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
       } else if (item.status === 'UNCERTAIN') {
-        const installNum = item.statementItem.installmentNumber;
-        const installTotal = item.statementItem.installmentTotal;
-        let bestCandidate = item.candidates?.[0]?.transaction?.id || 'NEW';
-        if (installNum && installTotal && item.candidates) {
-          const matchingCandidate = item.candidates.find(c => {
-            const desc = c.transaction?.description || '';
-            return desc.includes('(' + installNum + '/' + installTotal + ')') ||
-                   desc.includes(installNum + '/' + installTotal);
-          });
-          if (matchingCandidate) bestCandidate = matchingCandidate.transaction?.id || 'NEW';
-        }
-        initialCandidates[index] = bestCandidate;
+        // candidates já vem ordenado priorizando a parcela exata (ver findCandidates
+        // em reconciliationService.ts), então o primeiro é o melhor palpite.
+        initialCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
       } else if (item.status === 'NEW') {
         initialNews[index] = true;
         const hasRemainingInstallments =
@@ -480,6 +504,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             isRefund: l.e_estorno,
             installmentNumber: l.parcela_atual,
             installmentTotal: l.total_parcelas,
+            merchantCategory: l.categoria,
           });
         }
 
@@ -557,6 +582,10 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
   const handleConfirmImport = async () => {
     if (!statement || !reconciliation) return;
+    if (!dueDate) {
+      setError('Informe a data de vencimento da fatura antes de confirmar.');
+      return;
+    }
 
     try {
       const importBatchId = `fatura-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -608,6 +637,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             transactionIdsToMarkPaid.push(choice);
           } else {
             newTransactions.push(buildNew('PAID', baseDesc, baseDate));
+            pushFutureInstallments();
           }
         } else if (item.status === 'UNCERTAIN') {
           if (ignoredItems[index]) return;
@@ -705,27 +735,9 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   // esse caso para mostrar um resumo de quem foi escolhido, já que nenhum dos radios
   // dos candidatos vai aparecer marcado.
   const getManualSelection = (selectedId: string | undefined, candidates: CandidateMatch[]): Transaction | undefined => {
-    if (!selectedId || selectedId === 'NEW') return undefined;
+    if (!selectedId || selectedId === 'NEW' || selectedId === 'IGNORE') return undefined;
     if (candidates.some(c => c.transaction.id === selectedId)) return undefined;
     return allPendingTxs.find(tx => tx.id === selectedId);
-  };
-
-  const renderManualSelectionBanner = (selectedId: string | undefined, candidates: CandidateMatch[]) => {
-    const manual = getManualSelection(selectedId, candidates);
-    if (!manual) return null;
-    const participantName = participants.find(p => p.id === manual.participantId)?.name;
-    return (
-      <div className="flex items-start gap-2 text-xs bg-blue-50 border border-blue-200 rounded-lg p-2">
-        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
-        <div>
-          <p className="font-bold text-blue-900">
-            Selecionado manualmente: {manual.description}
-            {participantName && <span className="font-normal"> · Participante: {participantName}</span>}
-          </p>
-          <p className="text-[10px] text-blue-700">{formatDate(manual.date)} · {formatCurrency(manual.value)}</p>
-        </div>
-      </div>
-    );
   };
 
   // Campo de busca livre em TODOS os lançamentos PENDING da conta — não só os
@@ -792,6 +804,194 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             })}
           </div>
         )}
+      </div>
+    );
+  };
+
+  // Sugere categoria/centro de custo a partir do histórico de Merchant Alias desse
+  // participante: olha todos os aliases que já apontam para ele e pega a categoria/CC
+  // mais usada entre eles. É uma aproximação de "como eu costumo lançar para esse
+  // participante", sem precisar de uma consulta nova ao histórico de transações.
+  const suggestFromParticipant = (participantId: string): { categoryId?: string; costCenterId?: string } => {
+    const relevant = merchantAliases.filter(a => a.defaultParticipantId === participantId);
+    const mostCommon = (values: (string | null | undefined)[]): string | undefined => {
+      const counts = new Map<string, number>();
+      for (const v of values) {
+        if (!v) continue;
+        counts.set(v, (counts.get(v) || 0) + 1);
+      }
+      let best: string | undefined;
+      let bestCount = 0;
+      for (const [v, count] of counts) {
+        if (count > bestCount) { best = v; bestCount = count; }
+      }
+      return best;
+    };
+    return {
+      categoryId: mostCommon(relevant.map(a => a.defaultCategoryId)),
+      costCenterId: mostCommon(relevant.map(a => a.defaultCostCenterId)),
+    };
+  };
+
+  // Cabeçalho comum aos três status (MATCHED/UNCERTAIN/NEW): descrição, badges de
+  // parcela/estorno, categoria impressa na fatura (quando disponível) e data à
+  // esquerda; valor em destaque à direita.
+  const renderItemHeader = (item: ReconciliationResult['items'][number]) => (
+    <div className="flex items-start justify-between gap-2">
+      <div>
+        <div className="flex items-center flex-wrap gap-2">
+          <p className="text-sm font-bold text-slate-800">{item.statementItem.rawDescription}</p>
+          {item.statementItem.isRefund && (
+            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+              Crédito/Desconto
+            </span>
+          )}
+          {item.statementItem.installmentNumber && (
+            <span className="bg-blue-150 text-blue-800 border border-blue-200 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">
+              Parcela {item.statementItem.installmentNumber}/{item.statementItem.installmentTotal ?? '?'}
+            </span>
+          )}
+          {item.statementItem.merchantCategory && (
+            <span className="text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">
+              {item.statementItem.merchantCategory}
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-slate-500 font-medium mt-0.5">{formatDate(item.statementItem.purchaseDate)}</p>
+      </div>
+      <p className="text-sm font-black text-slate-800 whitespace-nowrap">{formatCurrency(item.statementItem.value)}</p>
+    </div>
+  );
+
+  // Painel de edição para "criar novo lançamento": descrição, categoria, centro de
+  // custo, participante (sugerindo categoria/CC ao escolher) e, quando a fatura trouxer
+  // parcela, a opção de gerar automaticamente as parcelas futuras. Usado pelas três
+  // seções (NEW sempre, MATCHED/UNCERTAIN quando a opção "criar novo" é escolhida).
+  const renderEntryFields = (idx: number, item: ReconciliationResult['items'][number]) => (
+    <div className="space-y-2">
+      <input
+        type="text"
+        placeholder="Descrição (opcional)..."
+        value={itemDescriptions[idx] !== undefined ? itemDescriptions[idx] : item.statementItem.rawDescription || ''}
+        onChange={e => setItemDescriptions(prev => ({ ...prev, [idx]: e.target.value }))}
+        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+      />
+      <div className="grid grid-cols-2 gap-2">
+        <select
+          value={itemCategories[idx] || ''}
+          onChange={e => setItemCategories(prev => ({ ...prev, [idx]: e.target.value }))}
+          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+        >
+          <option value="">Categoria (opcional)...</option>
+          {categories.map(c => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        <select
+          value={itemCostCenters[idx] || ''}
+          onChange={e => setItemCostCenters(prev => ({ ...prev, [idx]: e.target.value }))}
+          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600"
+        >
+          <option value="">Centro de Custo (opcional)...</option>
+          {costCenters.map(c => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="mt-1">
+        <ParticipantAutocomplete
+          participants={localParticipants}
+          selectedParticipantId={itemParticipants[idx] || ''}
+          onSelect={(id) => {
+            setItemParticipants(prev => ({ ...prev, [idx]: id }));
+            const suggestion = suggestFromParticipant(id);
+            if (suggestion.categoryId && !itemCategories[idx]) {
+              setItemCategories(prev => ({ ...prev, [idx]: suggestion.categoryId! }));
+            }
+            if (suggestion.costCenterId && !itemCostCenters[idx]) {
+              setItemCostCenters(prev => ({ ...prev, [idx]: suggestion.costCenterId! }));
+            }
+          }}
+          onAddParticipant={async (name) => {
+            const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
+            setLocalParticipants(prev => [...prev, newP]);
+            return newP;
+          }}
+          placeholder="Participante (opcional)..."
+        />
+      </div>
+      {item.statementItem.installmentNumber !== undefined &&
+       item.statementItem.installmentTotal !== undefined &&
+       item.statementItem.installmentTotal > item.statementItem.installmentNumber && (
+        <label className="flex items-center gap-2 cursor-pointer text-slate-600 select-none bg-slate-50 border border-slate-150 p-2.5 rounded-xl">
+          <input
+            type="checkbox"
+            checked={generateFutureInstallments[idx] ?? true}
+            onChange={e => setGenerateFutureInstallments(prev => ({ ...prev, [idx]: e.target.checked }))}
+            className="rounded border-slate-300 text-blue-600 focus:ring-blue-600 w-4 h-4"
+          />
+          <span className="text-xs leading-tight">
+            Gerar automaticamente as{' '}
+            <strong>{item.statementItem.installmentTotal - item.statementItem.installmentNumber}</strong>{' '}
+            parcelas restantes (
+            <strong>{item.statementItem.installmentNumber + 1}/{item.statementItem.installmentTotal}</strong>
+            {' '}até{' '}
+            <strong>{item.statementItem.installmentTotal}/{item.statementItem.installmentTotal}</strong>)
+          </span>
+        </label>
+      )}
+    </div>
+  );
+
+  // Seletor compacto do candidato (MATCHED/UNCERTAIN): mostra a melhor sugestão já
+  // escolhida (candidates já vem ordenado priorizando a parcela exata), com opção de
+  // trocar por outro candidato, tratar como novo ou (só UNCERTAIN) ignorar. Substitui
+  // a lista grande de radio buttons por um <select>, no mesmo espírito compacto do
+  // GASTOS A LANÇAR.
+  const renderCandidateSelector = (
+    idx: number,
+    item: ReconciliationResult['items'][number],
+    selectedValue: string,
+    onChange: (value: string) => void,
+    allowIgnore: boolean
+  ) => {
+    const selectedCandidate = item.candidates.find(c => c.transaction.id === selectedValue);
+    const selectedParticipantName = selectedCandidate
+      ? participants.find(p => p.id === selectedCandidate.transaction.participantId)?.name
+      : undefined;
+    // Se a seleção veio da busca manual, o id não está em item.candidates — precisa de
+    // uma option própria no <select>, senão o navegador mostra nada selecionado.
+    const manualSelection = getManualSelection(selectedValue, item.candidates);
+
+    return (
+      <div className="space-y-1.5">
+        <select
+          value={selectedValue}
+          onChange={e => onChange(e.target.value)}
+          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+        >
+          {item.candidates.map(cand => (
+            <option key={cand.transaction.id} value={cand.transaction.id}>
+              ✅ {cand.transaction.description} · {formatDate(cand.transaction.date)} · {formatCurrency(cand.transaction.value)}
+            </option>
+          ))}
+          {manualSelection && (
+            <option value={manualSelection.id}>
+              🔍 {manualSelection.description} · {formatDate(manualSelection.date)} · {formatCurrency(manualSelection.value)}
+            </option>
+          )}
+          <option value="NEW">🆕 Nenhum — criar novo lançamento</option>
+          {allowIgnore && <option value="IGNORE">🚫 Não lançar (ignorar este item)</option>}
+        </select>
+
+        {selectedCandidate && (
+          <p className="text-[10px] text-slate-500 px-0.5">
+            {selectedCandidate.reason}
+            {selectedParticipantName && ` · Participante: ${selectedParticipantName}`}
+          </p>
+        )}
+
+        {renderManualSearch(idx, onChange)}
       </div>
     );
   };
@@ -979,14 +1179,18 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
               <div className="space-y-2">
                 <label className="text-xs font-black text-slate-400 uppercase tracking-widest block">
-                  Data de vencimento da fatura <span className="text-red-500">*</span>
+                  Data de vencimento da fatura
                 </label>
                 <input
                   type="date"
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
+                  placeholder="Detectado automaticamente a partir do arquivo"
                   className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-700 font-medium focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 text-sm transition-all"
                 />
+                <p className="text-[11px] text-slate-400">
+                  Opcional: se vazio, é preenchido com o vencimento detectado no arquivo (PDF). CSV não traz essa informação — nesse caso, preencha aqui ou na revisão.
+                </p>
               </div>
 
               {duplicateWarning && (
@@ -1027,7 +1231,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </button>
                 <button
                   onClick={handleProcess}
-                  disabled={!file || !selectedBankId || !selectedWalletId || !dueDate}
+                  disabled={!file || !selectedBankId || !selectedWalletId}
                   className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-md shadow-blue-200"
                 >
                   Processar fatura
@@ -1091,6 +1295,18 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
                   Resumo da Fatura
                 </h3>
+                <div className="flex items-center justify-between gap-3 pb-3 mb-2 border-b border-slate-100">
+                  <label htmlFor="review-due-date" className="text-sm text-slate-600 shrink-0">
+                    Vencimento{!dueDate && <span className="text-red-500"> *</span>}:
+                  </label>
+                  <input
+                    id="review-due-date"
+                    type="date"
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
+                    className={`bg-white border rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-600 ${!dueDate ? 'border-red-300' : 'border-slate-300 focus:border-blue-600'}`}
+                  />
+                </div>
                 <div className="space-y-2">
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-slate-600">Total da fatura:</span>
@@ -1223,7 +1439,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   onClick={() => {
                     const newFuture: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
-                      if (item.status === 'NEW' || item.status === 'UNCERTAIN') newFuture[index] = true;
+                      if (item.status === 'NEW' || item.status === 'UNCERTAIN' || item.status === 'MATCHED') newFuture[index] = true;
                     });
                     setGenerateFutureInstallments(newFuture);
                   }}
@@ -1237,7 +1453,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                   onClick={() => {
                     const newFuture: Record<number, boolean> = {};
                     reconciliation.items.forEach((item, index) => {
-                      if (item.status === 'NEW' || item.status === 'UNCERTAIN') newFuture[index] = false;
+                      if (item.status === 'NEW' || item.status === 'UNCERTAIN' || item.status === 'MATCHED') newFuture[index] = false;
                     });
                     setGenerateFutureInstallments(newFuture);
                   }}
@@ -1276,74 +1492,17 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
 
                           return (
                             <div key={idx} className="p-4 sm:p-5 space-y-3">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm font-bold text-slate-800">
-                                    {item.statementItem.rawDescription}
-                                    {item.statementItem.installmentNumber && item.statementItem.installmentTotal && (
-                                      <span className="text-slate-500 font-normal"> ({item.statementItem.installmentNumber}/{item.statementItem.installmentTotal})</span>
-                                    )}
-                                  </p>
-                                  <p className="text-xs text-slate-500 font-medium">{formatDate(item.statementItem.purchaseDate)}</p>
-                                </div>
-                                <p className="text-sm font-black text-slate-800 whitespace-nowrap">{formatCurrency(item.statementItem.value)}</p>
-                              </div>
+                              {renderItemHeader(item)}
 
-                              <div className="bg-green-50/40 border border-green-100 rounded-xl p-3 space-y-2">
-                                <p className="text-[10px] uppercase font-black text-green-800 tracking-wider">Candidatos correspondentes encontrados no Contas a Pagar:</p>
-                                <div className="space-y-2">
-                                  {item.candidates.map((cand) => {
-                                    const participantName = participants.find(p => p.id === cand.transaction.participantId)?.name;
-                                    return (
-                                      <label key={cand.transaction.id} className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer p-1 rounded hover:bg-white transition-colors">
-                                        <input
-                                          type="radio"
-                                          name={`matched-${idx}`}
-                                          value={cand.transaction.id}
-                                          checked={selectedValue === cand.transaction.id}
-                                          onChange={() => {
-                                            setSelectedMatchedCandidates(prev => ({
-                                              ...prev,
-                                              [idx]: cand.transaction.id
-                                            }));
-                                          }}
-                                          className="text-blue-600 focus:ring-blue-600 w-3.5 h-3.5 mt-0.5"
-                                        />
-                                        <div className="-mt-0.5">
-                                          <p className="font-bold text-slate-800">
-                                            {cand.transaction.description}
-                                            {participantName && <span className="text-slate-500 font-normal"> · Participante: {participantName}</span>}
-                                          </p>
-                                          <p className="text-[10px] text-slate-500">{formatDate(cand.transaction.date)} · {formatCurrency(cand.transaction.value)} ({cand.reason})</p>
-                                        </div>
-                                      </label>
-                                    );
-                                  })}
+                              {renderCandidateSelector(
+                                idx,
+                                item,
+                                selectedValue,
+                                (value) => setSelectedMatchedCandidates(prev => ({ ...prev, [idx]: value })),
+                                false
+                              )}
 
-                                  <label className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer p-1 rounded hover:bg-white transition-colors">
-                                    <input
-                                      type="radio"
-                                      name={`matched-${idx}`}
-                                      value="NEW"
-                                      checked={selectedValue === 'NEW'}
-                                      onChange={() => {
-                                        setSelectedMatchedCandidates(prev => ({
-                                          ...prev,
-                                          [idx]: 'NEW'
-                                        }));
-                                      }}
-                                      className="text-blue-600 focus:ring-blue-600 w-3.5 h-3.5 mt-0.5"
-                                    />
-                                    <span className="font-bold text-slate-800 -mt-0.5">Nenhum — criar novo lançamento</span>
-                                  </label>
-
-                                  {renderManualSelectionBanner(selectedValue, item.candidates)}
-                                </div>
-                              </div>
-
-                              {renderManualSearch(idx, (txId) => {
-                                setSelectedMatchedCandidates(prev => ({ ...prev, [idx]: txId }));
-                              })}
+                              {selectedValue === 'NEW' && renderEntryFields(idx, item)}
                             </div>
                           );
                         })}
@@ -1376,156 +1535,19 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                       <div className="divide-y divide-slate-100 bg-white">
                         {reconciliation.items.map((item, idx) => {
                           if (item.status !== 'UNCERTAIN') return null;
-                          const selectedValue = ignoredItems[idx] ? '' : (selectedCandidates[idx] || 'NEW');
+                          const selectedValue = ignoredItems[idx] ? 'IGNORE' : (selectedCandidates[idx] || 'NEW');
+                          const handleChange = (value: string) => {
+                            setIgnoredItems(prev => ({ ...prev, [idx]: value === 'IGNORE' }));
+                            setSelectedCandidates(prev => ({ ...prev, [idx]: value === 'IGNORE' ? '' : value }));
+                          };
 
                           return (
                             <div key={idx} className="p-4 sm:p-5 space-y-3">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm font-bold text-slate-800">
-                                    {item.statementItem.rawDescription}
-                                    {item.statementItem.installmentNumber && item.statementItem.installmentTotal && (
-                                      <span className="text-slate-500 font-normal"> ({item.statementItem.installmentNumber}/{item.statementItem.installmentTotal})</span>
-                                    )}
-                                  </p>
-                                  <p className="text-xs text-slate-500 font-medium">{formatDate(item.statementItem.purchaseDate)}</p>
-                                </div>
-                                <p className="text-sm font-black text-slate-800 whitespace-nowrap">{formatCurrency(item.statementItem.value)}</p>
-                              </div>
+                              {renderItemHeader(item)}
 
-                              <div className="bg-amber-50/40 border border-amber-100 rounded-xl p-3 space-y-2">
-                                <p className="text-[10px] uppercase font-black text-amber-800 tracking-wider">Candidatos possíveis no Contas a Pagar:</p>
-                                <div className="space-y-2">
-                                  {item.candidates.map((cand) => {
-                                    const participantName = participants.find(p => p.id === cand.transaction.participantId)?.name;
-                                    return (
-                                      <label key={cand.transaction.id} className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer p-1 rounded hover:bg-white transition-colors">
-                                        <input
-                                          type="radio"
-                                          name={`candidate-${idx}`}
-                                          value={cand.transaction.id}
-                                          checked={selectedValue === cand.transaction.id}
-                                          onChange={() => {
-                                            setIgnoredItems(prev => ({ ...prev, [idx]: false }));
-                                            setSelectedCandidates(prev => ({ ...prev, [idx]: cand.transaction.id }));
-                                          }}
-                                          className="text-blue-600 focus:ring-blue-600 w-3.5 h-3.5 mt-0.5"
-                                        />
-                                        <div className="-mt-0.5">
-                                          <p className="font-bold text-slate-800">
-                                            {cand.transaction.description}
-                                            {participantName && <span className="text-slate-500 font-normal"> · Participante: {participantName}</span>}
-                                          </p>
-                                          <p className="text-[10px] text-slate-500">{formatDate(cand.transaction.date)} · {formatCurrency(cand.transaction.value)} ({cand.reason})</p>
-                                        </div>
-                                      </label>
-                                    );
-                                  })}
+                              {renderCandidateSelector(idx, item, selectedValue, handleChange, true)}
 
-                                  <label className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer p-1 rounded hover:bg-white transition-colors">
-                                    <input
-                                      type="radio"
-                                      name={`candidate-${idx}`}
-                                      value="NEW"
-                                      checked={selectedValue === 'NEW'}
-                                      onChange={() => {
-                                        setIgnoredItems(prev => ({ ...prev, [idx]: false }));
-                                        setSelectedCandidates(prev => ({ ...prev, [idx]: 'NEW' }));
-                                      }}
-                                      className="text-blue-600 focus:ring-blue-600 w-3.5 h-3.5 mt-0.5"
-                                    />
-                                    <span className="font-bold text-slate-800 -mt-0.5">Nenhum — tratar como novo</span>
-                                  </label>
-
-                                  <label className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer p-1 rounded hover:bg-white transition-colors">
-                                    <input
-                                      type="radio"
-                                      name={`candidate-${idx}`}
-                                      checked={ignoredItems[idx] === true}
-                                      onChange={() => {
-                                        setIgnoredItems(prev => ({ ...prev, [idx]: true }));
-                                        setSelectedCandidates(prev => ({ ...prev, [idx]: '' }));
-                                      }}
-                                      className="text-slate-400 focus:ring-slate-400 w-3.5 h-3.5 mt-0.5"
-                                    />
-                                    <span className="text-slate-400 italic -mt-0.5">Não lançar (ignorar este item)</span>
-                                  </label>
-
-                                  {renderManualSelectionBanner(selectedValue, item.candidates)}
-                                </div>
-                              </div>
-
-                              {renderManualSearch(idx, (txId) => {
-                                setIgnoredItems(prev => ({ ...prev, [idx]: false }));
-                                setSelectedCandidates(prev => ({ ...prev, [idx]: txId }));
-                              })}
-
-                              {selectedValue === 'NEW' && (
-                                <div className="mt-1 space-y-2">
-                                  <input
-                                    type="text"
-                                    placeholder="Descrição (opcional)..."
-                                    value={itemDescriptions[idx] !== undefined ? itemDescriptions[idx] : item.statementItem.rawDescription || ''}
-                                    onChange={e => setItemDescriptions(prev => ({ ...prev, [idx]: e.target.value }))}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-                                  />
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <select
-                                      value={itemCategories[idx] || ''}
-                                      onChange={e => setItemCategories(prev => ({ ...prev, [idx]: e.target.value }))}
-                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-                                    >
-                                      <option value="">Categoria (opcional)...</option>
-                                      {categories.map(c => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
-                                      ))}
-                                    </select>
-                                    <select
-                                      value={itemCostCenters[idx] || ''}
-                                      onChange={e => setItemCostCenters(prev => ({ ...prev, [idx]: e.target.value }))}
-                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600"
-                                    >
-                                      <option value="">Centro de Custo (opcional)...</option>
-                                      {costCenters.map(c => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="mt-1">
-                                    <ParticipantAutocomplete
-                                      participants={localParticipants}
-                                      selectedParticipantId={itemParticipants[idx] || ''}
-                                      onSelect={(id) => setItemParticipants(prev => ({ ...prev, [idx]: id }))}
-                                      onAddParticipant={async (name) => {
-                                        const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
-                                        setLocalParticipants(prev => [...prev, newP]);
-                                        return newP;
-                                      }}
-                                      placeholder="Participante (opcional)..."
-                                    />
-                                  </div>
-                                  {item.statementItem.installmentNumber !== undefined &&
-                                   item.statementItem.installmentTotal !== undefined &&
-                                   item.statementItem.installmentTotal > item.statementItem.installmentNumber && (
-                                    <label className="flex items-center gap-2 cursor-pointer text-slate-600 select-none bg-slate-50 border border-slate-150 p-2.5 rounded-xl">
-                                      <input
-                                        type="checkbox"
-                                        checked={generateFutureInstallments[idx] ?? true}
-                                        onChange={e => setGenerateFutureInstallments(prev => ({ ...prev, [idx]: e.target.checked }))}
-                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-600 w-4 h-4"
-                                      />
-                                      <span className="text-xs leading-tight">
-                                        Gerar automaticamente as{' '}
-                                        <strong>{item.statementItem.installmentTotal - item.statementItem.installmentNumber}</strong>{' '}
-                                        parcelas restantes (
-                                        <strong>{item.statementItem.installmentNumber + 1}/{item.statementItem.installmentTotal}</strong>
-                                        {' '}até{' '}
-                                        <strong>{item.statementItem.installmentTotal}/{item.statementItem.installmentTotal}</strong>)
-                                      </span>
-                                    </label>
-                                  )}
-                                </div>
-                              )}
+                              {selectedValue === 'NEW' && renderEntryFields(idx, item)}
                             </div>
                           );
                         })}
@@ -1559,114 +1581,12 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                         {reconciliation.items.map((item, idx) => {
                           if (item.status !== 'NEW') return null;
                           const isCreated = createdNews[idx] ?? true;
-                          const itemCat = itemCategories[idx] || '';
-                          const itemCC = itemCostCenters[idx] || '';
 
                           return (
-                            <div key={idx} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div key={idx} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                               <div className="flex-1 space-y-2">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div>
-                                    <div className="flex items-center gap-2">
-                                      <p className="text-sm font-bold text-slate-800 truncate max-w-[240px] sm:max-w-md">{item.statementItem.rawDescription}</p>
-                                      {item.statementItem.isRefund && (
-                                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full ml-2">
-                                          Crédito/Desconto
-                                        </span>
-                                      )}
-                                      {item.statementItem.installmentNumber && (
-                                        <span className="bg-blue-150 text-blue-800 border border-blue-200 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">
-                                          Parcela {item.statementItem.installmentNumber}/{item.statementItem.installmentTotal ?? '?'}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <p className="text-xs text-slate-500 font-medium">{formatDate(item.statementItem.purchaseDate)}</p>
-                                  </div>
-                                  <p className="text-sm font-black text-slate-800 whitespace-nowrap">{formatCurrency(item.statementItem.value)}</p>
-                                </div>
-
-                                {isCreated && (
-                                  <>
-                                    <input
-                                      type="text"
-                                      placeholder="Descrição (opcional)..."
-                                      value={itemDescriptions[idx] !== undefined ? itemDescriptions[idx] : item.statementItem.rawDescription || ''}
-                                      onChange={e => setItemDescriptions(prev => ({ ...prev, [idx]: e.target.value }))}
-                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-                                    />
-                                    <div className="grid grid-cols-2 gap-2 pt-1">
-                                      <select
-                                        value={itemCat}
-                                        onChange={(e) => {
-                                          setItemCategories(prev => ({
-                                            ...prev,
-                                            [idx]: e.target.value
-                                          }));
-                                        }}
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-                                      >
-                                        <option value="">Categoria (opcional)...</option>
-                                        {categories.map((cat) => (
-                                          <option key={cat.id} value={cat.id}>
-                                            {cat.name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <select
-                                        value={itemCC}
-                                        onChange={(e) => {
-                                          setItemCostCenters(prev => ({
-                                            ...prev,
-                                            [idx]: e.target.value
-                                          }));
-                                        }}
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600"
-                                      >
-                                        <option value="">Centro de Custo (opcional)...</option>
-                                        {costCenters.map((cc) => (
-                                          <option key={cc.id} value={cc.id}>
-                                            {cc.name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </div>
-                                    <div className="mt-1">
-                                      <ParticipantAutocomplete
-                                        participants={participants}
-                                        selectedParticipantId={itemParticipants[idx] || ''}
-                                        onSelect={(id) => setItemParticipants(prev => ({ ...prev, [idx]: id }))}
-                                        onAddParticipant={async (name) => {
-                                          const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
-                                          return newP;
-                                        }}
-                                        placeholder="Participante (opcional)..."
-                                      />
-                                    </div>
-                                    {item.statementItem.installmentTotal !== undefined &&
-                                     item.statementItem.installmentNumber !== undefined &&
-                                     item.statementItem.installmentTotal > item.statementItem.installmentNumber && (
-                                      <label className="flex items-center gap-2 cursor-pointer mt-2 text-slate-600 select-none bg-slate-50 border border-slate-150 p-2.5 rounded-xl">
-                                        <input
-                                          type="checkbox"
-                                          checked={generateFutureInstallments[idx] ?? true}
-                                          onChange={(e) => setGenerateFutureInstallments(prev => ({
-                                            ...prev,
-                                            [idx]: e.target.checked
-                                          }))}
-                                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-600 w-4 h-4"
-                                        />
-                                        <span className="text-xs leading-tight">
-                                          Gerar automaticamente as{' '}
-                                          <strong>{item.statementItem.installmentTotal - item.statementItem.installmentNumber}</strong>{' '}
-                                          parcelas restantes (
-                                          <strong>{item.statementItem.installmentNumber + 1}/{item.statementItem.installmentTotal}</strong>
-                                          {' '}até{' '}
-                                          <strong>{item.statementItem.installmentTotal}/{item.statementItem.installmentTotal}</strong>)
-                                        </span>
-                                      </label>
-                                    )}
-                                  </>
-                                )}
+                                {renderItemHeader(item)}
+                                {isCreated && renderEntryFields(idx, item)}
                               </div>
 
                               <div className="flex items-center shrink-0 self-end sm:self-auto">
@@ -1705,7 +1625,9 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                 </button>
                 <button
                   onClick={handleConfirmImport}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-md shadow-blue-200"
+                  disabled={!dueDate}
+                  title={!dueDate ? 'Informe a data de vencimento antes de confirmar' : undefined}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:bg-slate-300 text-white px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-md shadow-blue-200"
                 >
                   Confirmar importação
                 </button>

@@ -216,6 +216,7 @@ export interface FaturaLancamento {
   e_parcelado: boolean;
   e_estorno: boolean;     // true se valor negativo
   cartao_final: string;   // qual cartão gerou este lançamento
+  categoria?: string;     // categoria+cidade impressas pelo Itaú, ex. "ALIMENTAÇÃO · MURIAE"
 }
 
 export interface CartaoInfo {
@@ -289,11 +290,16 @@ export function parseItauFaturaWithRegex(pdfText: string): FaturaParseResult {
   // Capturar TODOS os lançamentos antes da âncora de parada
   const LAUNCH_RE = /^[@⊕⊞\W]*(\d{2}\/\d{2})\s+(.+?)\s+(?:(\d{2})\/(\d{2})\s+)?(-?\s*[\d.]+,\d{2})$/;
   const CAT_RE = /^[A-ZÁÀÃÂÉÊÍÓÔÕÚÇ\s]+\s+\.[A-Z\s]+$/i;
+  // Mesma forma do CAT_RE, mas com grupos de captura p/ extrair "categoria" e "cidade"
+  // (ex. "ALIMENTAÇÃO .MURIAE" → categoria="ALIMENTAÇÃO", cidade="MURIAE"). Essa linha
+  // sempre aparece logo ABAIXO do lançamento a que pertence, nunca antes.
+  const CAT_CAPTURE_RE = /^([A-ZÁÀÃÂÉÊÍÓÔÕÚÇ\s]+?)\s+\.([A-Z\s]+)$/i;
 
   const rawItems: Array<{
     data: string; estabelecimento: string; valor: number;
     parcela_atual?: number; total_parcelas?: number;
     e_parcelado: boolean; e_estorno: boolean;
+    categoria?: string;
   }> = [];
 
   const erros_parse: string[] = [];
@@ -305,8 +311,18 @@ export function parseItauFaturaWithRegex(pdfText: string): FaturaParseResult {
         (lu.includes("COMPRAS PARCELADAS") && lu.includes("XIMAS"))) {
       break;
     }
-    // Ignorar categorias e cabeçalhos
-    if (CAT_RE.test(line)) continue;
+    // Categoria+cidade do lançamento anterior (ex. "ALIMENTAÇÃO .MURIAE") — não gera
+    // um item próprio, só enriquece o último lançamento já capturado.
+    if (CAT_RE.test(line)) {
+      const catMatch = line.match(CAT_CAPTURE_RE);
+      if (catMatch && rawItems.length > 0) {
+        const last = rawItems[rawItems.length - 1];
+        if (!last.categoria) {
+          last.categoria = `${catMatch[1].trim()} · ${catMatch[2].trim()}`;
+        }
+      }
+      continue;
+    }
     if (lu.includes("DATA") && lu.includes("ESTABELECIMENTO")) continue;
     if (lu.includes("VALOR EM R$")) continue;
 
