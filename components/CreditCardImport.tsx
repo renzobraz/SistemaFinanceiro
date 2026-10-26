@@ -16,7 +16,18 @@ import {
 import { financeService } from '../services/financeService';
 import { extractStatementAnchors, extractStatementWithAI, extractStatementWithGemini, reconcileStatement, parseFaturaXlsxRows } from '../services/cardStatementService';
 import { reconcileStatementWithPayables, resolveCanonicalName, descriptionSimilarity } from '../services/reconciliationService';
-import type { CardStatement, CardStatementItem, ReconciliationResult, MerchantAlias, Bank, Category, CostCenter, Wallet, Transaction, Participant, CandidateMatch } from '../types';
+import type { CardStatement, CardStatementItem, ReconciliationResult, MerchantAlias, Bank, Category, CostCenter, Wallet, Transaction, Participant, CandidateMatch, BaseEntity } from '../types';
+
+// Resolve um id de categoria/CC (que pode ter sido ensinado numa carteira diferente, via
+// Merchant Alias) para o equivalente de mesmo nome dentro da carteira sendo importada —
+// evita misturar cadastros entre carteiras quando o id original não pertence a esta.
+function resolveInWalletScope(id: string | null | undefined, scopedList: BaseEntity[], allList: BaseEntity[]): string | undefined {
+  if (!id) return undefined;
+  if (scopedList.some(c => c.id === id)) return id;
+  const original = allList.find(c => c.id === id);
+  if (!original) return undefined;
+  return scopedList.find(c => c.name === original.name)?.id;
+}
 
 // Valor mais frequente de uma lista (ignorando vazios) — usado para sugerir categoria/CC/
 // participante a partir do histórico (Merchant Alias ou lançamentos já pagos parecidos).
@@ -128,6 +139,18 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const [itemCostCenters, setItemCostCenters] = useState<Record<number, string>>({});
   const [itemParticipants, setItemParticipants] = useState<Record<number, string>>({});
   const [itemDescriptions, setItemDescriptions] = useState<Record<number, string>>({});
+  // Categorias/centros de custo/participantes do cadastro são por carteira (BaseEntity.walletId).
+  // As props vêm filtradas pela carteira do FILTRO da tela de Contas a Pagar — que pode ser
+  // diferente da carteira de pagamento escolhida dentro deste modal (ou estar em "Todas"),
+  // misturando cadastros de carteiras diferentes. Por isso, assim que a fatura é processada,
+  // esses três estados são substituídos por uma busca nova já filtrada por `selectedWalletId`
+  // (ver finishParsing) e são eles — não as props — que alimentam os selects da revisão.
+  const [walletCategories, setWalletCategories] = useState<Category[]>(categories);
+  const [walletCostCenters, setWalletCostCenters] = useState<CostCenter[]>(costCenters);
+  // Listas sem filtro de carteira (todas), usadas só para resolver pelo nome um id de
+  // categoria/CC ensinado por Merchant Alias em outra carteira (ver resolveInWalletScope).
+  const [allCategories, setAllCategories] = useState<Category[]>(categories);
+  const [allCostCenters, setAllCostCenters] = useState<CostCenter[]>(costCenters);
   const [localParticipants, setLocalParticipants] = useState<Participant[]>(participants);
   const [batchHistory, setBatchHistory] = useState<{ id: string; date: string; count: number; description: string }[]>([]);
   const [undoingId, setUndoingId] = useState<string | null>(null);
@@ -291,6 +314,21 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     const initialParts: Record<number, string> = {};
     const initialGenerateFuture: Record<number, boolean> = {};
 
+    // Cadastros de categoria/CC/participante são por carteira — refaz a busca já filtrada
+    // pela carteira de pagamento escolhida NESTE modal (selectedWalletId), em vez de confiar
+    // nas props (que refletem o filtro de carteira da tela de Contas a Pagar, podendo ser
+    // "Todas" ou uma carteira diferente e misturar cadastros entre carteiras na revisão).
+    const [scopedCategories, scopedCostCenters, allCategories, allCostCenters] = await Promise.all([
+      financeService.getRegistry<Category>('categories', false, selectedWalletId),
+      financeService.getRegistry<CostCenter>('costCenters', false, selectedWalletId),
+      financeService.getRegistry<Category>('categories', false, 'ALL'),
+      financeService.getRegistry<CostCenter>('costCenters', false, 'ALL'),
+    ]);
+    setWalletCategories(scopedCategories);
+    setWalletCostCenters(scopedCostCenters);
+    setAllCategories(allCategories);
+    setAllCostCenters(allCostCenters);
+
     // Participantes não são mais compartilhados entre carteiras: o Merchant Alias
     // pode ter sido ensinado em outra carteira, então a sugestão de participante
     // é resolvida pelo NOME dele dentro da carteira sendo importada agora (criando
@@ -362,8 +400,10 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       const matchedAlias = aliases.find(alias => alias.canonicalName === canonicalName);
 
       if (matchedAlias) {
-        if (matchedAlias.defaultCategoryId) initialCats[index] = matchedAlias.defaultCategoryId;
-        if (matchedAlias.defaultCostCenterId) initialCCs[index] = matchedAlias.defaultCostCenterId;
+        const resolvedCat = resolveInWalletScope(matchedAlias.defaultCategoryId, scopedCategories, allCategories);
+        if (resolvedCat) initialCats[index] = resolvedCat;
+        const resolvedCC = resolveInWalletScope(matchedAlias.defaultCostCenterId, scopedCostCenters, allCostCenters);
+        if (resolvedCC) initialCCs[index] = resolvedCC;
         if (matchedAlias.defaultParticipantId) {
           const resolvedId = await resolveAliasParticipant(matchedAlias.defaultParticipantId);
           if (resolvedId) initialParts[index] = resolvedId;
@@ -379,6 +419,11 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
         if (!initialParts[index] && fromHistory.participantId) initialParts[index] = fromHistory.participantId;
       }
     }
+
+    // Só agora, depois do loop (que pode ter criado participantes novos por resolução
+    // cross-wallet), filtra para a carteira sendo importada — mesma regra de "pertence a
+    // esta carteira OU é compartilhado (sem carteira)" usada pelo getRegistry no backend.
+    setLocalParticipants(allParticipants.filter(p => !p.walletId || p.walletId === selectedWalletId));
 
     setSelectedMatchedCandidates(initialMatchedCandidates);
     setSelectedCandidates(initialCandidates);
@@ -867,9 +912,13 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   // participante", sem precisar de uma consulta nova ao histórico de transações.
   const suggestFromParticipant = (participantId: string): { categoryId?: string; costCenterId?: string } => {
     const relevant = merchantAliases.filter(a => a.defaultParticipantId === participantId);
+    const rawCat = mostCommon(relevant.map(a => a.defaultCategoryId));
+    const rawCC = mostCommon(relevant.map(a => a.defaultCostCenterId));
     return {
-      categoryId: mostCommon(relevant.map(a => a.defaultCategoryId)),
-      costCenterId: mostCommon(relevant.map(a => a.defaultCostCenterId)),
+      // Alias pode ter sido ensinado em outra carteira — resolve pelo nome para dentro
+      // da carteira sendo importada (ver resolveInWalletScope).
+      categoryId: resolveInWalletScope(rawCat, walletCategories, allCategories),
+      costCenterId: resolveInWalletScope(rawCC, walletCostCenters, allCostCenters),
     };
   };
 
@@ -923,7 +972,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
         >
           <option value="">Categoria (opcional)...</option>
-          {categories.map(c => (
+          {walletCategories.map(c => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
@@ -933,7 +982,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold focus:outline-none focus:border-blue-600"
         >
           <option value="">Centro de Custo (opcional)...</option>
-          {costCenters.map(c => (
+          {walletCostCenters.map(c => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
