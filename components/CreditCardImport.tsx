@@ -15,8 +15,24 @@ import {
 } from 'lucide-react';
 import { financeService } from '../services/financeService';
 import { extractStatementAnchors, extractStatementWithAI, extractStatementWithGemini, reconcileStatement, parseFaturaXlsxRows } from '../services/cardStatementService';
-import { reconcileStatementWithPayables } from '../services/reconciliationService';
+import { reconcileStatementWithPayables, resolveCanonicalName, descriptionSimilarity } from '../services/reconciliationService';
 import type { CardStatement, CardStatementItem, ReconciliationResult, MerchantAlias, Bank, Category, CostCenter, Wallet, Transaction, Participant, CandidateMatch } from '../types';
+
+// Valor mais frequente de uma lista (ignorando vazios) — usado para sugerir categoria/CC/
+// participante a partir do histórico (Merchant Alias ou lançamentos já pagos parecidos).
+function mostCommon(values: (string | null | undefined)[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const v of values) {
+    if (!v) continue;
+    counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  let best: string | undefined;
+  let bestCount = 0;
+  for (const [v, count] of counts) {
+    if (count > bestCount) { best = v; bestCount = count; }
+  }
+  return best;
+}
 
 // FNV-1a hash para identificar arquivos CSV já importados
 function hashCsv(str: string): string {
@@ -225,6 +241,21 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
     const aliases: MerchantAlias[] = await financeService.getMerchantAliases();
     setMerchantAliases(aliases);
 
+    // Histórico completo de lançamentos já pagos dessa conta — usado como sugestão de
+    // categoria/CC/participante quando não existe Merchant Alias para o comerciante (caso
+    // comum: comerciantes recorrentes do dia a dia, como padaria/mercado/pedágio, que o
+    // usuário categoriza manualmente todo mês mas nunca "ensinou" via alias).
+    const paidHistory = await financeService.getTransactions({ bankId: selectedBankId, walletId: selectedWalletId, status: 'PAID' });
+    const suggestFromHistory = (rawDescription: string): { categoryId?: string; costCenterId?: string; participantId?: string } => {
+      const canonicalName = resolveCanonicalName(rawDescription, aliases);
+      const matches = paidHistory.filter(tx => descriptionSimilarity(canonicalName, tx.description) >= 0.5);
+      return {
+        categoryId: mostCommon(matches.map(t => t.categoryId)),
+        costCenterId: mostCommon(matches.map(t => t.costCenterId)),
+        participantId: mostCommon(matches.map(t => t.participantId)),
+      };
+    };
+
     // Janela de busca de lançamentos já PAGOS para checar duplicidade (reimportação parcial
     // ou repetida da mesma fatura): cobre desde a compra mais antiga do extrato até a data de
     // vencimento, pois os itens "Gastos a Lançar" são salvos com data = vencimento, não a data
@@ -291,13 +322,26 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       return sameNameHere.id;
     };
 
+    // Se o melhor candidato veio marcado como "parcela diferente desta" (ver
+    // installmentTier em reconciliationService.ts), não é seguro pré-selecioná-lo: é
+    // provavelmente outra parcela da mesma série recorrente, não a parcela certa. Isso
+    // acontece sobretudo na 1ª parcela, quando ainda não existe lançamento programado
+    // no Contas a Pagar para ela — nesse caso o item deve cair para "criar novo
+    // lançamento" (o usuário programa o pagamento ali, inclusive as parcelas futuras),
+    // em vez de casar com um lançamento de outro mês só porque valor/nome batem.
+    const defaultCandidateId = (candidates: CandidateMatch[] | undefined): string => {
+      const top = candidates?.[0];
+      const topIsWrongInstallment = !!top?.reason?.includes('parcela diferente desta');
+      return (!topIsWrongInstallment && top?.transaction?.id) || 'NEW';
+    };
+
     for (const [index, item] of reconResult.items.entries()) {
       if (item.status === 'MATCHED') {
-        initialMatchedCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
+        initialMatchedCandidates[index] = defaultCandidateId(item.candidates);
       } else if (item.status === 'UNCERTAIN') {
         // candidates já vem ordenado priorizando a parcela exata (ver findCandidates
         // em reconciliationService.ts), então o primeiro é o melhor palpite.
-        initialCandidates[index] = item.candidates?.[0]?.transaction?.id || 'NEW';
+        initialCandidates[index] = defaultCandidateId(item.candidates);
       } else if (item.status === 'NEW') {
         initialNews[index] = true;
         const hasRemainingInstallments =
@@ -309,17 +353,13 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
         }
       }
 
-      const lowerDesc = item.statementItem.rawDescription.toLowerCase();
-      const matchedAlias = aliases.find(alias => {
-        if (!alias.rawPattern) return false;
-        const escaped = alias.rawPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        try {
-          const regex = new RegExp(escaped, 'i');
-          return regex.test(lowerDesc);
-        } catch {
-          return lowerDesc.includes(alias.rawPattern.toLowerCase());
-        }
-      });
+      // Mesma resolução de nome canônico usada na conciliação (reconciliationService.ts):
+      // normaliza (tira *.- e espaços duplicados) e compara por substring nos dois sentidos.
+      // A comparação antiga exigia o rawPattern inteiro salvo antes como substring literal
+      // do novo texto, o que quase nunca batia (cada compra traz código de loja/parcela
+      // diferente colado no nome), então a sugestão raramente aparecia.
+      const canonicalName = resolveCanonicalName(item.statementItem.rawDescription, aliases);
+      const matchedAlias = aliases.find(alias => alias.canonicalName === canonicalName);
 
       if (matchedAlias) {
         if (matchedAlias.defaultCategoryId) initialCats[index] = matchedAlias.defaultCategoryId;
@@ -328,6 +368,15 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           const resolvedId = await resolveAliasParticipant(matchedAlias.defaultParticipantId);
           if (resolvedId) initialParts[index] = resolvedId;
         }
+      }
+
+      // Sem Merchant Alias para esse comerciante (ou faltando algum campo): tenta pelo
+      // histórico de lançamentos já pagos com descrição parecida (ver suggestFromHistory).
+      if (!initialCats[index] || !initialCCs[index] || !initialParts[index]) {
+        const fromHistory = suggestFromHistory(item.statementItem.rawDescription);
+        if (!initialCats[index] && fromHistory.categoryId) initialCats[index] = fromHistory.categoryId;
+        if (!initialCCs[index] && fromHistory.costCenterId) initialCCs[index] = fromHistory.costCenterId;
+        if (!initialParts[index] && fromHistory.participantId) initialParts[index] = fromHistory.participantId;
       }
     }
 
@@ -604,7 +653,11 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
           || new Date().toISOString().split('T')[0];
 
         const buildNew = (status: 'PAID' | 'PENDING', desc: string, date: string) => ({
-          id: '', date: status === 'PAID' ? dueDate : date, description: desc,
+          id: '', date: status === 'PAID' ? dueDate : date,
+          // Data de emissão = data real da compra impressa na fatura (ou a correspondente
+          // de cada parcela futura), diferente de `date` que vira o vencimento quando PAID.
+          emissionDate: date || undefined,
+          description: desc,
           value: item.statementItem.value,
           type: item.statementItem.isRefund ? 'CREDIT' : 'DEBIT',
           status,
@@ -814,19 +867,6 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   // participante", sem precisar de uma consulta nova ao histórico de transações.
   const suggestFromParticipant = (participantId: string): { categoryId?: string; costCenterId?: string } => {
     const relevant = merchantAliases.filter(a => a.defaultParticipantId === participantId);
-    const mostCommon = (values: (string | null | undefined)[]): string | undefined => {
-      const counts = new Map<string, number>();
-      for (const v of values) {
-        if (!v) continue;
-        counts.set(v, (counts.get(v) || 0) + 1);
-      }
-      let best: string | undefined;
-      let bestCount = 0;
-      for (const [v, count] of counts) {
-        if (count > bestCount) { best = v; bestCount = count; }
-      }
-      return best;
-    };
     return {
       categoryId: mostCommon(relevant.map(a => a.defaultCategoryId)),
       costCenterId: mostCommon(relevant.map(a => a.defaultCostCenterId)),

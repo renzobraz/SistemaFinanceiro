@@ -333,11 +333,23 @@ export function parseItauFaturaWithRegex(pdfText: string): FaturaParseResult {
         let isNeg = false;
         if (valStr.startsWith("-")) { isNeg = true; valStr = valStr.substring(1); }
         const valor = isNeg ? -parsePtBrFloat(valStr) : parsePtBrFloat(valStr);
-        const partCurrent = m[3] ? parseInt(m[3], 10) : undefined;
-        const partTotal = m[4] ? parseInt(m[4], 10) : undefined;
+        let partCurrent = m[3] ? parseInt(m[3], 10) : undefined;
+        let partTotal = m[4] ? parseInt(m[4], 10) : undefined;
+        let estabelecimento = m[2].trim().replace(/\s+/g, " ");
+        if (partCurrent === undefined) {
+          // Às vezes a parcela vem colada ao fim do nome do estabelecimento, sem espaço
+          // (ex. "BRASTEMP *BRAST04/10", "Vitao Ecom *vitao02/03") — a regex principal só
+          // pega "NN/MM" quando vem separado do valor por espaço como token próprio.
+          const embedded = estabelecimento.match(/(\d{2})\/(\d{2})$/);
+          if (embedded) {
+            partCurrent = parseInt(embedded[1], 10);
+            partTotal = parseInt(embedded[2], 10);
+            estabelecimento = estabelecimento.slice(0, -embedded[0].length).trim();
+          }
+        }
         rawItems.push({
           data: m[1],
-          estabelecimento: m[2].trim().replace(/\s+/g, " "),
+          estabelecimento,
           valor,
           ...(partCurrent !== undefined ? { parcela_atual: partCurrent } : {}),
           ...(partTotal !== undefined ? { total_parcelas: partTotal } : {}),
