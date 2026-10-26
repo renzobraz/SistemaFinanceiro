@@ -1007,32 +1007,36 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const uncertainItems = reconciliation?.items.filter(i => i.status === 'UNCERTAIN') || [];
   const newItems = reconciliation?.items.filter(i => i.status === 'NEW') || [];
 
+  // Estornos/créditos (isRefund) entram negativos na soma — senão um reembolso de
+  // R$X infla o total conferido em 2×R$X (soma como +X em vez de -X).
+  const signedValue = (item: any) => item.statementItem.isRefund ? -item.statementItem.value : item.statementItem.value;
+
   const localizedTotal = reconciliation?.items
     .filter((item: any, index: number) => item.status === 'UNCERTAIN' && selectedCandidates[index] !== 'NEW' && !ignoredItems[index])
-    .reduce((acc: number, item: any) => acc + item.statementItem.value, 0) || 0;
+    .reduce((acc: number, item: any) => acc + signedValue(item), 0) || 0;
 
   const newTotal = reconciliation?.items
     .filter((item: any, index: number) =>
       (item.status === 'NEW' && createdNews[index] !== false) ||
       (item.status === 'UNCERTAIN' && selectedCandidates[index] === 'NEW')
     )
-    .reduce((acc: number, item: any) => acc + item.statementItem.value, 0) || 0;
+    .reduce((acc: number, item: any) => acc + signedValue(item), 0) || 0;
 
   const matchedTotal = reconciliation?.items
     .filter((item: any, index: number) =>
       item.status === 'MATCHED' && selectedMatchedCandidates[index] !== 'NEW'
     )
-    .reduce((acc: number, item: any) => acc + item.statementItem.value, 0) || 0;
+    .reduce((acc: number, item: any) => acc + signedValue(item), 0) || 0;
 
   const conferredTotal = localizedTotal + newTotal + matchedTotal;
   // Para PDF: usar o total âncora extraído da fatura
-  // Para CSV: fallback para soma dos valores absolutos de todos os itens
+  // Para CSV: fallback para soma (com sinal) de todos os itens
   const statementTotal = (() => {
     if (statement?.grandAnchorTotal && statement.grandAnchorTotal > 0) {
       return statement.grandAnchorTotal;
     }
     return reconciliation?.items?.reduce((acc: number, item: any) =>
-      acc + Math.abs(item.statementItem.value), 0) || 0;
+      acc + signedValue(item), 0) || 0;
   })();
   const totalsMatch = Math.abs(conferredTotal - statementTotal) < 0.05;
 
