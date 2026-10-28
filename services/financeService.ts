@@ -1942,6 +1942,96 @@ export const financeService = {
     saveEntityLocal(KEYS.TRANSACTIONS, updatedList);
   },
 
+  async updateTransactionsBankId(ids: string[], bankId: string): Promise<void> {
+    const supabase = getSupabase();
+
+    // Invalida cache de saldos (muda de qual banco/conta o lançamento compõe o saldo)
+    cache.balances = {};
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('transactions')
+          .update({ bank_id: bankId })
+          .in('id', ids);
+
+        if (error) throw new Error(formatSupabaseError(error));
+        return;
+      } catch (e: any) {
+        console.error("Supabase update bank failed, falling back to local data", e);
+
+        const isFallback =
+          !e ||
+          e.name === 'TypeError' ||
+          e.message?.includes('fetch') ||
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    await delay(300);
+    const list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
+    const updatedList = list.map(t => ids.includes(t.id) ? { ...t, bankId } : t);
+    saveEntityLocal(KEYS.TRANSACTIONS, updatedList);
+  },
+
+  // Cada item pode ir para um dia diferente (ex.: "alterar só o dia de vencimento"
+  // preservando mês/ano de cada lançamento) — por isso é uma lista de updates
+  // individuais, não um único UPDATE em massa como updateTransactionsDate.
+  async updateTransactionsDatesBulk(updates: { id: string; date: string }[]): Promise<void> {
+    const supabase = getSupabase();
+
+    cache.balances = {};
+
+    if (supabase) {
+      try {
+        const results = await Promise.all(
+          updates.map(u => supabase.from('transactions').update({ date: u.date }).eq('id', u.id))
+        );
+        const firstError = results.find(r => r.error)?.error;
+        if (firstError) throw new Error(formatSupabaseError(firstError));
+        return;
+      } catch (e: any) {
+        console.error("Supabase bulk date-by-id update failed, falling back to local data", e);
+
+        const isFallback =
+          !e ||
+          e.name === 'TypeError' ||
+          e.message?.includes('fetch') ||
+          e.message?.includes('network') ||
+          e.code === '42501' ||
+          e.code === 'PGRST301' ||
+          e.message?.toLowerCase().includes('permission denied') ||
+          e.message?.toLowerCase().includes('permissão negada') ||
+          e.message?.toLowerCase().includes('refresh token') ||
+          e.message?.toLowerCase().includes('jwt');
+
+        if (isFallback) {
+          // Fall through to local fallback
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    await delay(300);
+    const list = getEntityLocal<Transaction>(KEYS.TRANSACTIONS, INITIAL_DATA.transactions);
+    const dateById = new Map(updates.map(u => [u.id, u.date]));
+    const updatedList = list.map(t => dateById.has(t.id) ? { ...t, date: dateById.get(t.id)! } : t);
+    saveEntityLocal(KEYS.TRANSACTIONS, updatedList);
+  },
+
   async getRegistry<T extends BaseEntity>(type: string, forceRefresh = false, walletId?: string): Promise<T[]> {
     const supabase = getSupabase();
     const tableMap: any = { 

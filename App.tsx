@@ -1007,6 +1007,44 @@ const App: FC = () => {
     }
   };
 
+  const handleUpdateTransactionsBankId = async (ids: string[], bankId: string) => {
+    const previousTransactions = [...transactions];
+
+    // Atualização Otimista imediata: altera o banco/conta localmente
+    setTransactions(prev => prev.map(item =>
+      ids.includes(item.id) ? { ...item, bankId } : item
+    ));
+
+    try {
+        await financeService.updateTransactionsBankId(ids, bankId);
+    } catch (e: any) {
+        // Rollback em caso de erro
+        setTransactions(previousTransactions);
+        showAlert('Erro ao Atualizar Conta', e);
+    }
+  };
+
+  const handleUpdateTransactionsDatesBulk = async (updates: { id: string; date: string }[]) => {
+    const previousTransactions = [...transactions];
+    const dateById = new Map(updates.map(u => [u.id, u.date]));
+
+    // Atualização Otimista imediata: altera a data localmente e re-ordena por data decrescente
+    setTransactions(prev => {
+      const updated = prev.map(item =>
+        dateById.has(item.id) ? { ...item, date: dateById.get(item.id)! } : item
+      );
+      return updated.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    });
+
+    try {
+        await financeService.updateTransactionsDatesBulk(updates);
+    } catch (e: any) {
+        // Rollback em caso de erro
+        setTransactions(previousTransactions);
+        showAlert('Erro ao Atualizar Datas', e);
+    }
+  };
+
   const handleQuickAddParticipant = async (name: string, walletId?: string): Promise<Participant> => {
       const targetWalletId = walletId || (selectedWalletId !== 'ALL' ? selectedWalletId : undefined);
       if (!targetWalletId) {
@@ -2001,6 +2039,8 @@ const App: FC = () => {
                     onUpdateStatus={handleUpdateTransactionsStatus}
                     onUpdateDate={handleUpdateTransactionsDate}
                     onUpdateValue={handleUpdateTransactionsValue}
+                    onUpdateBank={handleUpdateTransactionsBankId}
+                    onUpdateDatesBulk={handleUpdateTransactionsDatesBulk}
                     onImport={() => {}}
                     variant="full"
                     startDate={startDate}

@@ -39,6 +39,8 @@ interface TransactionListProps {
   onUpdateStatus?: (ids: string[], status: 'PAID' | 'PENDING') => void;
   onUpdateDate?: (ids: string[], date: string) => void;
   onUpdateValue?: (ids: string[], value: number) => void;
+  onUpdateBank?: (ids: string[], bankId: string) => void;
+  onUpdateDatesBulk?: (updates: { id: string; date: string }[]) => void;
   onImport: (importedData: any[]) => void;
   variant?: 'card' | 'full';
   startDate?: string;
@@ -79,6 +81,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   onUpdateStatus,
   onUpdateDate,
   onUpdateValue,
+  onUpdateBank,
+  onUpdateDatesBulk,
   variant = 'card',
   startDate,
   previousBalances,
@@ -95,8 +99,12 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const [showLast5, setShowLast5] = useState(false);
   const [isBulkDateModalOpen, setIsBulkDateModalOpen] = useState(false);
   const [isBulkValueModalOpen, setIsBulkValueModalOpen] = useState(false);
+  const [isBulkBankModalOpen, setIsBulkBankModalOpen] = useState(false);
   const [bulkDate, setBulkDate] = useState(new Date().toISOString().split('T')[0]);
+  const [bulkDateMode, setBulkDateMode] = useState<'full' | 'day'>('full');
+  const [bulkDay, setBulkDay] = useState('1');
   const [bulkValue, setBulkValue] = useState<string>('');
+  const [bulkBankId, setBulkBankId] = useState('');
   const [scopedBaseline, setScopedBaseline] = useState<number | null>(null);
   const [recalculatingId, setRecalculatingId] = useState<string | null>(null);
 
@@ -329,8 +337,33 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       setSelectedIds(prev => prev.filter(id => !confirmModal.ids.includes(id)));
   };
 
+  // Mantém o mês/ano de cada lançamento selecionado e troca só o dia — útil quando
+  // muda o dia de vencimento da fatura, sem mexer no mês de cada parcela.
+  const dayOnlyDateFor = (originalDate: string, day: number): string => {
+    const year = parseInt(originalDate.slice(0, 4), 10);
+    const month = parseInt(originalDate.slice(5, 7), 10);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const clampedDay = Math.min(Math.max(day, 1), daysInMonth);
+    return `${originalDate.slice(0, 7)}-${String(clampedDay).padStart(2, '0')}`;
+  };
+
   const handleBulkDateUpdate = () => {
-    if (onUpdateDate && selectedIds.length > 0) {
+    if (selectedIds.length === 0) return;
+
+    if (bulkDateMode === 'day') {
+        const day = parseInt(bulkDay, 10);
+        if (!onUpdateDatesBulk || isNaN(day) || day < 1 || day > 31) return;
+        const updates = selectedIds
+            .map(id => transactions.find(t => t.id === id))
+            .filter((t): t is Transaction => !!t)
+            .map(t => ({ id: t.id, date: dayOnlyDateFor(t.date, day) }));
+        onUpdateDatesBulk(updates);
+        setIsBulkDateModalOpen(false);
+        setSelectedIds([]);
+        return;
+    }
+
+    if (onUpdateDate) {
         onUpdateDate(selectedIds, bulkDate);
         setIsBulkDateModalOpen(false);
         setSelectedIds([]);
@@ -343,6 +376,15 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         onUpdateValue(selectedIds, value);
         setIsBulkValueModalOpen(false);
         setBulkValue('');
+        setSelectedIds([]);
+    }
+  };
+
+  const handleBulkBankUpdate = () => {
+    if (onUpdateBank && selectedIds.length > 0 && bulkBankId) {
+        onUpdateBank(selectedIds, bulkBankId);
+        setIsBulkBankModalOpen(false);
+        setBulkBankId('');
         setSelectedIds([]);
     }
   };
@@ -593,13 +635,22 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                             <span className="hidden md:inline">Alterar Data</span>
                         </button>
 
-                        <button 
-                            onClick={() => setIsBulkValueModalOpen(true)} 
+                        <button
+                            onClick={() => setIsBulkValueModalOpen(true)}
                             className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-sm hover:bg-emerald-100 font-medium transition-colors border border-emerald-100"
                             title="Alterar Valor em Massa"
                         >
                             <Zap className="w-4 h-4" />
                             <span className="hidden md:inline">Alterar Valor</span>
+                        </button>
+
+                        <button
+                            onClick={() => setIsBulkBankModalOpen(true)}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 text-purple-600 rounded-lg text-sm hover:bg-purple-100 font-medium transition-colors border border-purple-100"
+                            title="Alterar Conta em Massa"
+                        >
+                            <RefreshCw className="w-4 h-4" />
+                            <span className="hidden md:inline">Alterar Conta</span>
                         </button>
                       </>
                     )}
@@ -1108,28 +1159,114 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     
                     <div className="p-8">
                         <div className="space-y-4">
-                            <label className="block text-sm font-bold text-slate-700 mb-1 uppercase tracking-wider">Nova Data</label>
-                            <input 
-                                type="date" 
-                                value={bulkDate}
-                                onChange={(e) => setBulkDate(e.target.value)}
-                                className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-slate-700 font-medium"
-                            />
+                            <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
+                                <button
+                                    type="button"
+                                    onClick={() => setBulkDateMode('full')}
+                                    className={`flex-1 px-3 py-2 text-xs font-bold rounded-lg transition-colors ${bulkDateMode === 'full' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                >
+                                    Data completa
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBulkDateMode('day')}
+                                    className={`flex-1 px-3 py-2 text-xs font-bold rounded-lg transition-colors ${bulkDateMode === 'day' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                >
+                                    Somente o dia
+                                </button>
+                            </div>
+
+                            {bulkDateMode === 'full' ? (
+                                <>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1 uppercase tracking-wider">Nova Data</label>
+                                    <input
+                                        type="date"
+                                        value={bulkDate}
+                                        onChange={(e) => setBulkDate(e.target.value)}
+                                        className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-slate-700 font-medium"
+                                    />
+                                </>
+                            ) : (
+                                <>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1 uppercase tracking-wider">Novo Dia do Vencimento</label>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={31}
+                                        value={bulkDay}
+                                        onChange={(e) => setBulkDay(e.target.value)}
+                                        className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-slate-700 font-medium"
+                                    />
+                                    <p className="text-xs text-slate-500">
+                                        Mantém o mês e o ano de cada lançamento selecionado, trocando só o dia. Em meses mais curtos, ajusta para o último dia do mês.
+                                    </p>
+                                </>
+                            )}
                         </div>
                     </div>
 
                     <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
-                        <button 
+                        <button
                             onClick={() => setIsBulkDateModalOpen(false)}
                             className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
                         >
                             Cancelar
                         </button>
-                        <button 
+                        <button
                             onClick={handleBulkDateUpdate}
                             className="px-6 py-2.5 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-md shadow-blue-100 transition-all flex items-center gap-2"
                         >
                             <RotateCcw className="w-4 h-4" /> <span>Atualizar Datas</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {isBulkBankModalOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
+                <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-slide-up">
+                    <div className="p-6 border-b border-slate-100 bg-slate-50">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-purple-100 rounded-lg">
+                                <RefreshCw className="w-5 h-5 text-purple-600" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-800">Alterar Conta em Massa</h3>
+                                <p className="text-sm text-slate-500">Mova os {selectedIds.length} itens selecionados para outro banco/conta.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="p-8">
+                        <div className="space-y-4">
+                            <label className="block text-sm font-bold text-slate-700 mb-1 uppercase tracking-wider">Nova Conta</label>
+                            <select
+                                value={bulkBankId}
+                                onChange={(e) => setBulkBankId(e.target.value)}
+                                className="w-full px-4 py-3 bg-white border-2 border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-purple-100 focus:border-purple-500 transition-all text-slate-700 font-medium"
+                            >
+                                <option value="">Selecione...</option>
+                                {registries.banks.map(b => (
+                                    <option key={b.id} value={b.id}>{b.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+                        <button
+                            onClick={() => { setIsBulkBankModalOpen(false); setBulkBankId(''); }}
+                            className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            onClick={handleBulkBankUpdate}
+                            disabled={!bulkBankId}
+                            className="px-6 py-2.5 text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-md shadow-purple-100 transition-all flex items-center gap-2"
+                        >
+                            <RotateCcw className="w-4 h-4" /> <span>Atualizar Conta</span>
                         </button>
                     </div>
                 </div>
