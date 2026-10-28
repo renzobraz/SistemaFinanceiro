@@ -292,7 +292,10 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       selectedBankId,
       aliases,
       async (bankId) => {
-        const pending = await financeService.getTransactions({ bankId, status: 'PENDING' });
+        // Filtra pela carteira sendo importada — senão um Contas a Pagar pendente de
+        // outra carteira (mesmo banco) pode virar candidato de match, trazendo junto a
+        // categoria/participante daquela carteira errada na revisão.
+        const pending = await financeService.getTransactions({ bankId, walletId: selectedWalletId, status: 'PENDING' });
         // Guarda a lista completa para a busca manual na revisão — não só os
         // candidatos que o algoritmo de conciliação escolheu automaticamente.
         setAllPendingTxs(pending);
@@ -300,7 +303,7 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
       },
       // Fatura de cartão costuma ser confirmada em etapas (meia fatura hoje, resto depois) —
       // checa também contra o que já está pago para não duplicar quem já foi importado.
-      (bankId) => financeService.getTransactions({ bankId, status: 'PAID', startDate: periodStart, endDate: periodEnd })
+      (bankId) => financeService.getTransactions({ bankId, walletId: selectedWalletId, status: 'PAID', startDate: periodStart, endDate: periodEnd })
     );
 
     setStatement(parsedStatement);
@@ -1107,7 +1110,12 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
   const newTotal = reconciliation?.items
     .filter((item: any, index: number) =>
       (item.status === 'NEW' && createdNews[index] !== false) ||
-      (item.status === 'UNCERTAIN' && selectedCandidates[index] === 'NEW')
+      (item.status === 'UNCERTAIN' && selectedCandidates[index] === 'NEW') ||
+      // Item "Já lançado" cujo melhor candidato era de outra parcela da mesma série
+      // (ver defaultCandidateId): a escolha correta já virou 'NEW' por segurança, mas
+      // ficava fora de todo total exibido (nao e MATCHED valido nem NEW/UNCERTAIN) —
+      // o lançamento em si ja era criado certo na confirmação, só o resumo estava errado.
+      (item.status === 'MATCHED' && selectedMatchedCandidates[index] === 'NEW')
     )
     .reduce((acc: number, item: any) => acc + signedValue(item), 0) || 0;
 
@@ -1442,7 +1450,8 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                         <span className="text-xs text-slate-400">
                           ({reconciliation.items.filter((item, index) =>
                             (item.status === 'NEW' && createdNews[index] !== false) ||
-                            (item.status === 'UNCERTAIN' && selectedCandidates[index] === 'NEW')
+                            (item.status === 'UNCERTAIN' && selectedCandidates[index] === 'NEW') ||
+                            (item.status === 'MATCHED' && selectedMatchedCandidates[index] === 'NEW')
                           ).length} itens)
                         </span>
                       </span>
