@@ -1591,10 +1591,25 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
                         {reconciliation.items.map((item, idx) => {
                           if (item.status !== 'MATCHED') return null;
                           const selectedValue = selectedMatchedCandidates[idx] || 'NEW';
+                          // Ver defaultCandidateId: o único candidato encontrado era de outra
+                          // parcela da mesma série, então o sistema defaultou pra "criar novo"
+                          // em vez de arriscar casar com o mês errado — avisa visualmente para
+                          // o usuário não achar que é um bug silencioso.
+                          const isWrongInstallmentDefault = !!item.candidates?.[0]?.reason?.includes('parcela diferente desta');
 
                           return (
                             <div key={idx} className="p-4 sm:p-5 space-y-3">
                               {renderItemHeader(item)}
+
+                              {isWrongInstallmentDefault && selectedValue === 'NEW' && (
+                                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+                                  <span>⚠️</span>
+                                  <span>
+                                    Encontramos apenas uma parcela diferente desta série no Contas a Pagar (provavelmente de outro mês).
+                                    Por segurança, marcamos para criar um novo lançamento — confira a parcela/data antes de confirmar.
+                                  </span>
+                                </div>
+                              )}
 
                               {renderCandidateSelector(
                                 idx,
