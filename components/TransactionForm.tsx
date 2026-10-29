@@ -158,6 +158,10 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [discountValue, setDiscountValue] = useState<number>(0);
+  // Qual dos 3 campos (Valor/Quantidade/Preço Unit.) o usuário mexeu por último —
+  // decide qual dos outros dois recalcular, evitando que o auto-cálculo "brigue"
+  // com o valor que a pessoa acabou de digitar (ver efeito abaixo).
+  const [lastEditedField, setLastEditedField] = useState<'value' | 'quantity' | 'unitPrice' | null>(null);
 
   // Exchange State
   const [exchangeRate, setExchangeRate] = useState<number>(0);
@@ -453,6 +457,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     if (!isOpen) return;
     setIsSaving(false);
     setIsParticipantDropdownOpen(false);
+    setLastEditedField(null);
 
     if (initialData) {
       const newFormData = { ...initialData };
@@ -551,25 +556,36 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   ]);
 
   useEffect(() => {
-    // Se temos quantidade e preço unitário, calculamos o valor total
-    if (formData.quantity && formData.unitPrice) {
+    if (!formData.quantity) return;
+
+    // Editou o Valor (ou já tinha Valor e só preencheu a Quantidade agora): o total
+    // pago é o dado confiável, então recalculamos o Preço Unit. a partir dele — nunca
+    // o contrário, senão um preço unitário arredondado (6 casas) reescreve o valor que
+    // a pessoa acabou de digitar com um total ligeiramente diferente.
+    if (lastEditedField === 'value' || lastEditedField === null) {
+      if (formData.value) {
+        const calculatedUnitPrice = Number((formData.value / formData.quantity).toFixed(6));
+        if (formData.unitPrice !== calculatedUnitPrice) {
+          setFormData(prev => ({ ...prev, unitPrice: calculatedUnitPrice }));
+        }
+      }
+      return;
+    }
+
+    // Editou a Quantidade ou o Preço Unit.: nesses casos sim o Valor total é a
+    // consequência (quantidade × preço), então recalculamos o Valor.
+    if (formData.unitPrice) {
       const calculatedValue = Number((formData.quantity * formData.unitPrice).toFixed(2));
       if (Math.abs(formData.value - calculatedValue) > 0.01) {
-        setFormData(prev => ({
-          ...prev,
-          value: calculatedValue
-        }));
+        setFormData(prev => ({ ...prev, value: calculatedValue }));
       }
-    } 
-    // Se temos valor total e quantidade, calculamos o preço unitário
-    else if (formData.value && formData.quantity && !formData.unitPrice) {
+    } else if (formData.value) {
       const calculatedUnitPrice = Number((formData.value / formData.quantity).toFixed(6));
-      setFormData(prev => ({
-        ...prev,
-        unitPrice: calculatedUnitPrice
-      }));
+      if (formData.unitPrice !== calculatedUnitPrice) {
+        setFormData(prev => ({ ...prev, unitPrice: calculatedUnitPrice }));
+      }
     }
-  }, [formData.quantity, formData.unitPrice, formData.value]);
+  }, [formData.quantity, formData.unitPrice, formData.value, lastEditedField]);
 
   const handleQuickAddParticipant = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1125,7 +1141,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 required
                 disabled={isSaving}
                 value={formatCurrencyInput(formData.value)}
-                onChange={(e) => handleCurrencyInputChange(e, (v) => setFormData({ ...formData, value: v }))}
+                onChange={(e) => handleCurrencyInputChange(e, (v) => { setLastEditedField('value'); setFormData({ ...formData, value: v }); })}
                 className={inputClass}
               />
             </div>
@@ -1156,12 +1172,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                       step="0.000001"
                       disabled={isSaving}
                       value={formData.quantity || ""}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setLastEditedField('quantity');
                         setFormData({
                           ...formData,
                           quantity: parseFloat(e.target.value) || 0,
-                        })
-                      }
+                        });
+                      }}
                       className="w-full px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-blue-800 placeholder:text-blue-300"
                       placeholder={isFixedIncome ? "Opcional" : "Ex: 100"}
                     />
@@ -1175,12 +1192,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                       step="0.000001"
                       disabled={isSaving}
                       value={formData.unitPrice || ""}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setLastEditedField('unitPrice');
                         setFormData({
                           ...formData,
                           unitPrice: parseFloat(e.target.value) || 0,
-                        })
-                      }
+                        });
+                      }}
                       className="w-full px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-blue-800 placeholder:text-blue-300"
                       placeholder={isFixedIncome ? "Opcional" : "Ex: 10.50"}
                     />
