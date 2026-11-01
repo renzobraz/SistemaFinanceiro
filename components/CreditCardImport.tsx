@@ -1005,7 +1005,10 @@ export const CreditCardImport: React.FC<CreditCardImportProps> = ({
             }
           }}
           onAddParticipant={async (name) => {
-            const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, active: true });
+            // Sem walletId aqui o participante fica com wallet_id nulo e "vaza" pra
+            // todas as carteiras (ver getRegistry: wallet_id.is.null é tratado como
+            // global e aparece em qualquer carteira selecionada).
+            const newP = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, walletId: selectedWalletId, active: true });
             setLocalParticipants(prev => [...prev, newP]);
             return newP;
           }}
