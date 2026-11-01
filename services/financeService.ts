@@ -2265,11 +2265,13 @@ export const financeService = {
       const chunk = consortiumIds.slice(i, i + chunkSize);
       const { data, error } = await supabase
         .from('consortium_installments')
-        .select('consortium_id, due_date, installment_number, transaction_id, transactions(status, value)')
+        .select('consortium_id, due_date, installment_number, transaction_kind, transaction_id, transactions(status, value)')
         .in('consortium_id', chunk);
       if (error) throw new Error(formatSupabaseError(error));
       for (const row of data || []) {
-        const key = `${row.consortium_id}|${row.due_date}|${row.installment_number}`;
+        // Mesma cota pode ter mais de um evento no mesmo vencimento/parcela (ex.:
+        // "lance embutido" e sua contrapartida de pagamento) — "Transação" distingue.
+        const key = `${row.consortium_id}|${row.due_date}|${row.installment_number}|${row.transaction_kind}`;
         const tx: any = row.transactions;
         map.set(key, {
           transactionId: row.transaction_id,

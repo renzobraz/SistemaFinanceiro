@@ -248,8 +248,8 @@ export const ConsortiumImport: React.FC<ConsortiumImportProps> = ({
   };
 
   // Lê o arquivo, monta as linhas e calcula o plano de importação (o que é novo,
-  // o que mudou — ex. parcela que estava pendente e agora veio paga — e o que já
-  // está igual e será pulado), sem gravar nada ainda.
+  // o que mudou de valor — ex. a administradora corrigiu a parcela num extrato mais
+  // novo — e o que já está igual e será pulado), sem gravar nada ainda.
   const handleProcess = async () => {
     if (!file || !selectedBankId || !selectedWalletId) return;
     setError(null);
@@ -294,15 +294,23 @@ export const ConsortiumImport: React.FC<ConsortiumImportProps> = ({
           toCreate++;
           return { row: r, key, action: 'CREATE' };
         }
-        const dedupeKey = `${existingConsortium.id}|${r.dueDate}|${r.installmentNumber}`;
+        // "Transação" entra na chave porque a mesma cota pode ter mais de um evento
+        // no mesmo vencimento/parcela (ex.: lance embutido e sua contrapartida de
+        // pagamento, ambos com Parcela "000") — sem isso o import quebrava com
+        // "duplicate key value" (ver migração fix_consortium_installments_unique_key.sql).
+        const dedupeKey = `${existingConsortium.id}|${r.dueDate}|${r.installmentNumber}|${r.transactionKind}`;
         const existingInst = installmentIndex.get(dedupeKey);
         if (!existingInst) {
           toCreate++;
           return { row: r, key, action: 'CREATE', consortiumId: existingConsortium.id };
         }
-        const rowStatus = r.paymentDate ? 'PAID' : 'PENDING';
-        const rowValue = r.paidValue ?? r.installmentValue;
-        const changed = existingInst.status !== rowStatus || Math.abs((existingInst.value || 0) - rowValue) > 0.01;
+        // O lançamento sempre entra como Contas a Pagar (PENDING), mesmo que o extrato
+        // diga que já foi pago — quem confirma o pagamento é o usuário, comparando com
+        // o extrato do próprio banco. Por isso a reimportação nunca compara/mexe no
+        // status: só o valor esperado da parcela é o que pode mudar (ex.: a
+        // administradora corrigiu o valor num extrato mais novo).
+        const rowValue = r.installmentValue;
+        const changed = Math.abs((existingInst.value || 0) - rowValue) > 0.01;
         if (changed) {
           toUpdate++;
           return { row: r, key, action: 'UPDATE', consortiumId: existingConsortium.id, existingTransactionId: existingInst.transactionId };
@@ -380,16 +388,18 @@ export const ConsortiumImport: React.FC<ConsortiumImportProps> = ({
         const r = item.row;
         const consortiumId = item.consortiumId || keyToConsortiumId.get(item.key)!;
         const txId = generateUUID();
-        const status = r.paymentDate ? 'PAID' : 'PENDING';
-        const value = r.paidValue ?? r.installmentValue;
         newTxs.push({
           id: txId,
           date: r.dueDate,
           description: `Consórcio ${r.administrator} - Cota ${r.quotaNumber} (${r.installmentNumber})`,
           docNumber: '',
-          value,
+          value: r.installmentValue,
           type: 'DEBIT',
-          status,
+          // Sempre entra como Contas a Pagar — o usuário confirma o pagamento
+          // manualmente comparando com o extrato do próprio banco (ver pergunta
+          // respondida na implementação: extrato do consórcio marca "Pagamento" mas
+          // isso não significa que já saiu da conta da Holding).
+          status: 'PENDING',
           bankId: selectedBankId,
           walletId: selectedWalletId,
           categoryId,
@@ -404,16 +414,16 @@ export const ConsortiumImport: React.FC<ConsortiumImportProps> = ({
         await financeService.createManyTransactions(newTxs.slice(i, i + 500));
       }
 
-      setProgressMsg('Atualizando parcelas que mudaram (ex.: pendente que virou paga)...');
+      setProgressMsg('Atualizando parcelas com valor diferente do já importado...');
       const toUpdateItems = plan.planned.filter(p => p.action === 'UPDATE');
       const updatedInstallments: Array<{ transactionId: string; consortiumId: string; data: ReturnType<typeof toInstallmentData> }> = [];
       for (const item of toUpdateItems) {
         const r = item.row;
         const txId = item.existingTransactionId!;
-        const status = r.paymentDate ? 'PAID' : 'PENDING';
-        const value = r.paidValue ?? r.installmentValue;
-        await financeService.updateTransactionsStatus([txId], status);
-        await financeService.updateTransactionsValue([txId], value);
+        // Não mexe no status — se o usuário já marcou como pago manualmente, a
+        // reimportação não pode desfazer isso (ver findOrCreate/status sempre PENDING
+        // na criação, acima).
+        await financeService.updateTransactionsValue([txId], r.installmentValue);
         await financeService.updateTransactionsDatesBulk([{ id: txId, date: r.dueDate }]);
         updatedInstallments.push({ transactionId: txId, consortiumId: item.consortiumId!, data: toInstallmentData(r) });
       }
@@ -470,6 +480,11 @@ export const ConsortiumImport: React.FC<ConsortiumImportProps> = ({
 
           {step === 'upload' && (
             <div className="space-y-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-900">
+                Todo lançamento importado entra como <strong>Contas a Pagar (pendente)</strong>, mesmo que o extrato do
+                consórcio já marque a parcela como paga — confirme o pagamento manualmente depois de conferir com o
+                extrato do seu banco.
+              </div>
               <div
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
