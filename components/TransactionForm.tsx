@@ -162,6 +162,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   // decide qual dos outros dois recalcular, evitando que o auto-cálculo "brigue"
   // com o valor que a pessoa acabou de digitar (ver efeito abaixo).
   const [lastEditedField, setLastEditedField] = useState<'value' | 'quantity' | 'unitPrice' | null>(null);
+  // Detalhe da parcela de consórcio (fundo comum, taxa adm., fundo de reserva etc.),
+  // quando este lançamento veio da importação de extrato de consórcio — somente leitura.
+  const [consortiumDetail, setConsortiumDetail] = useState<null | {
+    consortiumName?: string; administrator?: string; groupNumber?: string; quotaNumber?: string;
+    installmentNumber?: string; commonFund?: number; adminFee?: number; reserveFund?: number;
+    insurance?: number; fine?: number; interest?: number; other?: number; difference?: number;
+  }>(null);
 
   // Exchange State
   const [exchangeRate, setExchangeRate] = useState<number>(0);
@@ -458,6 +465,12 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     setIsSaving(false);
     setIsParticipantDropdownOpen(false);
     setLastEditedField(null);
+    setConsortiumDetail(null);
+    if (initialData?.id) {
+      financeService.getConsortiumDetailForTransaction(initialData.id)
+        .then(detail => setConsortiumDetail(detail))
+        .catch(() => setConsortiumDetail(null));
+    }
 
     if (initialData) {
       const newFormData = { ...initialData };
@@ -1605,6 +1618,28 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             </div>
 
             {/* O espaçador dinâmico antigo foi removido ja que o dropdown em position fixed não afeta o fluxo normal do conteúdo */}
+
+            {consortiumDetail && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-black text-indigo-700 uppercase tracking-widest">
+                  Detalhe da Parcela do Consórcio{consortiumDetail.consortiumName ? ` — ${consortiumDetail.consortiumName}` : ''}
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 text-xs text-indigo-900">
+                  <p><span className="text-indigo-500">Administradora:</span> {consortiumDetail.administrator || '—'}</p>
+                  <p><span className="text-indigo-500">Grupo:</span> {consortiumDetail.groupNumber || '—'}</p>
+                  <p><span className="text-indigo-500">Cota:</span> {consortiumDetail.quotaNumber || '—'}</p>
+                  <p><span className="text-indigo-500">Parcela:</span> {consortiumDetail.installmentNumber || '—'}</p>
+                  <p><span className="text-indigo-500">Fundo Comum:</span> {formatCurrencyInput(consortiumDetail.commonFund || 0)}</p>
+                  <p><span className="text-indigo-500">Taxa Adm.:</span> {formatCurrencyInput(consortiumDetail.adminFee || 0)}</p>
+                  <p><span className="text-indigo-500">Fundo de Reserva:</span> {formatCurrencyInput(consortiumDetail.reserveFund || 0)}</p>
+                  <p><span className="text-indigo-500">Seguro:</span> {formatCurrencyInput(consortiumDetail.insurance || 0)}</p>
+                  <p><span className="text-indigo-500">Multa:</span> {formatCurrencyInput(consortiumDetail.fine || 0)}</p>
+                  <p><span className="text-indigo-500">Juros:</span> {formatCurrencyInput(consortiumDetail.interest || 0)}</p>
+                  <p><span className="text-indigo-500">Outros:</span> {formatCurrencyInput(consortiumDetail.other || 0)}</p>
+                  <p><span className="text-indigo-500">Diferença:</span> {formatCurrencyInput(consortiumDetail.difference || 0)}</p>
+                </div>
+              </div>
+            )}
 
         </form>
 

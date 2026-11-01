@@ -18,7 +18,9 @@ import {
   OrganizationMember,
   MerchantAlias,
   ReportSchedule,
-  RecurringRule
+  RecurringRule,
+  Consortium,
+  ConsortiumInstallment
 } from '../types';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -394,6 +396,35 @@ const isFallbackError = (e: any): boolean => {
     msg.includes('pgrst205')
   );
 };
+
+const mapConsortiumInstallmentRow = (d: any): ConsortiumInstallment => ({
+  id: String(d.id),
+  organization_id: d.organization_id,
+  transactionId: d.transaction_id,
+  consortiumId: d.consortium_id,
+  installmentNumber: d.installment_number,
+  version: d.version,
+  transactionKind: d.transaction_kind,
+  dueDate: d.due_date,
+  paymentDate: d.payment_date,
+  accountingDate: d.accounting_date,
+  installmentValue: d.installment_value != null ? Number(d.installment_value) : undefined,
+  paidValue: d.paid_value != null ? Number(d.paid_value) : undefined,
+  commonFund: d.common_fund != null ? Number(d.common_fund) : undefined,
+  commonFundPct: d.common_fund_pct != null ? Number(d.common_fund_pct) : undefined,
+  adminFee: d.admin_fee != null ? Number(d.admin_fee) : undefined,
+  adminFeePct: d.admin_fee_pct != null ? Number(d.admin_fee_pct) : undefined,
+  reserveFund: d.reserve_fund != null ? Number(d.reserve_fund) : undefined,
+  reserveFundPct: d.reserve_fund_pct != null ? Number(d.reserve_fund_pct) : undefined,
+  insurance: d.insurance != null ? Number(d.insurance) : undefined,
+  fine: d.fine != null ? Number(d.fine) : undefined,
+  interest: d.interest != null ? Number(d.interest) : undefined,
+  other: d.other != null ? Number(d.other) : undefined,
+  difference: d.difference != null ? Number(d.difference) : undefined,
+  notes: d.notes,
+  settledAt: d.settled_at,
+  createdAt: d.created_at,
+});
 
 const mapTransactionFromDb = (db: any): Transaction => ({
   id: String(db.id),
@@ -2032,6 +2063,224 @@ export const financeService = {
     saveEntityLocal(KEYS.TRANSACTIONS, updatedList);
   },
 
+  // ---- Consórcios ----
+
+  // Acha o cadastro de uma cota pela chave real do extrato (Administradora+Grupo+Cota
+  // dentro da carteira) ou cria um novo com nome provisório, pro usuário renomear
+  // depois — mesmo padrão já usado quando a importação de fatura cria categoria/
+  // participante novos automaticamente.
+  async findOrCreateConsortium(
+    key: { walletId: string; administrator: string; groupNumber: string; quotaNumber: string },
+    defaults: { holderName?: string; holderCnpj?: string } = {}
+  ): Promise<Consortium> {
+    const supabase = getSupabase();
+    if (!supabase) throw new Error('Supabase não configurado — a importação de consórcio exige conexão com o banco de dados.');
+    if (!this.activeOrganizationId) throw new Error('Nenhuma organização ativa definida.');
+
+    const { data: existing, error: findError } = await supabase
+      .from('consortiums')
+      .select('*')
+      .eq('wallet_id', key.walletId)
+      .eq('administrator', key.administrator)
+      .eq('group_number', key.groupNumber)
+      .eq('quota_number', key.quotaNumber)
+      .maybeSingle();
+
+    if (findError) throw new Error(formatSupabaseError(findError));
+
+    if (existing) {
+      return {
+        id: String(existing.id),
+        name: existing.name,
+        active: existing.active !== false,
+        walletId: existing.wallet_id,
+        administrator: existing.administrator,
+        groupNumber: existing.group_number,
+        quotaNumber: existing.quota_number,
+        holderName: existing.holder_name,
+        holderCnpj: existing.holder_cnpj,
+      };
+    }
+
+    const userId = await getSupabaseUserId();
+    const payload: any = {
+      id: uuidv4(),
+      name: `Grupo ${key.groupNumber} / Cota ${key.quotaNumber}`,
+      wallet_id: key.walletId,
+      administrator: key.administrator,
+      group_number: key.groupNumber,
+      quota_number: key.quotaNumber,
+      holder_name: defaults.holderName || null,
+      holder_cnpj: defaults.holderCnpj || null,
+      active: true,
+      organization_id: this.activeOrganizationId,
+    };
+    if (userId) payload.user_id = userId;
+
+    const { data: created, error: createError } = await supabase
+      .from('consortiums')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (createError) throw new Error(formatSupabaseError(createError));
+
+    cache.registries = {};
+
+    return {
+      id: String(created.id),
+      name: created.name,
+      active: created.active !== false,
+      walletId: created.wallet_id,
+      administrator: created.administrator,
+      groupNumber: created.group_number,
+      quotaNumber: created.quota_number,
+      holderName: created.holder_name,
+      holderCnpj: created.holder_cnpj,
+    };
+  },
+
+  async getConsortiumInstallmentByTransactionId(transactionId: string): Promise<ConsortiumInstallment | null> {
+    const supabase = getSupabase();
+    if (!supabase) return null;
+
+    const { data, error } = await supabase
+      .from('consortium_installments')
+      .select('*')
+      .eq('transaction_id', transactionId)
+      .maybeSingle();
+
+    if (error) throw new Error(formatSupabaseError(error));
+    if (!data) return null;
+    return mapConsortiumInstallmentRow(data);
+  },
+
+  // Detalhe da parcela de consórcio já com o nome/administradora/grupo/cota do
+  // consórcio embutido — usado só pelo painel somente-leitura no formulário de edição
+  // de lançamento (ver TransactionForm.tsx).
+  async getConsortiumDetailForTransaction(
+    transactionId: string
+  ): Promise<(ConsortiumInstallment & { consortiumName?: string; administrator?: string; groupNumber?: string; quotaNumber?: string }) | null> {
+    const supabase = getSupabase();
+    if (!supabase) return null;
+
+    const { data, error } = await supabase
+      .from('consortium_installments')
+      .select('*, consortiums(name, administrator, group_number, quota_number)')
+      .eq('transaction_id', transactionId)
+      .maybeSingle();
+
+    if (error) throw new Error(formatSupabaseError(error));
+    if (!data) return null;
+
+    const c: any = (data as any).consortiums;
+    return {
+      ...mapConsortiumInstallmentRow(data),
+      consortiumName: c?.name,
+      administrator: c?.administrator,
+      groupNumber: c?.group_number,
+      quotaNumber: c?.quota_number,
+    };
+  },
+
+  // Cria o detalhe da parcela vinculado a um lançamento recém-criado, ou atualiza o
+  // detalhe já existente de um lançamento (reimportação com dado novo, ex.: parcela
+  // que estava pendente e veio com "Pagamento" preenchido agora).
+  async upsertConsortiumInstallment(
+    transactionId: string,
+    consortiumId: string,
+    data: Omit<ConsortiumInstallment, 'id' | 'transactionId' | 'consortiumId' | 'createdAt' | 'organization_id'>
+  ): Promise<void> {
+    await this.upsertConsortiumInstallmentsBatch([{ transactionId, consortiumId, data }]);
+  },
+
+  // Versão em lote — usada pelo importador do extrato de consórcio (centenas/milhares
+  // de parcelas de uma vez), evitando um round-trip de rede por linha.
+  async upsertConsortiumInstallmentsBatch(
+    items: Array<{
+      transactionId: string;
+      consortiumId: string;
+      data: Omit<ConsortiumInstallment, 'id' | 'transactionId' | 'consortiumId' | 'createdAt' | 'organization_id'>;
+    }>
+  ): Promise<void> {
+    if (items.length === 0) return;
+    const supabase = getSupabase();
+    if (!supabase) throw new Error('Supabase não configurado.');
+
+    const buildPayload = (transactionId: string, consortiumId: string, data: typeof items[number]['data']) => {
+      const payload: any = {
+        transaction_id: transactionId,
+        consortium_id: consortiumId,
+        installment_number: data.installmentNumber || null,
+        version: data.version || null,
+        transaction_kind: data.transactionKind || null,
+        due_date: data.dueDate || null,
+        payment_date: data.paymentDate || null,
+        accounting_date: data.accountingDate || null,
+        installment_value: data.installmentValue ?? null,
+        paid_value: data.paidValue ?? null,
+        common_fund: data.commonFund ?? null,
+        common_fund_pct: data.commonFundPct ?? null,
+        admin_fee: data.adminFee ?? null,
+        admin_fee_pct: data.adminFeePct ?? null,
+        reserve_fund: data.reserveFund ?? null,
+        reserve_fund_pct: data.reserveFundPct ?? null,
+        insurance: data.insurance ?? null,
+        fine: data.fine ?? null,
+        interest: data.interest ?? null,
+        other: data.other ?? null,
+        difference: data.difference ?? null,
+        notes: data.notes || null,
+        settled_at: data.settledAt || null,
+      };
+      if (this.activeOrganizationId) payload.organization_id = this.activeOrganizationId;
+      return payload;
+    };
+
+    const payloads = items.map(i => buildPayload(i.transactionId, i.consortiumId, i.data));
+
+    const chunkSize = 500;
+    for (let i = 0; i < payloads.length; i += chunkSize) {
+      const chunk = payloads.slice(i, i + chunkSize);
+      const { error } = await supabase
+        .from('consortium_installments')
+        .upsert(chunk, { onConflict: 'transaction_id' });
+      if (error) throw new Error(formatSupabaseError(error));
+    }
+  },
+
+  // Índice de todas as parcelas já importadas para um conjunto de cotas, já com o
+  // status/valor do lançamento vinculado embutido — usado pelo importador pra decidir
+  // em uma única consulta se cada linha do extrato é nova, mudou ou já está igual.
+  async getConsortiumInstallmentIndex(
+    consortiumIds: string[]
+  ): Promise<Map<string, { transactionId: string; status?: string; value?: number }>> {
+    const map = new Map<string, { transactionId: string; status?: string; value?: number }>();
+    if (consortiumIds.length === 0) return map;
+    const supabase = getSupabase();
+    if (!supabase) return map;
+
+    const chunkSize = 150;
+    for (let i = 0; i < consortiumIds.length; i += chunkSize) {
+      const chunk = consortiumIds.slice(i, i + chunkSize);
+      const { data, error } = await supabase
+        .from('consortium_installments')
+        .select('consortium_id, due_date, installment_number, transaction_id, transactions(status, value)')
+        .in('consortium_id', chunk);
+      if (error) throw new Error(formatSupabaseError(error));
+      for (const row of data || []) {
+        const key = `${row.consortium_id}|${row.due_date}|${row.installment_number}`;
+        const tx: any = row.transactions;
+        map.set(key, {
+          transactionId: row.transaction_id,
+          status: tx?.status,
+          value: tx?.value != null ? Number(tx.value) : undefined,
+        });
+      }
+    }
+    return map;
+  },
+
   async getRegistry<T extends BaseEntity>(type: string, forceRefresh = false, walletId?: string): Promise<T[]> {
     const supabase = getSupabase();
     const tableMap: any = { 
@@ -2043,6 +2292,7 @@ export const financeService = {
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
       assetTickers: 'asset_tickers',
+      consortiums: 'consortiums',
       merchantAliases: 'merchant_aliases'
     };
     
@@ -2269,6 +2519,18 @@ export const financeService = {
             active: d.active !== false,
             walletId: d.wallet_id
           })) as any;
+        } else if (type === 'consortiums') {
+          result = allData.map((d: any) => ({
+            id: String(d.id),
+            name: d.name,
+            active: d.active !== false,
+            walletId: d.wallet_id,
+            administrator: d.administrator,
+            groupNumber: d.group_number,
+            quotaNumber: d.quota_number,
+            holderName: d.holder_name,
+            holderCnpj: d.holder_cnpj
+          })) as any;
         } else {
           result = Array.from(new Map(allData.map(item => [String(item.id), { 
             ...item, 
@@ -2348,6 +2610,7 @@ export const financeService = {
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
       assetTickers: 'asset_tickers',
+      consortiums: 'consortiums',
       merchantAliases: 'merchant_aliases'
     };
     
@@ -2407,7 +2670,14 @@ export const financeService = {
         if (type === 'assetTickers') {
             payload.ticker = (item as any).ticker || '';
         }
-        
+        if (type === 'consortiums') {
+            payload.administrator = (item as any).administrator || null;
+            payload.group_number = (item as any).groupNumber || null;
+            payload.quota_number = (item as any).quotaNumber || null;
+            payload.holder_name = (item as any).holderName || null;
+            payload.holder_cnpj = (item as any).holderCnpj || null;
+        }
+
         const userId = await getSupabaseUserId();
         if (userId) payload.user_id = userId;
 
@@ -2587,6 +2857,7 @@ export const financeService = {
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
       assetTickers: 'asset_tickers',
+      consortiums: 'consortiums',
       merchantAliases: 'merchant_aliases'
     };
     
@@ -3400,6 +3671,7 @@ export const financeService = {
       assetTypes: 'asset_types',
       assetSectors: 'asset_sectors',
       assetTickers: 'asset_tickers',
+      consortiums: 'consortiums',
       merchantAliases: 'merchant_aliases'
     };
 

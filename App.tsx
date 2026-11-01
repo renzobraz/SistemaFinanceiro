@@ -16,9 +16,10 @@ import { HelpManual } from './components/HelpManual';
 import { SettingsPage } from './components/SettingsPage';
 import { AcceptInvite } from './components/AcceptInvite';
 import { financeService, DEFAULT_SUPABASE_CONFIG } from './services/financeService';
-import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus, AssetType, AssetSector, AssetTicker, Organization } from './types';
+import { Transaction, Bank, Category, CostCenter, Participant, Wallet, TransactionStatus, AssetType, AssetSector, AssetTicker, Organization, Consortium } from './types';
 import { BrokerageImport } from './components/BrokerageImport';
 import { CreditCardImport } from './components/CreditCardImport';
+import { ConsortiumImport } from './components/ConsortiumImport';
 import { SpreadsheetImport } from './components/SpreadsheetImport';
 import { Auth } from './components/Auth';
 import { 
@@ -50,10 +51,12 @@ import {
   SlidersHorizontal,
   CreditCard,
   Sheet,
-  Landmark
+  Landmark,
+  PiggyBank
 } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 import { ManagedPortfolios } from './components/ManagedPortfolios';
+import { ConsortiumManager } from './components/ConsortiumManager';
 import { BankStatementImport } from './components/BankStatementImport';
 
 // Implementação segura e à prova de sandbox do window.localStorage para o ambiente de IFrames do AI Studio
@@ -311,6 +314,7 @@ const App: FC = () => {
     assetTypes: AssetType[];
     assetSectors: AssetSector[];
     assetTickers: AssetTicker[];
+    consortiums: Consortium[];
   }>({
     banks: [],
     categories: [],
@@ -319,7 +323,8 @@ const App: FC = () => {
     wallets: [],
     assetTypes: [],
     assetSectors: [],
-    assetTickers: []
+    assetTickers: [],
+    consortiums: []
   });
 
   const [selectedWalletId, setSelectedWalletId] = useState<string>(() => financeService.getUserPreferences().defaultWalletId);
@@ -388,6 +393,7 @@ const App: FC = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isCreditCardImportOpen, setIsCreditCardImportOpen] = useState(false);
+  const [isConsortiumImportOpen, setIsConsortiumImportOpen] = useState(false);
   const [isSpreadsheetImportOpen, setIsSpreadsheetImportOpen] = useState(false);
   const [isBankStatementImportOpen, setIsBankStatementImportOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -434,7 +440,7 @@ const App: FC = () => {
     }
 
     try {
-      const [bk, cat, cc, pt, wa, at, as, atk] = await Promise.all([
+      const [bk, cat, cc, pt, wa, at, as, atk, cst] = await Promise.all([
         financeService.getRegistry<Bank>('banks', forceRefresh, actualWalletId),
         financeService.getRegistry<Category>('categories', forceRefresh, actualWalletId),
         financeService.getRegistry<CostCenter>('costCenters', forceRefresh, actualWalletId),
@@ -443,22 +449,26 @@ const App: FC = () => {
         financeService.getRegistry<AssetType>('assetTypes', forceRefresh, actualWalletId),
         financeService.getRegistry<AssetSector>('assetSectors', forceRefresh, actualWalletId),
         financeService.getRegistry<AssetTicker>('assetTickers', forceRefresh, actualWalletId),
+        financeService.getRegistry<Consortium>('consortiums', forceRefresh, actualWalletId),
       ]);
 
       if (requestId === lastRegistryRequestIdRef.current) {
-        setRegistries({ 
-          banks: bk, 
-          categories: cat, 
-          costCenters: cc, 
-          participants: pt, 
+        setRegistries({
+          banks: bk,
+          categories: cat,
+          costCenters: cc,
+          participants: pt,
           wallets: wa,
           assetTypes: at,
           assetSectors: as,
-          assetTickers: atk
+          assetTickers: atk,
+          // Antes da migração SQL de Consórcios ser rodada no Supabase, a tabela ainda não
+          // existe — o fallback local devolve undefined (sem INITIAL_DATA pra esse tipo).
+          consortiums: cst || []
         });
 
         // Só marca o cache como carregado se possuir dados reais (impedindo congelar array vazio devido a consultas prematuras)
-        const hasData = bk.length > 0 || cat.length > 0 || pt.length > 0 || wa.length > 0 || cc.length > 0 || at.length > 0 || as.length > 0 || atk.length > 0;
+        const hasData = bk.length > 0 || cat.length > 0 || pt.length > 0 || wa.length > 0 || cc.length > 0 || at.length > 0 || as.length > 0 || atk.length > 0 || (cst || []).length > 0;
         if (hasData) {
           loadedRegistriesRef.current[cacheKey] = true;
           console.log(`[Rastreamento] [loadRegistries] Registros para a chave '${cacheKey}' carregados com dados. Cache marcado como ativo.`);
@@ -1064,6 +1074,7 @@ const App: FC = () => {
     { id: 'assetTypes', label: 'Tipos de Ativos', icon: PieChart },
     { id: 'assetSectors', label: 'Setores', icon: LayoutGrid },
     { id: 'managed_portfolios', label: 'Cart. Gerenciadas', icon: Scaling },
+    { id: 'consortiums', label: 'Consórcios', icon: PiggyBank },
   ];
 
   if (showCreatePassword) {
@@ -1750,6 +1761,15 @@ const App: FC = () => {
                 )}
                 {canCreateTransaction && ['payables', 'bank-transactions'].includes(activeTab) && (
                   <button
+                    onClick={() => setIsConsortiumImportOpen(true)}
+                    className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors h-[38px] shadow-sm animate-fade-in"
+                  >
+                    <PiggyBank className="w-4 h-4 text-indigo-600" />
+                    <span className="hidden sm:inline">Importar consórcio</span>
+                  </button>
+                )}
+                {canCreateTransaction && ['payables', 'bank-transactions'].includes(activeTab) && (
+                  <button
                     onClick={() => setIsSpreadsheetImportOpen(true)}
                     className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors h-[38px] shadow-sm animate-fade-in"
                   >
@@ -2080,6 +2100,15 @@ const App: FC = () => {
                           assetPrices={assetPrices}
                         />
                       </div>
+                    ) : activeRegistryTab === 'consortiums' ? (
+                      <div className="p-4 h-full overflow-auto">
+                        <ConsortiumManager
+                          consortiums={registries.consortiums}
+                          wallets={registries.wallets}
+                          selectedWalletId={selectedWalletId}
+                          onRefresh={() => loadRegistries(true, selectedWalletId)}
+                        />
+                      </div>
                     ) : (
                     <RegistryManager
                         title={registryTabs.find(t => t.id === activeRegistryTab)?.label || ''}
@@ -2264,6 +2293,23 @@ const App: FC = () => {
           banks={registries.banks}
           categories={registries.categories}
           costCenters={registries.costCenters}
+          wallets={registries.wallets}
+          participants={registries.participants}
+          preSelectedBankId={selectedBankId}
+          preSelectedWalletId={selectedWalletId}
+        />
+      )}
+
+      {isConsortiumImportOpen && (
+        <ConsortiumImport
+          onClose={() => setIsConsortiumImportOpen(false)}
+          onSuccess={() => {
+            setIsConsortiumImportOpen(false);
+            loadTransactions();
+            loadRegistries(true, selectedWalletId);
+          }}
+          banks={registries.banks}
+          categories={registries.categories}
           wallets={registries.wallets}
           participants={registries.participants}
           preSelectedBankId={selectedBankId}

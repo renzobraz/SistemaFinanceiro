@@ -52,6 +52,17 @@ export interface AssetTicker extends BaseEntity {
   ticker: string;
 }
 
+// Cada cota de consórcio (Administradora + Grupo + Cota identifica unicamente uma).
+// `name` é o apelido livre que o usuário dá (ex.: "Apto Centro") — não vem do
+// extrato do banco, que só traz Administradora/Grupo/Cota/Empresa titular.
+export interface Consortium extends BaseEntity {
+  administrator?: string;
+  groupNumber?: string;
+  quotaNumber?: string;
+  holderName?: string;
+  holderCnpj?: string;
+}
+
 export interface Participant extends BaseEntity {
   category?: string; // Ex: 'Ação', 'FII', 'ETF', 'Cripto'
   sector?: string;   // Ex: 'Tecnologia', 'Financeiro', 'Energia'
@@ -134,6 +145,38 @@ export interface RecurringRule {
   active: boolean;
   createdAt?: string;
   lastGeneratedAt?: string;
+}
+
+// Detalhe financeiro de uma parcela de consórcio (fundo comum, taxa de administração,
+// fundo de reserva, seguro, multa, juros etc.), 1:1 com um Transaction — vindo do
+// extrato do consórcio, que não tem como caber nos campos genéricos de Transaction.
+export interface ConsortiumInstallment {
+  id: string;
+  organization_id?: string;
+  transactionId: string;
+  consortiumId: string;
+  installmentNumber?: string;  // "Parcela" no extrato, ex.: "038"
+  version?: string;            // "Versão"
+  transactionKind?: string;    // "Transação", ex.: "RECBTO. PARCELA"
+  dueDate?: string;            // "Vencimento" (ISO)
+  paymentDate?: string;        // "Pagamento" (ISO) — vazio = ainda não pago
+  accountingDate?: string;     // "Contabilização" (ISO)
+  installmentValue?: number;   // "Valor da parcela"
+  paidValue?: number;          // "Valor pago"
+  commonFund?: number;         // "Fundo comum"
+  commonFundPct?: number;      // "% fundo comum"
+  adminFee?: number;           // "Taxa de administração"
+  adminFeePct?: number;        // "% taxa de administração"
+  reserveFund?: number;        // "Fundo de reserva"
+  reserveFundPct?: number;     // "% fundo de reserva"
+  insurance?: number;          // "Seguro"
+  fine?: number;               // "Multa"
+  interest?: number;           // "Juros"
+  other?: number;              // "Outros"
+  difference?: number;         // "Diferença"
+  notes?: string;              // "Observação"
+  settledAt?: string;          // "Baixado em" (ISO)
+  createdAt?: string;
 }
 
 export interface AssetAccrual {
