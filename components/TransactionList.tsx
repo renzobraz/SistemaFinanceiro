@@ -169,7 +169,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     isOpen: boolean;
     ids: string[];
     message: string;
-    type: 'DELETE' | 'DEDUPLICATE' | 'UNPAY';
+    type: 'DELETE' | 'DEDUPLICATE' | 'UNPAY' | 'PAY';
   }>({ isOpen: false, ids: [], message: '', type: 'DELETE' });
 
   useEffect(() => {
@@ -333,6 +333,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
           onDelete(confirmModal.ids);
       } else if (confirmModal.type === 'UNPAY' && onUpdateStatus) {
           onUpdateStatus(confirmModal.ids, 'PENDING');
+      } else if (confirmModal.type === 'PAY' && onUpdateStatus) {
+          onUpdateStatus(confirmModal.ids, 'PAID');
       }
       setSelectedIds(prev => prev.filter(id => !confirmModal.ids.includes(id)));
   };
@@ -617,8 +619,17 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
                     {hasEditPermission && (
                       <>
-                        <button 
-                            onClick={() => setConfirmModal({isOpen: true, ids: selectedIds, type: 'UNPAY', message: `Deseja desmarcar ${selectedIds.length} lançamentos como "Pago"? Eles voltarão para o status "Pendente".`})} 
+                        <button
+                            onClick={() => setConfirmModal({isOpen: true, ids: selectedIds, type: 'PAY', message: `Deseja marcar ${selectedIds.length} lançamentos como "Pago"?`})}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-600 rounded-lg text-sm hover:bg-green-100 font-medium transition-colors border border-green-100"
+                            title="Marcar como Pago"
+                        >
+                            <CheckSquare className="w-4 h-4" />
+                            <span className="hidden md:inline">Marcar Pago</span>
+                        </button>
+
+                        <button
+                            onClick={() => setConfirmModal({isOpen: true, ids: selectedIds, type: 'UNPAY', message: `Deseja desmarcar ${selectedIds.length} lançamentos como "Pago"? Eles voltarão para o status "Pendente".`})}
                             className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-sm hover:bg-amber-100 font-medium transition-colors border border-amber-100"
                             title="Desmarcar como Pago"
                         >
@@ -1129,15 +1140,17 @@ export const TransactionList: React.FC<TransactionListProps> = ({
             onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))} 
             onConfirm={confirmAction} 
             title={
-                confirmModal.type === 'DELETE' ? "Confirmação de Exclusão" : 
+                confirmModal.type === 'DELETE' ? "Confirmação de Exclusão" :
                 confirmModal.type === 'UNPAY' ? "Desmarcar como Pago" :
+                confirmModal.type === 'PAY' ? "Marcar como Pago" :
                 "Remover Duplicados"
-            } 
-            message={confirmModal.message} 
-            isDestructive={confirmModal.type === 'DELETE'} 
+            }
+            message={confirmModal.message}
+            isDestructive={confirmModal.type === 'DELETE'}
             confirmText={
-                confirmModal.type === 'DELETE' ? "Excluir" : 
+                confirmModal.type === 'DELETE' ? "Excluir" :
                 confirmModal.type === 'UNPAY' ? "Sim, Desmarcar" :
+                confirmModal.type === 'PAY' ? "Sim, Marcar Pago" :
                 "Remover Agora"
             }
         />
