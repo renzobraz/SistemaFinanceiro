@@ -158,6 +158,11 @@ export interface ConsortiumInstallment {
   installmentNumber?: string;  // "Parcela" no extrato, ex.: "038"
   version?: string;            // "Versão"
   transactionKind?: string;    // "Transação", ex.: "RECBTO. PARCELA"
+  // Posição de ocorrência (1, 2, 3...) entre linhas do extrato com cota+vencimento+
+  // parcela+transação idênticos — algumas administradoras repetem essas 4 colunas em
+  // eventos genuinamente diferentes (ex.: dois "RECBTO. ANTECIPADO" com valores
+  // distintos), e isso é o que falta pra tornar cada linha única de forma estável.
+  occurrenceIndex?: number;
   dueDate?: string;            // "Vencimento" (ISO)
   paymentDate?: string;        // "Pagamento" (ISO) — vazio = ainda não pago
   accountingDate?: string;     // "Contabilização" (ISO)

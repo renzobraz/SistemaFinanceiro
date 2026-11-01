@@ -68,6 +68,7 @@ interface ParsedRow {
   difference: number;
   notes: string;
   settledAt: string;
+  occurrenceIndex: number; // 1ª, 2ª... ocorrência da mesma cota+vencimento+parcela+transação no extrato
 }
 
 type PlanAction = 'CREATE' | 'UPDATE' | 'SKIP';
@@ -174,7 +175,20 @@ function parseConsortiumXlsx(rows: any[][]): ParsedRow[] {
       difference: idx.diferenca !== -1 ? parseUsStyleReais(norm(r[idx.diferenca])) : 0,
       notes: idx.observacao !== -1 ? norm(r[idx.observacao]) : '',
       settledAt: idx.baixadoEm !== -1 && norm(r[idx.baixadoEm]) ? parseDateToIso(norm(r[idx.baixadoEm])) : '',
+      occurrenceIndex: 1, // calculado abaixo, depois que todas as linhas foram lidas
     });
+  }
+
+  // Algumas administradoras repetem cota+vencimento+parcela+transação em eventos
+  // genuinamente diferentes (ex.: dois "RECBTO. ANTECIPADO" com valores distintos).
+  // Numera cada ocorrência na ordem em que aparece no extrato — estável entre
+  // importação e reimportação, desde que a administradora mantenha a mesma ordem.
+  const occurrenceCounters = new Map<string, number>();
+  for (const row of out) {
+    const occKey = `${row.administrator}|${row.groupNumber}|${row.quotaNumber}|${row.dueDate}|${row.installmentNumber}|${row.transactionKind}`;
+    const next = (occurrenceCounters.get(occKey) || 0) + 1;
+    occurrenceCounters.set(occKey, next);
+    row.occurrenceIndex = next;
   }
 
   return out;
@@ -184,6 +198,7 @@ const toInstallmentData = (r: ParsedRow) => ({
   installmentNumber: r.installmentNumber,
   version: r.version,
   transactionKind: r.transactionKind,
+  occurrenceIndex: r.occurrenceIndex,
   dueDate: r.dueDate,
   paymentDate: r.paymentDate || undefined,
   accountingDate: r.accountingDate || undefined,
@@ -294,11 +309,12 @@ export const ConsortiumImport: React.FC<ConsortiumImportProps> = ({
           toCreate++;
           return { row: r, key, action: 'CREATE' };
         }
-        // "Transação" entra na chave porque a mesma cota pode ter mais de um evento
-        // no mesmo vencimento/parcela (ex.: lance embutido e sua contrapartida de
-        // pagamento, ambos com Parcela "000") — sem isso o import quebrava com
-        // "duplicate key value" (ver migração fix_consortium_installments_unique_key.sql).
-        const dedupeKey = `${existingConsortium.id}|${r.dueDate}|${r.installmentNumber}|${r.transactionKind}`;
+        // "Transação" + occurrenceIndex entram na chave porque a mesma cota pode ter
+        // mais de um evento idêntico em vencimento/parcela/transação (ex.: lance
+        // embutido e sua contrapartida, ou dois "RECBTO. ANTECIPADO" com valores
+        // diferentes) — ver migrações add_consortiums.sql / fix_consortium_installments_unique_key.sql
+        // / add_consortium_installment_occurrence.sql.
+        const dedupeKey = `${existingConsortium.id}|${r.dueDate}|${r.installmentNumber}|${r.transactionKind}|${r.occurrenceIndex}`;
         const existingInst = installmentIndex.get(dedupeKey);
         if (!existingInst) {
           toCreate++;

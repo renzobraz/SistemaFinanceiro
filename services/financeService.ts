@@ -405,6 +405,7 @@ const mapConsortiumInstallmentRow = (d: any): ConsortiumInstallment => ({
   installmentNumber: d.installment_number,
   version: d.version,
   transactionKind: d.transaction_kind,
+  occurrenceIndex: d.occurrence_index != null ? Number(d.occurrence_index) : undefined,
   dueDate: d.due_date,
   paymentDate: d.payment_date,
   accountingDate: d.accounting_date,
@@ -2215,6 +2216,7 @@ export const financeService = {
         installment_number: data.installmentNumber || null,
         version: data.version || null,
         transaction_kind: data.transactionKind || null,
+        occurrence_index: data.occurrenceIndex ?? 1,
         due_date: data.dueDate || null,
         payment_date: data.paymentDate || null,
         accounting_date: data.accountingDate || null,
@@ -2266,13 +2268,14 @@ export const financeService = {
       const chunk = consortiumIds.slice(i, i + chunkSize);
       const { data, error } = await supabase
         .from('consortium_installments')
-        .select('consortium_id, due_date, installment_number, transaction_kind, transaction_id, transactions(status, value)')
+        .select('consortium_id, due_date, installment_number, transaction_kind, occurrence_index, transaction_id, transactions(status, value)')
         .in('consortium_id', chunk);
       if (error) throw new Error(formatSupabaseError(error));
       for (const row of data || []) {
-        // Mesma cota pode ter mais de um evento no mesmo vencimento/parcela (ex.:
-        // "lance embutido" e sua contrapartida de pagamento) — "Transação" distingue.
-        const key = `${row.consortium_id}|${row.due_date}|${row.installment_number}|${row.transaction_kind}`;
+        // Mesma cota pode ter mais de um evento idêntico em cota+vencimento+parcela+
+        // transação (ex.: dois "RECBTO. ANTECIPADO" com valores diferentes) —
+        // occurrence_index (1ª, 2ª ocorrência...) é o que sobra pra distinguir.
+        const key = `${row.consortium_id}|${row.due_date}|${row.installment_number}|${row.transaction_kind}|${row.occurrence_index}`;
         const tx: any = row.transactions;
         map.set(key, {
           transactionId: row.transaction_id,
