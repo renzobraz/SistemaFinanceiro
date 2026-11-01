@@ -2160,13 +2160,13 @@ export const financeService = {
   // de lançamento (ver TransactionForm.tsx).
   async getConsortiumDetailForTransaction(
     transactionId: string
-  ): Promise<(ConsortiumInstallment & { consortiumName?: string; administrator?: string; groupNumber?: string; quotaNumber?: string }) | null> {
+  ): Promise<(ConsortiumInstallment & { consortiumName?: string; administrator?: string; groupNumber?: string; quotaNumber?: string; holderName?: string }) | null> {
     const supabase = getSupabase();
     if (!supabase) return null;
 
     const { data, error } = await supabase
       .from('consortium_installments')
-      .select('*, consortiums(name, administrator, group_number, quota_number)')
+      .select('*, consortiums(name, administrator, group_number, quota_number, holder_name)')
       .eq('transaction_id', transactionId)
       .maybeSingle();
 
@@ -2180,6 +2180,7 @@ export const financeService = {
       administrator: c?.administrator,
       groupNumber: c?.group_number,
       quotaNumber: c?.quota_number,
+      holderName: c?.holder_name,
     };
   },
 

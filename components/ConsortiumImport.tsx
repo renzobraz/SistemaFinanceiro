@@ -355,11 +355,14 @@ export const ConsortiumImport: React.FC<ConsortiumImportProps> = ({
         keyToConsortiumId.set(key, created.id);
       }
 
-      setProgressMsg('Localizando (ou criando) o participante titular...');
-      const holderNames = [...new Set(plan.planned.map(p => p.row.holderName).filter(Boolean))];
+      // Participante é quem recebe o pagamento (a Administradora do consórcio, ex.:
+      // "Sicredi Consórcios", "Disal Consórcio") — não o titular da cota, que na
+      // prática é a própria Holding (fica guardado em Cadastros > Consórcios).
+      setProgressMsg('Localizando (ou criando) o participante (administradora)...');
+      const administratorNames = [...new Set(plan.planned.map(p => p.row.administrator).filter(Boolean))];
       const freshParticipants = await financeService.getRegistry<Participant>('participants', true, selectedWalletId);
       const participantIdByName = new Map<string, string>();
-      for (const name of holderNames) {
+      for (const name of administratorNames) {
         let p = freshParticipants.find(p => p.name.trim().toLowerCase() === name.trim().toLowerCase());
         if (!p) {
           p = await financeService.saveRegistryItem<Participant>('participants', { id: '', name, walletId: selectedWalletId, active: true });
@@ -404,7 +407,7 @@ export const ConsortiumImport: React.FC<ConsortiumImportProps> = ({
           walletId: selectedWalletId,
           categoryId,
           costCenterId: '',
-          participantId: r.holderName ? participantIdByName.get(r.holderName) : undefined,
+          participantId: participantIdByName.get(r.administrator),
           organization_id: financeService.activeOrganizationId ?? undefined,
         } as Transaction);
         newInstallments.push({ transactionId: txId, consortiumId, data: toInstallmentData(r) });

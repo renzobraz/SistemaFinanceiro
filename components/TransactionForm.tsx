@@ -165,7 +165,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   // Detalhe da parcela de consórcio (fundo comum, taxa adm., fundo de reserva etc.),
   // quando este lançamento veio da importação de extrato de consórcio — somente leitura.
   const [consortiumDetail, setConsortiumDetail] = useState<null | {
-    consortiumName?: string; administrator?: string; groupNumber?: string; quotaNumber?: string;
+    consortiumName?: string; administrator?: string; groupNumber?: string; quotaNumber?: string; holderName?: string;
     installmentNumber?: string; commonFund?: number; adminFee?: number; reserveFund?: number;
     insurance?: number; fine?: number; interest?: number; other?: number; difference?: number;
   }>(null);
@@ -1628,6 +1628,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                   <p><span className="text-indigo-500">Administradora:</span> {consortiumDetail.administrator || '—'}</p>
                   <p><span className="text-indigo-500">Grupo:</span> {consortiumDetail.groupNumber || '—'}</p>
                   <p><span className="text-indigo-500">Cota:</span> {consortiumDetail.quotaNumber || '—'}</p>
+                  <p><span className="text-indigo-500">Titular:</span> {consortiumDetail.holderName || '—'}</p>
                   <p><span className="text-indigo-500">Parcela:</span> {consortiumDetail.installmentNumber || '—'}</p>
                   <p><span className="text-indigo-500">Fundo Comum:</span> {formatCurrencyInput(consortiumDetail.commonFund || 0)}</p>
                   <p><span className="text-indigo-500">Taxa Adm.:</span> {formatCurrencyInput(consortiumDetail.adminFee || 0)}</p>
