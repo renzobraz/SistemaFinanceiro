@@ -307,6 +307,9 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   // pré-marcação) em vez de comparar com initialData.status aqui.
   const isGivingBaixaNow = !!id && openedAsBaixa && formData.status === "PAID";
   const canOfferRestitution = mode !== "TRANSFER" && (!id || isGivingBaixaNow);
+  if (typeof window !== 'undefined') {
+    (window as any).__debugRestitution = { id, openedAsBaixa, initialStatus: initialData?.status, formStatus: formData.status, mode, isGivingBaixaNow, canOfferRestitution };
+  }
 
   const sortedParticipants = useMemo(
     () =>
