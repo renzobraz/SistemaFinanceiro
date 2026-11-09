@@ -1382,6 +1382,8 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                         if (!restitutionDate) setRestitutionDate(formData.date);
                         if (!restitutionWalletId) setRestitutionWalletId(formData.walletId);
                         if (!restitutionBankId) setRestitutionBankId(formData.bankId);
+                        if (!restitutionParticipantId) setRestitutionParticipantId(formData.participantId);
+                        if (!restitutionCategoryId) setRestitutionCategoryId(formData.categoryId);
                       }
                     }}
                   />
