@@ -165,6 +165,8 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [restitutionDate, setRestitutionDate] = useState("");
   const [restitutionCategoryId, setRestitutionCategoryId] = useState("");
   const [restitutionParticipantId, setRestitutionParticipantId] = useState("");
+  const [restitutionWalletId, setRestitutionWalletId] = useState("");
+  const [restitutionBankId, setRestitutionBankId] = useState("");
   // Qual dos 3 campos (Valor/Quantidade/Preço Unit.) o usuário mexeu por último —
   // decide qual dos outros dois recalcular, evitando que o auto-cálculo "brigue"
   // com o valor que a pessoa acabou de digitar (ver efeito abaixo).
@@ -285,6 +287,20 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         .sort((a, b) => a.name.localeCompare(b.name)),
     [registries.costCenters, formData.costCenterId, formData.walletId],
   );
+  const restitutionBanks = useMemo(
+    () =>
+      [...registries.banks]
+        .filter(b => b.active !== false || b.id === restitutionBankId)
+        .filter(b => !restitutionWalletId || !b.walletId || b.walletId === restitutionWalletId)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [registries.banks, restitutionBankId, restitutionWalletId],
+  );
+  // Restituição também pode ser oferecida ao dar baixa num Contas a Pagar já
+  // existente (editar um lançamento PENDING e marcar "Pago/Recebido" agora),
+  // não só na criação de um pagamento novo.
+  const isGivingBaixaNow = !!id && initialData?.status === "PENDING" && formData.status === "PAID";
+  const canOfferRestitution = mode !== "TRANSFER" && (!id || isGivingBaixaNow);
+
   const sortedParticipants = useMemo(
     () =>
       [...registries.participants]
@@ -552,6 +568,8 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       setRestitutionDate("");
       setRestitutionCategoryId("");
       setRestitutionParticipantId("");
+      setRestitutionWalletId("");
+      setRestitutionBankId("");
     } else {
       setFormData({
         ...emptyTransaction,
@@ -570,6 +588,8 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       setRestitutionDate("");
       setRestitutionCategoryId("");
       setRestitutionParticipantId("");
+      setRestitutionWalletId("");
+      setRestitutionBankId("");
       setIsRecurrent(false);
       setRecurrenceCount(2);
       setRecurrenceFreq("MONTHLY");
@@ -721,9 +741,11 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       if (!targetBankId) errors.push("Conta/Banco Destino");
     }
 
-    if (isRestitution) {
+    if (isRestitution && canOfferRestitution) {
       if (!restitutionParticipantId) errors.push("Participante da Restituição");
       if (!restitutionCategoryId) errors.push("Categoria da Restituição");
+      if (!restitutionWalletId) errors.push("Carteira do Recebimento");
+      if (!restitutionBankId) errors.push("Conta/Banco do Recebimento");
     }
 
     if (errors.length > 0) {
@@ -844,15 +866,18 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         }
       }
 
-      if (isRestitution && restitutionParticipantId && restitutionCategoryId) {
+      if (isRestitution && canOfferRestitution && restitutionParticipantId && restitutionCategoryId && restitutionWalletId && restitutionBankId) {
         // Cria o Contas a Receber (restituição) vinculado ao pagamento, sempre
-        // pendente e com o mesmo valor, aguardando quem vai reembolsar
+        // pendente e com o mesmo valor, aguardando quem vai reembolsar — pode
+        // cair em outra carteira/conta, diferente da usada no pagamento
         const receivable: Transaction = {
           ...formData,
           id: "", // Novo ID
           type: "CREDIT",
           status: "PENDING",
           date: restitutionDate || formData.date,
+          walletId: restitutionWalletId,
+          bankId: restitutionBankId,
           categoryId: restitutionCategoryId,
           participantId: restitutionParticipantId,
           description: `Restituição: ${formData.description}`,
@@ -1342,7 +1367,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 </label>
               )}
 
-              {!id && mode !== "TRANSFER" && (
+              {canOfferRestitution && (
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
                     type="checkbox"
@@ -1351,8 +1376,10 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                     checked={isRestitution}
                     onChange={(e) => {
                       setIsRestitution(e.target.checked);
-                      if (e.target.checked && !restitutionDate) {
-                        setRestitutionDate(formData.date);
+                      if (e.target.checked) {
+                        if (!restitutionDate) setRestitutionDate(formData.date);
+                        if (!restitutionWalletId) setRestitutionWalletId(formData.walletId);
+                        if (!restitutionBankId) setRestitutionBankId(formData.bankId);
                       }
                     }}
                   />
@@ -1379,7 +1406,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
             </div>
           </div>
 
-          {isRestitution && !id && mode !== "TRANSFER" && (
+          {isRestitution && canOfferRestitution && (
             <div className="bg-amber-50 p-4 rounded-lg border border-amber-100 animate-fade-in grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-bold text-amber-700 uppercase mb-1">
@@ -1425,8 +1452,43 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                   className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none"
                 />
               </div>
+              <div>
+                <label className="block text-xs font-bold text-amber-700 uppercase mb-1">
+                  Carteira do Recebimento
+                </label>
+                <select
+                  disabled={isSaving}
+                  value={restitutionWalletId}
+                  onChange={(e) => {
+                    setRestitutionWalletId(e.target.value);
+                    setRestitutionBankId("");
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none"
+                >
+                  <option value="">Selecione...</option>
+                  {sortedWallets.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-amber-700 uppercase mb-1">
+                  Conta/Banco do Recebimento
+                </label>
+                <select
+                  disabled={isSaving}
+                  value={restitutionBankId}
+                  onChange={(e) => setRestitutionBankId(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none"
+                >
+                  <option value="">Selecione...</option>
+                  {restitutionBanks.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
               <p className="md:col-span-3 text-xs text-amber-700 italic">
-                Será criado um Contas a Receber de R$ {formData.value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (mesmo valor do pagamento), pendente até você confirmar o recebimento.
+                Será criado um Contas a Receber de R$ {formData.value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (mesmo valor do pagamento), pendente até você confirmar o recebimento. Por padrão, cai na mesma carteira/conta do pagamento — mude acima se o recebimento for em outro banco.
               </p>
             </div>
           )}
