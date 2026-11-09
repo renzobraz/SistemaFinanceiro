@@ -29,6 +29,10 @@ interface TransactionFormProps {
   onDelete?: (ids: string[]) => Promise<void>;
   onAddParticipant: (name: string, walletId?: string) => Promise<Participant>;
   initialData?: Transaction | null;
+  // true quando initialData veio de um Contas a Pagar PENDING e teve o status
+  // pré-marcado como PAID só pela UX de "dar baixa" (ver App.tsx) — ou seja,
+  // o status real antes de abrir o formulário era PENDING.
+  openedAsBaixa?: boolean;
   partnerData?: Transaction | null;
   defaultStatus?: TransactionStatus;
   preSelectedBankId?: string;
@@ -140,6 +144,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   onDelete,
   onAddParticipant,
   initialData,
+  openedAsBaixa = false,
   partnerData,
   defaultStatus = "PENDING",
   preSelectedBankId,
@@ -296,9 +301,11 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     [registries.banks, restitutionBankId, restitutionWalletId],
   );
   // Restituição também pode ser oferecida ao dar baixa num Contas a Pagar já
-  // existente (editar um lançamento PENDING e marcar "Pago/Recebido" agora),
-  // não só na criação de um pagamento novo.
-  const isGivingBaixaNow = !!id && initialData?.status === "PENDING" && formData.status === "PAID";
+  // existente. Atenção: initialData.status já vem pré-marcado como "PAID" pela
+  // tela de Contas a Pagar (ver App.tsx) mesmo quando o lançamento ainda está
+  // PENDING no banco — por isso usamos openedAsBaixa (o status real antes da
+  // pré-marcação) em vez de comparar com initialData.status aqui.
+  const isGivingBaixaNow = !!id && openedAsBaixa && formData.status === "PAID";
   const canOfferRestitution = mode !== "TRANSFER" && (!id || isGivingBaixaNow);
 
   const sortedParticipants = useMemo(
