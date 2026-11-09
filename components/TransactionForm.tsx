@@ -158,6 +158,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [discountValue, setDiscountValue] = useState<number>(0);
+  // Restituição: ao criar um pagamento, opcionalmente gera junto um Contas a
+  // Receber (status PENDING) de mesmo valor, ligado por linkedId, para quando
+  // alguém vai te reembolsar depois (ex: dividir uma conta).
+  const [isRestitution, setIsRestitution] = useState(false);
+  const [restitutionDate, setRestitutionDate] = useState("");
+  const [restitutionCategoryId, setRestitutionCategoryId] = useState("");
+  const [restitutionParticipantId, setRestitutionParticipantId] = useState("");
   // Qual dos 3 campos (Valor/Quantidade/Preço Unit.) o usuário mexeu por último —
   // decide qual dos outros dois recalcular, evitando que o auto-cálculo "brigue"
   // com o valor que a pessoa acabou de digitar (ver efeito abaixo).
@@ -277,6 +284,14 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         .filter(cc => !formData.walletId || !cc.walletId || cc.walletId === formData.walletId)
         .sort((a, b) => a.name.localeCompare(b.name)),
     [registries.costCenters, formData.costCenterId, formData.walletId],
+  );
+  const sortedParticipants = useMemo(
+    () =>
+      [...registries.participants]
+        .filter(p => p.active !== false)
+        .filter(p => !formData.walletId || !p.walletId || p.walletId === formData.walletId)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [registries.participants, formData.walletId],
   );
   const sortedWallets = useMemo(
     () => [...registries.wallets]
@@ -533,6 +548,10 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       );
       setParticipantSearch(participant?.name || "");
       setDiscountValue(0);
+      setIsRestitution(false);
+      setRestitutionDate("");
+      setRestitutionCategoryId("");
+      setRestitutionParticipantId("");
     } else {
       setFormData({
         ...emptyTransaction,
@@ -547,6 +566,10 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       setTargetWalletId("");
       setParticipantSearch("");
       setDiscountValue(0);
+      setIsRestitution(false);
+      setRestitutionDate("");
+      setRestitutionCategoryId("");
+      setRestitutionParticipantId("");
       setIsRecurrent(false);
       setRecurrenceCount(2);
       setRecurrenceFreq("MONTHLY");
@@ -698,6 +721,11 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       if (!targetBankId) errors.push("Conta/Banco Destino");
     }
 
+    if (isRestitution) {
+      if (!restitutionParticipantId) errors.push("Participante da Restituição");
+      if (!restitutionCategoryId) errors.push("Categoria da Restituição");
+    }
+
     if (errors.length > 0) {
       setValidationErrors(errors);
       setIsSaving(false);
@@ -719,6 +747,8 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
 
       // Se estivermos gerando um desconto simultâneo, precisamos de um linkedId comum
       const refundLinkedId = withDiscount ? (linkedId || generateUUID()) : undefined;
+      // Idem para a restituição (Contas a Receber) gerada junto com o pagamento
+      const restitutionLinkedId = isRestitution ? generateUUID() : undefined;
 
       for (let i = 0; i < loops; i++) {
         const currentData = { ...formData };
@@ -809,9 +839,26 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           transactionsToSave.push({
             ...currentData,
             id: i === 0 ? id : "",
-            linkedId: i === 0 ? refundLinkedId : undefined,
+            linkedId: i === 0 ? (refundLinkedId || restitutionLinkedId) : undefined,
           });
         }
+      }
+
+      if (isRestitution && restitutionParticipantId && restitutionCategoryId) {
+        // Cria o Contas a Receber (restituição) vinculado ao pagamento, sempre
+        // pendente e com o mesmo valor, aguardando quem vai reembolsar
+        const receivable: Transaction = {
+          ...formData,
+          id: "", // Novo ID
+          type: "CREDIT",
+          status: "PENDING",
+          date: restitutionDate || formData.date,
+          categoryId: restitutionCategoryId,
+          participantId: restitutionParticipantId,
+          description: `Restituição: ${formData.description}`,
+          linkedId: restitutionLinkedId,
+        };
+        transactionsToSave.push(receivable);
       }
 
       if (withDiscount && discountValue > 0) {
@@ -1294,6 +1341,26 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                   </span>
                 </label>
               )}
+
+              {!id && mode !== "TRANSFER" && (
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    disabled={isSaving}
+                    className="w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                    checked={isRestitution}
+                    onChange={(e) => {
+                      setIsRestitution(e.target.checked);
+                      if (e.target.checked && !restitutionDate) {
+                        setRestitutionDate(formData.date);
+                      }
+                    }}
+                  />
+                  <span className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                    <RotateCcw className="w-3 h-3 text-amber-500" /> Gerar Contas a Receber (restituição)?
+                  </span>
+                </label>
+              )}
             </div>
 
             <div className={mode === "TRANSFER" ? "invisible" : ""}>
@@ -1311,6 +1378,58 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               />
             </div>
           </div>
+
+          {isRestitution && !id && mode !== "TRANSFER" && (
+            <div className="bg-amber-50 p-4 rounded-lg border border-amber-100 animate-fade-in grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-amber-700 uppercase mb-1">
+                  Participante (quem vai restituir) <span className="text-red-500">*</span>
+                </label>
+                <select
+                  disabled={isSaving}
+                  value={restitutionParticipantId}
+                  onChange={(e) => setRestitutionParticipantId(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none"
+                >
+                  <option value="">Selecione...</option>
+                  {sortedParticipants.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-amber-700 uppercase mb-1">
+                  Categoria da Restituição <span className="text-red-500">*</span>
+                </label>
+                <select
+                  disabled={isSaving}
+                  value={restitutionCategoryId}
+                  onChange={(e) => setRestitutionCategoryId(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none"
+                >
+                  <option value="">Selecione...</option>
+                  {sortedCategories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-amber-700 uppercase mb-1">
+                  Data Prevista do Recebimento
+                </label>
+                <input
+                  type="date"
+                  disabled={isSaving}
+                  value={restitutionDate}
+                  onChange={(e) => setRestitutionDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none"
+                />
+              </div>
+              <p className="md:col-span-3 text-xs text-amber-700 italic">
+                Será criado um Contas a Receber de R$ {formData.value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (mesmo valor do pagamento), pendente até você confirmar o recebimento.
+              </p>
+            </div>
+          )}
 
           {isRecurrent && !id && (
             <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 animate-fade-in grid grid-cols-1 md:grid-cols-2 gap-4">
