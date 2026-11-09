@@ -29,10 +29,6 @@ interface TransactionFormProps {
   onDelete?: (ids: string[]) => Promise<void>;
   onAddParticipant: (name: string, walletId?: string) => Promise<Participant>;
   initialData?: Transaction | null;
-  // true quando initialData veio de um Contas a Pagar PENDING e teve o status
-  // pré-marcado como PAID só pela UX de "dar baixa" (ver App.tsx) — ou seja,
-  // o status real antes de abrir o formulário era PENDING.
-  openedAsBaixa?: boolean;
   partnerData?: Transaction | null;
   defaultStatus?: TransactionStatus;
   preSelectedBankId?: string;
@@ -144,7 +140,6 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   onDelete,
   onAddParticipant,
   initialData,
-  openedAsBaixa = false,
   partnerData,
   defaultStatus = "PENDING",
   preSelectedBankId,
@@ -300,13 +295,10 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
         .sort((a, b) => a.name.localeCompare(b.name)),
     [registries.banks, restitutionBankId, restitutionWalletId],
   );
-  // Restituição também pode ser oferecida ao dar baixa num Contas a Pagar já
-  // existente. Atenção: initialData.status já vem pré-marcado como "PAID" pela
-  // tela de Contas a Pagar (ver App.tsx) mesmo quando o lançamento ainda está
-  // PENDING no banco — por isso usamos openedAsBaixa (o status real antes da
-  // pré-marcação) em vez de comparar com initialData.status aqui.
-  const isGivingBaixaNow = !!id && openedAsBaixa && formData.status === "PAID";
-  const canOfferRestitution = mode !== "TRANSFER" && (!id || isGivingBaixaNow);
+  // Restituição também pode ser oferecida ao editar um lançamento que já está
+  // pago (seja dando baixa agora num Contas a Pagar, seja reabrindo um
+  // lançamento de banco que já foi pago antes) — não só na criação.
+  const canOfferRestitution = mode !== "TRANSFER" && (!id || formData.status === "PAID");
 
   const sortedParticipants = useMemo(
     () =>
@@ -868,7 +860,10 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
           transactionsToSave.push({
             ...currentData,
             id: i === 0 ? id : "",
-            linkedId: i === 0 ? (refundLinkedId || restitutionLinkedId) : undefined,
+            // Preserva o linkedId já existente (ex: de uma restituição/desconto
+            // anterior) quando este salvamento não está gerando um novo vínculo —
+            // senão um simples re-salvar sem reativar o checkbox apagaria o link.
+            linkedId: i === 0 ? (refundLinkedId || restitutionLinkedId || (!isNew ? linkedId : undefined)) : undefined,
           });
         }
       }

@@ -397,10 +397,6 @@ const App: FC = () => {
   const [isSpreadsheetImportOpen, setIsSpreadsheetImportOpen] = useState(false);
   const [isBankStatementImportOpen, setIsBankStatementImportOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
-  // true quando o lançamento aberto para edição estava PENDING e foi pré-marcado
-  // como PAID só pela UX da aba Contas a Pagar (ver onEdit abaixo) — ou seja,
-  // o usuário está dando baixa agora, não editando um lançamento já pago.
-  const [editingTransactionWasPending, setEditingTransactionWasPending] = useState(false);
   const [partnerTransaction, setPartnerTransaction] = useState<Transaction | null>(null);
 
   const [alertState, setAlertState] = useState<{
@@ -1808,7 +1804,7 @@ const App: FC = () => {
                   </button>
                 )}
                 {canCreateTransaction && activeTab !== 'investments' && (
-                  <button onClick={() => { setEditingTransaction(null); setEditingTransactionWasPending(false); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
+                  <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm shadow-blue-100 h-[38px]">
                       <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Lançar</span>
                   </button>
                 )}
@@ -2055,7 +2051,6 @@ const App: FC = () => {
                         if (givingBaixa) {
                           transactionToEdit.status = 'PAID';
                         }
-                        setEditingTransactionWasPending(givingBaixa);
                         setEditingTransaction(transactionToEdit);
                         if (t.linkedId) {
                           const partner = transactions.find(x => x.linkedId === t.linkedId && x.id !== t.id);
@@ -2378,7 +2373,6 @@ const App: FC = () => {
         onDelete={handleDeleteTransactions}
         onAddParticipant={handleQuickAddParticipant}
         initialData={editingTransaction}
-        openedAsBaixa={editingTransactionWasPending}
         partnerData={partnerTransaction}
         defaultStatus={statusFilter === 'ALL' ? 'PENDING' : statusFilter} 
         preSelectedBankId={selectedBankId}
