@@ -948,12 +948,29 @@ const App: FC = () => {
 
   const handleDeleteTransactions = async (ids: string[]) => {
     const previousTransactions = [...transactions];
-    
+
     // Atualização Otimista imediata: remove localmente as transações
     setTransactions(prev => prev.filter(item => !ids.includes(item.id)));
-    
+
     try {
-        await financeService.deleteTransactions(ids);
+        // Transferências (e descontos vinculados) têm uma perna irmã com o mesmo
+        // linkedId, geralmente em outra conta/carteira, que pode não estar na
+        // lista atual carregada. Buscamos essas pernas para excluir junto,
+        // senão a perna de destino fica órfã no banco.
+        const toDelete = previousTransactions.filter(t => ids.includes(t.id));
+        const linkedIds = Array.from(new Set(toDelete.map(t => t.linkedId).filter((v): v is string => !!v)));
+
+        let allIds = ids;
+        if (linkedIds.length > 0) {
+            const partnerGroups = await Promise.all(linkedIds.map(lid => financeService.getTransactionsByLinkedId(lid)));
+            const partnerIds = Array.from(new Set(partnerGroups.flat().map(t => t.id))).filter(pid => !ids.includes(pid));
+            if (partnerIds.length > 0) {
+                allIds = [...ids, ...partnerIds];
+                setTransactions(prev => prev.filter(item => !partnerIds.includes(item.id)));
+            }
+        }
+
+        await financeService.deleteTransactions(allIds);
         await loadTransactions();
     } catch (e: any) {
         // Rollback em caso de erro
