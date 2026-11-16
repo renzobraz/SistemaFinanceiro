@@ -2036,10 +2036,10 @@ function formatDateBR(iso: string): string {
 // buildContasAPagarEmailHtml) usado para que a tabela do e-mail nunca ultrapasse a
 // largura do quadro que a envolve, mesmo com muitas colunas selecionadas.
 const REPORT_COLUMN_DEFINITIONS: Record<string, { label: string; align: 'left' | 'right'; width: number }> = {
-  date: { label: 'Vencimento', align: 'left', width: 10 },
+  date: { label: 'Vencimento', align: 'left', width: 13 },
   description: { label: 'Descrição', align: 'left', width: 20 },
   docNumber: { label: 'Nº Documento', align: 'left', width: 10 },
-  value: { label: 'Valor', align: 'right', width: 10 },
+  value: { label: 'Valor', align: 'right', width: 13 },
   bank: { label: 'Banco', align: 'left', width: 12 },
   category: { label: 'Categoria', align: 'left', width: 14 },
   costCenter: { label: 'Centro de Custo', align: 'left', width: 14 },
@@ -2141,12 +2141,16 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
   // Data e Valor têm formato curto e fixo ("31/08/2026", "R$ 4.000,00") — deixá-los
   // quebrar linha só torna a tabela mais alta sem necessidade; as colunas de texto
   // livre (descrição, categoria, participante etc.) continuam quebrando normalmente.
+  // Usamos tanto o atributo HTML legado "nowrap" quanto a propriedade CSS porque vários
+  // clientes de e-mail (Outlook/OWA em especial) sanitizam e removem estilos inline como
+  // white-space, mas preservam o atributo HTML puro — só a propriedade CSS não é suficiente.
   const noWrapCols = new Set(['date', 'value']);
   const wrapStyleFor = (col: string) => noWrapCols.has(col) ? 'white-space:nowrap;' : wordBreak;
+  const wrapAttrFor = (col: string) => noWrapCols.has(col) ? ' nowrap="nowrap"' : '';
 
   const headerCells = activeColumns.map(col => {
     const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const, width: 12 };
-    return `<th style="width:${widthFor(col)};text-align:${def.align};padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;${wrapStyleFor(col)}">${def.label}</th>`;
+    return `<th${wrapAttrFor(col)} style="width:${widthFor(col)};text-align:${def.align};padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;${wrapStyleFor(col)}">${def.label}</th>`;
   }).join('');
 
   const rows = transactions.map(t => {
@@ -2154,7 +2158,7 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
     const cells = activeColumns.map(col => {
       const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const, width: 12 };
       const cellColor = col === 'value' ? color : '#334155';
-      return `<td style="width:${widthFor(col)};padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:${cellColor};text-align:${def.align};font-weight:${col === 'value' ? 700 : 400};${wrapStyleFor(col)}">${getReportCellValue(col, t, lookups)}</td>`;
+      return `<td${wrapAttrFor(col)} style="width:${widthFor(col)};padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:${cellColor};text-align:${def.align};font-weight:${col === 'value' ? 700 : 400};${wrapStyleFor(col)}">${getReportCellValue(col, t, lookups)}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');
