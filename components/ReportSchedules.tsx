@@ -73,6 +73,7 @@ function describePeriod(filters?: ReportFilters): string | null {
   if (type === 'PREVIOUS_MONTH') return 'Mês anterior';
   if (type === 'LAST_N_DAYS') return `Últimos ${filters?.periodDays ?? 30} dias`;
   if (type === 'CUSTOM') return `${filters?.periodStart || '?'} a ${filters?.periodEnd || '?'}`;
+  if (type === 'DUE_WINDOW') return `Vencidos + a vencer em até ${filters?.dueWindowDays ?? 30} dias`;
   return null;
 }
 
@@ -360,12 +361,47 @@ export const ReportSchedules: React.FC<ReportSchedulesProps> = ({ registries }) 
                     <option value="CURRENT_MONTH">Mês atual</option>
                     <option value="PREVIOUS_MONTH">Mês anterior</option>
                     <option value="LAST_N_DAYS">Últimos N dias</option>
+                    <option value="DUE_WINDOW">Vencidos + a vencer em N dias</option>
                     <option value="CUSTOM">Intervalo customizado</option>
                   </select>
                   <p className="text-[11px] text-slate-400 mt-1">
                     Recalculado a cada envio — "Mês anterior" sempre significa o mês anterior à data do disparo.
                   </p>
                 </div>
+
+                {form.filters.periodType === 'DUE_WINDOW' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1.5">
+                      Considerar "a vencer" até quantos dias à frente?
+                    </label>
+                    <div className="flex items-center gap-2">
+                      {[7, 15, 30].map(preset => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setForm({ ...form, filters: { ...form.filters, dueWindowDays: preset } })}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                            (form.filters.dueWindowDays ?? 30) === preset
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {preset} dias
+                        </button>
+                      ))}
+                      <input
+                        type="number"
+                        min={1}
+                        value={form.filters.dueWindowDays ?? 30}
+                        onChange={(e) => setForm({ ...form, filters: { ...form.filters, dueWindowDays: parseInt(e.target.value) || 30 } })}
+                        className="w-24 bg-slate-50 border border-slate-200 rounded-xl py-1.5 px-3 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                      />
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Inclui todos os vencidos (sem limite para trás) + o que vence até essa quantidade de dias à frente.
+                    </p>
+                  </div>
+                )}
 
                 {form.filters.periodType === 'LAST_N_DAYS' && (
                   <div>

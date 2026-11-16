@@ -2114,6 +2114,15 @@ function computeReportPeriodRange(filters: any, todayIso: string): { from?: stri
     return { from: filters?.periodStart || undefined, to: filters?.periodEnd || undefined };
   }
 
+  if (periodType === 'DUE_WINDOW') {
+    // Vencidos + a vencer: sem limite inferior (pega vencidos de qualquer data no
+    // passado) e limite superior em hoje + N dias (ex.: 7, 30, ou um valor digitado).
+    const days = Number(filters?.dueWindowDays) || 30;
+    const toDate = new Date(`${todayIso}T12:00:00`);
+    toDate.setDate(toDate.getDate() + days);
+    return { to: toDate.toISOString().split('T')[0] };
+  }
+
   return {}; // 'ALL' (ou ausente, agendamentos antigos) — sem filtro de data, igual antes
 }
 

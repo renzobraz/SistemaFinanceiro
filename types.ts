@@ -230,7 +230,7 @@ export type ReportFrequency = 'daily' | 'weekly' | 'monthly';
 
 export type ReportColumnKey = 'date' | 'description' | 'docNumber' | 'value' | 'bank' | 'category' | 'costCenter' | 'participant';
 
-export type ReportPeriodType = 'ALL' | 'CURRENT_MONTH' | 'PREVIOUS_MONTH' | 'LAST_N_DAYS' | 'CUSTOM';
+export type ReportPeriodType = 'ALL' | 'CURRENT_MONTH' | 'PREVIOUS_MONTH' | 'LAST_N_DAYS' | 'CUSTOM' | 'DUE_WINDOW';
 
 export interface ReportFilters {
   status?: 'ALL' | 'PENDING' | 'PAID';
@@ -245,6 +245,10 @@ export interface ReportFilters {
   periodDays?: number;   // usado quando periodType = 'LAST_N_DAYS'
   periodStart?: string;  // ISO, usado quando periodType = 'CUSTOM'
   periodEnd?: string;    // ISO, usado quando periodType = 'CUSTOM'
+  // Usado quando periodType = 'DUE_WINDOW': inclui tudo vencido até hoje (sem limite
+  // para trás) + o que vence nos próximos N dias — pensado para o filtro de Status
+  // "Apenas Pendentes" (vencidos + a vencer), mas também aceito com os outros status.
+  dueWindowDays?: number;
 }
 
 export interface ReportSchedule {
