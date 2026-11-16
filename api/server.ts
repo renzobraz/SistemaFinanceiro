@@ -2129,10 +2129,15 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
   const totalWeight = activeColumns.reduce((sum, col) => sum + (REPORT_COLUMN_DEFINITIONS[col]?.width || 12), 0);
   const widthFor = (col: string) => `${(((REPORT_COLUMN_DEFINITIONS[col]?.width || 12) / totalWeight) * 100).toFixed(2)}%`;
   const wordBreak = 'word-break:break-word;overflow-wrap:break-word;';
+  // Data e Valor têm formato curto e fixo ("31/08/2026", "R$ 4.000,00") — deixá-los
+  // quebrar linha só torna a tabela mais alta sem necessidade; as colunas de texto
+  // livre (descrição, categoria, participante etc.) continuam quebrando normalmente.
+  const noWrapCols = new Set(['date', 'value']);
+  const wrapStyleFor = (col: string) => noWrapCols.has(col) ? 'white-space:nowrap;' : wordBreak;
 
   const headerCells = activeColumns.map(col => {
     const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const, width: 12 };
-    return `<th style="width:${widthFor(col)};text-align:${def.align};padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;${wordBreak}">${def.label}</th>`;
+    return `<th style="width:${widthFor(col)};text-align:${def.align};padding:8px 12px;font-size:12px;color:#94a3b8;text-transform:uppercase;border-bottom:2px solid #e2e8f0;${wrapStyleFor(col)}">${def.label}</th>`;
   }).join('');
 
   const rows = transactions.map(t => {
@@ -2140,13 +2145,13 @@ function buildContasAPagarEmailHtml(orgName: string, transactions: any[], column
     const cells = activeColumns.map(col => {
       const def = REPORT_COLUMN_DEFINITIONS[col] || { label: col, align: 'left' as const, width: 12 };
       const cellColor = col === 'value' ? color : '#334155';
-      return `<td style="width:${widthFor(col)};padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:${cellColor};text-align:${def.align};font-weight:${col === 'value' ? 700 : 400};${wordBreak}">${getReportCellValue(col, t, lookups)}</td>`;
+      return `<td style="width:${widthFor(col)};padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:14px;color:${cellColor};text-align:${def.align};font-weight:${col === 'value' ? 700 : 400};${wrapStyleFor(col)}">${getReportCellValue(col, t, lookups)}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');
 
   return `
-    <div style="font-family: sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+    <div style="font-family: sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
       <div style="text-align: center; margin-bottom: 24px;">
         <h1 style="color: #2563eb; margin: 0; font-size: 24px; font-weight: 800;">FinControl</h1>
       </div>
